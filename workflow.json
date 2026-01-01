@@ -1,0 +1,475 @@
+{
+  "name": "앱스토어 리뷰 모니터링 시스템",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 60
+            }
+          ]
+        },
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "interval",
+              "hour": 9,
+              "minute": 0
+            }
+          ]
+        },
+        "timezone": "Asia/Seoul"
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -128,
+        112
+      ],
+      "id": "schedule-trigger-daily",
+      "name": "Schedule Trigger (Hourly Strategy)",
+      "notes": "RSS 50개 제한 대응을 위해 1시간 주기로 변경함"
+    },
+    {
+      "parameters": {
+        "url": "https://itunes.apple.com/kr/rss/customerreviews/limit=50/id=1018769995/sortBy=mostRecent/json",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        64,
+        -16
+      ],
+      "id": "638e245b-1e11-4e26-92d5-36de6e727396",
+      "name": "HTTP Request",
+      "notes": "앱스토어 리뷰 API 호출\n\nURL 형식: https://itunes.apple.com/{국가코드}/rss/customerreviews/limit={개수}/id={앱ID}/sortBy=mostRecent/json\n\n다른 앱으로 변경: URL에서 앱 ID와 국가코드 수정\nlimit: 최대 50개 (파라미터 지정해도 최대 50개 반환 가능)"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=# Input Data (JSON List)\n{{ JSON.stringify($json.feed.entry) }}\n\n# Task\n위 JSON 데이터(리뷰 리스트)를 하나씩 분석해서, 아래 정보를 포함한 **새로운 JSON List**를 만들어.\n(순서를 절대 바꾸지 말고 입력된 개수 그대로 출력해.)\n\n# Output Format (Array of Objects)\n[\n  {\n    \"author\": \"원문 작성자 이름 그대로\",\n    \"date\": \"원문 updated 날짜 그대로\",\n    \"rating\": \"원문 별점(im:rating) 그대로\",\n    \"content\": \"원문 내용(content) 그대로\",\n    \"priority\": \"🚨 Critical / ⚠️ High / ✅ Normal 중 택1\",\n    \"category\": \"버그 / 사용성 / 칭찬 / 기타 중 택1\",\n    \"summary\": \"내용 1줄 요약\"\n  },\n  ... (반복)\n]\n\n(오직 JSON 데이터만 출력해. 마크다운 코드블록 쓰지 마.)\n\nIMPORTANT: Return ONLY the JSON array. Do not include markdown formatting like ```json. If content is empty, set summary to '내용 없음'.",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [
+        464,
+        256
+      ],
+      "id": "0ed4ad28-e5bc-46db-aa46-25b1b2cef11b",
+      "name": "Basic LLM Chain",
+      "retryOnFail": false,
+      "waitBetweenTries": 2000,
+      "maxTries": 1,
+      "executeOnce": false,
+      "notes": "AI 리뷰 분석 (Google Gemini)\n\n추출 정보: 긴급도(Critical/High/Normal), 유형(버그/사용성/칭찬/기타), 요약\n\nGemini API 무료 티어: RPD 20회/일, RPM 5회/분\n현재 설정: 매일 1회 실행으로 한도 준수"
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiResponse = $input.item.json.text || $input.item.json.output || '';\n\nlet originalEntries = [];\ntry {\n  const httpRequestData = $('HTTP Request').item.json;\n  if (httpRequestData?.feed?.entry) {\n    originalEntries = httpRequestData.feed.entry;\n  }\n} catch (error) {\n  console.error('원본 데이터 가져오기 실패:', error);\n}\n\nlet jsonString = aiResponse.trim().replace(/```json\\s*/g, '').replace(/```\\s*/g, '').trim();\n\nlet parsedData = [];\ntry {\n  parsedData = JSON.parse(jsonString);\n  if (!Array.isArray(parsedData)) {\n    parsedData = [parsedData];\n  }\n} catch (error) {\n  console.error('JSON 파싱 실패:', error);\n  parsedData = [];\n}\n\nconst items = parsedData.map((item, index) => {\n  const originalEntry = originalEntries[index] || {};\n  \n  const originalAuthor = originalEntry.author?.name?.label || originalEntry.author?.name || item.author || '';\n  const originalDate = originalEntry.updated?.label || originalEntry.updated || item.date || '';\n  const originalRating = originalEntry['im:rating']?.label || originalEntry['im:rating'] || item.rating || '';\n  const originalContent = originalEntry.content?.label || originalEntry.content || originalEntry.content?.['#text'] || item.content || '';\n  \n  return {\n    json: {\n      priority: item.priority || '',\n      category: item.category || '',\n      summary: item.summary || '',\n      author: originalAuthor,\n      date: originalDate,\n      rating: originalRating,\n      content: originalContent,\n      _originalEntry: originalEntry,\n      _index: index\n    }\n  };\n});\n\nreturn items.length > 0 ? items : [{ json: { error: 'No valid data parsed' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        664,
+        256
+      ],
+      "id": "parse-json-response",
+      "name": "Parse JSON Response",
+      "notes": "JSON 파싱 및 데이터 정제\n\nAI 응답에서 JSON 배열 추출 후 원본 데이터와 매칭"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        464,
+        112
+      ],
+      "id": "848e3076-2ed7-44d1-a766-76479b6aaed9",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "hFK58SlSvL4vLAvu",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "=",
+          "mode": "id",
+          "cachedResultName": "VOC_DB",
+          "cachedResultUrl": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "=Sheet1",
+          "mode": "list",
+          "cachedResultName": "1",
+          "cachedResultUrl": ""
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        864,
+        112
+      ],
+      "id": "get-existing-reviews",
+      "name": "Get Existing Reviews",
+      "executeOnce": true,
+      "notes": "기존 리뷰 데이터 읽기\n\nGoogle Sheets에서 기존 리뷰를 읽어 중복 체크에 사용\n설정: Document 필드에 Google Sheets ID, Sheet 필드에 시트 이름 입력",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "pbOdmn4YKzkqCylB",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "let existingContents = [];\n\ntry {\n  const existingReviewsNode = $('Get Existing Reviews');\n  if (existingReviewsNode) {\n    const existingReviews = existingReviewsNode.all();\n    if (Array.isArray(existingReviews) && existingReviews.length > 0) {\n      existingContents = existingReviews\n        .map(item => (item.json?.원본 || item.json?.content || '').trim().toLowerCase())\n        .filter(content => content.length > 0);\n    }\n  }\n} catch (error) {\n  console.log('기존 리뷰 데이터를 가져올 수 없습니다:', error.message || error);\n  existingContents = [];\n}\n\nconst currentItems = $input.all();\nif (!currentItems || currentItems.length === 0) {\n  return [];\n}\n\nconst newItems = currentItems.filter(item => {\n  const currentContent = (item.json?.content || item.json?.원본 || '').trim().toLowerCase();\n  return currentContent.length > 0 && !existingContents.includes(currentContent);\n});\n\nreturn newItems.map(item => ({ json: item.json || {} }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1064,
+        256
+      ],
+      "id": "check-duplicate-filter",
+      "name": "Filter Duplicates",
+      "notes": "중복 제거 필터\n\n기존 시트의 리뷰와 비교하여 중복 제거"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "=",
+          "mode": "id",
+          "cachedResultName": "VOC_DB",
+          "cachedResultUrl": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "=Sheet1",
+          "mode": "name",
+          "cachedResultName": "1",
+          "cachedResultUrl": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "긴급도": "={{ $json.priority || '' }}",
+            "유형": "={{ $json.category || '' }}",
+            "요약": "={{ $json.summary || '' }}",
+            "원본": "={{ $json.content || '' }}",
+            "별점": "={{ $json.rating || '' }}",
+            "작성자": "={{ $json.author || '' }}",
+            "작성일시": "={{ $json.date || '' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "작성일시",
+              "displayName": "작성일시",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "작성자",
+              "displayName": "작성자",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "별점",
+              "displayName": "별점",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "긴급도",
+              "displayName": "긴급도",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "유형",
+              "displayName": "유형",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "요약",
+              "displayName": "요약",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "원본",
+              "displayName": "원본",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "useAppend": true,
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1264,
+        256
+      ],
+      "id": "0489b3d5-2b66-4697-aa8c-8800f55c8857",
+      "name": "Append row in sheet",
+      "notes": "시트에 리뷰 추가\n\n중복이 아닌 새 리뷰를 Google Sheets에 추가\n컬럼: 작성일시, 작성자, 별점, 긴급도, 유형, 요약, 원본",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "pbOdmn4YKzkqCylB",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-critical",
+              "leftValue": "={{ ($json.priority || $json.긴급도 || '').toString().replace(/[🚨⚠️✅]/g, '').trim() }}",
+              "rightValue": "Critical",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1464,
+        256
+      ],
+      "id": "check-critical-priority",
+      "name": "Check Critical Priority",
+      "notes": "긴급도 체크\n\nCritical 리뷰만 텔레그램 알림 전송"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItems = $input.all();\nif (!inputItems || inputItems.length === 0) {\n  return [];\n}\n\nlet originalEntries = [];\ntry {\n  const httpRequestData = $('HTTP Request').item.json;\n  if (httpRequestData?.feed?.entry) {\n    originalEntries = httpRequestData.feed.entry;\n  }\n} catch (error) {\n  console.error('원본 데이터 가져오기 실패:', error);\n}\n\nconst results = inputItems.map((inputItemWrapper) => {\n  const inputItem = inputItemWrapper.json || {};\n  const index = inputItem._index !== undefined ? inputItem._index : 0;\n  const originalEntry = originalEntries[index] || {};\n  \n  return {\n    json: {\n      author: inputItem.author || inputItem.작성자 || originalEntry?.author?.name?.label || originalEntry?.author?.name || '알 수 없음',\n      rating: inputItem.rating || inputItem.별점 || originalEntry?.['im:rating']?.label || originalEntry?.['im:rating'] || 'N/A',\n      date: inputItem.date || inputItem.작성일시 || originalEntry?.updated?.label || originalEntry?.updated || 'N/A',\n      content: inputItem.content || inputItem.원본 || originalEntry?.content?.label || originalEntry?.content || originalEntry?.content?.['#text'] || 'N/A',\n      priority: inputItem.priority || inputItem.긴급도 || 'N/A',\n      category: inputItem.category || inputItem.유형 || 'N/A',\n      summary: inputItem.summary || inputItem.요약 || 'N/A'\n    }\n  };\n});\n\nreturn results.length > 0 ? results : [];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1564,
+        256
+      ],
+      "id": "prepare-telegram-data",
+      "name": "Prepare Telegram Data",
+      "notes": "텔레그램 메시지 데이터 준비\n\n모든 경로에서 데이터 추출하여 메시지 필드 보존"
+    },
+    {
+      "parameters": {
+        "chatId": "=",
+        "text": "=🚨 **긴급 리뷰 알림**\n\n**작성자:** {{ $json.author || '알 수 없음' }}\n**별점:** {{ $json.rating || 'N/A' }}\n**긴급도:** {{ $json.priority || 'N/A' }}\n**유형:** {{ $json.category || 'N/A' }}\n**요약:** {{ $json.summary || 'N/A' }}\n\n**원본 리뷰:**\n{{ $json.content || 'N/A' }}\n\n**작성일시:** {{ $json.date || 'N/A' }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1664,
+        256
+      ],
+      "id": "telegram-notification",
+      "name": "Send Telegram Alert",
+      "notes": "텔레그램 알림 전송\n\nCritical 리뷰 발견 시 텔레그램으로 알림 전송\n설정: Chat ID 필드에 텔레그램 Chat ID 입력, Credentials에 봇 토큰 연결"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Existing Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON Response": {
+      "main": [
+        [
+          {
+            "node": "Filter Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing Reviews": {
+      "main": [
+        []
+      ]
+    },
+    "Filter Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Check Critical Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Critical Priority": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Telegram Data": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger (Daily 09:00 KST)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "564907cd-e480-4dd7-b4a9-ac110f8753d8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c27d064a6e15cfa5f1c76c2310a89e8ca09bd449035a086d7f89cbec45e88dc6"
+  },
+  "id": "lNqHbXsn5v1DUqfq",
+  "tags": []
+}

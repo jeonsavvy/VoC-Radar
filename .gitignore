@@ -1,0 +1,26 @@
+# n8n
+*.n8n
+
+# Environment variables
+.env
+.env.local
+
+# Credentials
+credentials.json
+*.key
+*.pem
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
