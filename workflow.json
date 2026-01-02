@@ -84,8 +84,7 @@
         256
       ],
       "id": "parse-json-response",
-      "name": "Parse JSON Response",
-      "notes": "JSON 파싱 및 데이터 정제\n\nAI 응답에서 JSON 배열 추출 후 원본 데이터와 매칭"
+      "name": "Parse JSON Response"
     },
     {
       "parameters": {
@@ -153,8 +152,7 @@
         256
       ],
       "id": "check-duplicate-filter",
-      "name": "Filter Duplicates",
-      "notes": "중복 제거 필터\n\n기존 시트의 리뷰와 비교하여 중복 제거"
+      "name": "Filter Duplicates"
     },
     {
       "parameters": {
@@ -311,8 +309,7 @@
         256
       ],
       "id": "check-critical-priority",
-      "name": "Check Critical Priority",
-      "notes": "긴급도 체크\n\nCritical 리뷰만 텔레그램 알림 전송"
+      "name": "Check Critical Priority"
     },
     {
       "parameters": {
@@ -325,8 +322,7 @@
         256
       ],
       "id": "prepare-telegram-data",
-      "name": "Prepare Telegram Data",
-      "notes": "텔레그램 메시지 데이터 준비\n\n모든 경로에서 데이터 추출하여 메시지 필드 보존"
+      "name": "Prepare Telegram Data"
     },
     {
       "parameters": {
