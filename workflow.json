@@ -56,7 +56,7 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "=# Input Data (JSON List)\n{{ JSON.stringify($json.feed.entry) }}\n\n# Task\n위 JSON 데이터(리뷰 리스트)를 하나씩 분석해서, 아래 정보를 포함한 **새로운 JSON List**를 만들어.\n(순서를 절대 바꾸지 말고 입력된 개수 그대로 출력해.)\n\n# Output Format (Array of Objects)\n[\n  {\n    \"author\": \"원문 작성자 이름 그대로\",\n    \"date\": \"원문 updated 날짜 그대로\",\n    \"rating\": \"원문 별점(im:rating) 그대로\",\n    \"content\": \"원문 내용(content) 그대로\",\n    \"priority\": \"🚨 Critical / ⚠️ High / ✅ Normal 중 택1\",\n    \"category\": \"버그 / 사용성 / 칭찬 / 기타 중 택1\",\n    \"summary\": \"내용 1줄 요약\"\n  },\n  ... (반복)\n]\n\n(오직 JSON 데이터만 출력해. 마크다운 코드블록 쓰지 마.)\n\nIMPORTANT: Return ONLY the JSON array. Do not include markdown formatting like ```json. If content is empty, set summary to '내용 없음'.",
+        "text": "=# Input Data (JSON List)\n{{ JSON.stringify($('HTTP Request').item.json.feed.entry) }}\n\n# Task\n위 JSON 데이터(리뷰 리스트)를 하나씩 분석해서, 아래 정보를 포함한 **새로운 JSON List**를 만들어.\n(순서를 절대 바꾸지 말고 입력된 개수 그대로 출력해.)\n\n# Output Format (Array of Objects)\n[\n  {\n    \"author\": \"원문 작성자 이름 그대로\",\n    \"date\": \"원문 updated 날짜 그대로\",\n    \"rating\": \"원문 별점(im:rating) 그대로\",\n    \"content\": \"원문 내용(content) 그대로\",\n    \"priority\": \"🚨 Critical / ⚠️ High / ✅ Normal 중 택1\",\n    \"category\": \"버그 / 사용성 / 칭찬 / 기타 중 택1\",\n    \"summary\": \"내용 1줄 요약\"\n  },\n  ... (반복)\n]\n\n(오직 JSON 데이터만 출력해. 마크다운 코드블록 쓰지 마.)\n\nIMPORTANT: Return ONLY the JSON array. Do not include markdown formatting like ```json. If content is empty, set summary to '내용 없음'.",
         "batching": {}
       },
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
@@ -70,7 +70,7 @@
       "retryOnFail": false,
       "waitBetweenTries": 2000,
       "maxTries": 1,
-      "executeOnce": false,
+      "executeOnce": true,
       "notes": "AI 리뷰 분석 (Google Gemini)\n\n추출 정보: 긴급도(Critical/High/Normal), 유형(버그/사용성/칭찬/기타), 요약\n\nGemini API 무료 티어: RPD 20회/일, RPM 5회/분\n현재 설정: 매일 1회 실행으로 한도 준수"
     },
     {
@@ -133,6 +133,7 @@
       "id": "get-existing-reviews",
       "name": "Get Existing Reviews",
       "executeOnce": true,
+      "alwaysOutputData": true,
       "notes": "기존 리뷰 데이터 읽기\n\nGoogle Sheets에서 기존 리뷰를 읽어 중복 체크에 사용\n설정: Document 필드에 Google Sheets ID, Sheet 필드에 시트 이름 입력",
       "credentials": {
         "googleSheetsOAuth2Api": {
@@ -143,7 +144,7 @@
     },
     {
       "parameters": {
-        "jsCode": "let existingContents = [];\n\ntry {\n  const existingReviewsNode = $('Get Existing Reviews');\n  if (existingReviewsNode) {\n    const existingReviews = existingReviewsNode.all();\n    if (Array.isArray(existingReviews) && existingReviews.length > 0) {\n      existingContents = existingReviews\n        .map(item => (item.json?.원본 || item.json?.content || '').trim().toLowerCase())\n        .filter(content => content.length > 0);\n    }\n  }\n} catch (error) {\n  console.log('기존 리뷰 데이터를 가져올 수 없습니다:', error.message || error);\n  existingContents = [];\n}\n\nconst currentItems = $input.all();\nif (!currentItems || currentItems.length === 0) {\n  return [];\n}\n\nconst newItems = currentItems.filter(item => {\n  const currentContent = (item.json?.content || item.json?.원본 || '').trim().toLowerCase();\n  return currentContent.length > 0 && !existingContents.includes(currentContent);\n});\n\nreturn newItems.map(item => ({ json: item.json || {} }));"
+        "jsCode": "let existingSignatures = new Set();\n\ntry {\n  const existingReviewsNode = $('Get Existing Reviews');\n  if (existingReviewsNode) {\n    const existingReviews = existingReviewsNode.all();\n    if (Array.isArray(existingReviews) && existingReviews.length > 0) {\n      existingReviews.forEach(item => {\n        const content = (item.json?.원본 || item.json?.content || '').trim();\n        const author = (item.json?.작성자 || item.json?.author || '').trim();\n        if (content) {\n          existingSignatures.add(`${author}|${content}`);\n        }\n      });\n    }\n  }\n} catch (error) {\n  console.log('기존 리뷰 데이터를 가져올 수 없습니다:', error.message || error);\n}\n\nconst currentItems = $input.all();\nif (!currentItems || currentItems.length === 0) {\n  return [];\n}\n\nconst newItems = currentItems.filter(item => {\n  const content = (item.json?.content || item.json?.원본 || '').trim();\n  const author = (item.json?.author || item.json?.작성자 || '').trim();\n  const signature = `${author}|${content}`;\n  \n  return content.length > 0 && !existingSignatures.has(signature);\n});\n\nreturn newItems.map(item => ({ json: item.json || {} }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -349,11 +350,6 @@
       "main": [
         [
           {
-            "node": "Basic LLM Chain",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "Get Existing Reviews",
             "type": "main",
             "index": 0
@@ -385,7 +381,13 @@
     },
     "Get Existing Reviews": {
       "main": [
-        []
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
       ]
     },
     "Filter Duplicates": {
