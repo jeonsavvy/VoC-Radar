@@ -75,7 +75,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const aiResponse = $input.item.json.text || $input.item.json.output || '';\n\nlet originalEntries = [];\ntry {\n  const httpRequestData = $('HTTP Request').item.json;\n  if (httpRequestData?.feed?.entry) {\n    originalEntries = httpRequestData.feed.entry;\n  }\n} catch (error) {\n  console.error('원본 데이터 가져오기 실패:', error);\n}\n\nlet jsonString = aiResponse.trim().replace(/```json\\s*/g, '').replace(/```\\s*/g, '').trim();\n\nlet parsedData = [];\ntry {\n  parsedData = JSON.parse(jsonString);\n  if (!Array.isArray(parsedData)) {\n    parsedData = [parsedData];\n  }\n} catch (error) {\n  console.error('JSON 파싱 실패:', error);\n  parsedData = [];\n}\n\nconst items = parsedData.map((item, index) => {\n  const originalEntry = originalEntries[index] || {};\n  \n  const originalAuthor = originalEntry.author?.name?.label || originalEntry.author?.name || item.author || '';\n  const originalDate = originalEntry.updated?.label || originalEntry.updated || item.date || '';\n  const originalRating = originalEntry['im:rating']?.label || originalEntry['im:rating'] || item.rating || '';\n  const originalContent = originalEntry.content?.label || originalEntry.content || originalEntry.content?.['#text'] || item.content || '';\n  \n  return {\n    json: {\n      priority: item.priority || '',\n      category: item.category || '',\n      summary: item.summary || '',\n      author: originalAuthor,\n      date: originalDate,\n      rating: originalRating,\n      content: originalContent,\n      _originalEntry: originalEntry,\n      _index: index\n    }\n  };\n});\n\nreturn items.length > 0 ? items : [{ json: { error: 'No valid data parsed' } }];"
+        "jsCode": "const aiResponse = $input.item.json.text || $input.item.json.output || '';\n\nlet originalEntries = [];\ntry {\n  const httpRequestData = $('HTTP Request').item.json;\n  if (httpRequestData?.feed?.entry) {\n    originalEntries = httpRequestData.feed.entry;\n  }\n} catch (error) {\n  console.error('원본 데이터 가져오기 실패:', error);\n}\n\nlet jsonString = aiResponse.trim().replace(/```json\\s*/g, '').replace(/```\\s*/g, '').trim();\n\nlet parsedData = [];\ntry {\n  parsedData = JSON.parse(jsonString);\n  if (!Array.isArray(parsedData)) {\n    parsedData = [parsedData];\n  }\n} catch (error) {\n  console.error('JSON 파싱 실패:', error);\n  parsedData = [];\n}\n\nconst items = parsedData.map((item, index) => {\n  const originalEntry = originalEntries[index] || {};\n  \n  const originalAuthor = originalEntry.author?.name?.label || originalEntry.author?.name || item.author || '';\n  const originalDate = originalEntry.updated?.label || originalEntry.updated || item.date || '';\n  const originalRating = originalEntry['im:rating']?.label || originalEntry['im:rating'] || item.rating || '';\n  const originalContent = originalEntry.content?.label || originalEntry.content || originalEntry.content?.['#text'] || item.content || '';\n  const originalId = originalEntry.id?.label || originalEntry.id || '';\n  \n  return {\n    json: {\n      priority: item.priority || '',\n      category: item.category || '',\n      summary: item.summary || '',\n      author: originalAuthor,\n      date: originalDate,\n      rating: originalRating,\n      content: originalContent,\n      id: originalId,\n      _originalEntry: originalEntry,\n      _index: index\n    }\n  };\n});\n\nreturn items.length > 0 ? items : [{ json: { error: 'No valid data parsed' } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -144,7 +144,7 @@
     },
     {
       "parameters": {
-        "jsCode": "let existingSignatures = new Set();\n\ntry {\n  const existingReviewsNode = $('Get Existing Reviews');\n  if (existingReviewsNode) {\n    const existingReviews = existingReviewsNode.all();\n    if (Array.isArray(existingReviews) && existingReviews.length > 0) {\n      existingReviews.forEach(item => {\n        const content = (item.json?.원본 || item.json?.content || '').trim();\n        const author = (item.json?.작성자 || item.json?.author || '').trim();\n        if (content) {\n          existingSignatures.add(`${author}|${content}`);\n        }\n      });\n    }\n  }\n} catch (error) {\n  console.log('기존 리뷰 데이터를 가져올 수 없습니다:', error.message || error);\n}\n\nconst currentItems = $input.all();\nif (!currentItems || currentItems.length === 0) {\n  return [];\n}\n\nconst newItems = currentItems.filter(item => {\n  const content = (item.json?.content || item.json?.원본 || '').trim();\n  const author = (item.json?.author || item.json?.작성자 || '').trim();\n  const signature = `${author}|${content}`;\n  \n  return content.length > 0 && !existingSignatures.has(signature);\n});\n\nreturn newItems.map(item => ({ json: item.json || {} }));"
+        "jsCode": "const existingIds = new Set();\n\ntry {\n  const existingReviewsNode = $('Get Existing Reviews');\n  if (existingReviewsNode) {\n    const existingReviews = existingReviewsNode.all();\n    if (Array.isArray(existingReviews) && existingReviews.length > 0) {\n      existingReviews.forEach(item => {\n        const id = (item.json?.ID || item.json?.id || '').trim();\n        if (id) {\n          existingIds.add(id);\n        }\n      });\n    }\n  }\n} catch (error) {\n  console.log('기존 리뷰 데이터를 가져올 수 없습니다:', error.message || error);\n}\n\nconst currentItems = $input.all();\nif (!currentItems || currentItems.length === 0) {\n  return [];\n}\n\nconst newItems = currentItems.filter(item => {\n  const id = (item.json?.id || '').trim();\n  \n  return id.length > 0 && !existingIds.has(id);\n});\n\nreturn newItems.map(item => ({ json: item.json || {} }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -175,6 +175,7 @@
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
+            "ID": "={{ $json.id || '' }}",
             "긴급도": "={{ $json.priority || '' }}",
             "유형": "={{ $json.category || '' }}",
             "요약": "={{ $json.summary || '' }}",
@@ -185,6 +186,16 @@
           },
           "matchingColumns": [],
           "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
             {
               "id": "작성일시",
               "displayName": "작성일시",
