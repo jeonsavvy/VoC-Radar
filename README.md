@@ -1,6 +1,6 @@
 # VoC-Radar
 
-iTunes App Store 리뷰를 주기적으로 수집해서, Gemini로 분류/요약하고 Google Sheets에 적재하며, `Critical` 항목만 Telegram으로 알림 보내는 n8n 워크플로우입니다.
+iTunes App Store 리뷰를 주기적으로 수집해서, Gemini로 분류/요약하고 Google Sheets에 적재하며, `Critical + 저평점(<=2)` 조건일 때 Telegram으로 알림 보내는 n8n 워크플로우입니다.
 
 ---
 
@@ -8,17 +8,17 @@ iTunes App Store 리뷰를 주기적으로 수집해서, Gemini로 분류/요약
 
 ```mermaid
 graph TD
-    A[Schedule Trigger (Hourly)] --> B[HTTP Request: iTunes RSS]
-    B --> C[Get Existing Reviews: Google Sheets]
-    C --> D[Basic LLM Chain + Gemini]
-    D --> E[Parse JSON Response]
-    E --> F{Has Parse Error?}
-    F -->|Yes| G[Append parse error row]
-    F -->|No| H[Filter Duplicates]
-    H --> I[Append row in sheet]
-    I --> J{Check Critical Priority + Rating<=2}
-    J -->|Yes| K[Prepare Telegram Data]
-    K --> L[Send Telegram Alert]
+    A["Schedule Trigger (Hourly)"] --> B["HTTP Request: iTunes RSS"]
+    B --> C["Get Existing Reviews: Google Sheets"]
+    C --> D["Basic LLM Chain + Gemini"]
+    D --> E["Parse JSON Response"]
+    E --> F{"Has Parse Error?"}
+    F -->|"Yes"| G["Append parse error row"]
+    F -->|"No"| H["Filter Duplicates"]
+    H --> I["Append row in sheet"]
+    I --> J{"Critical + Rating <= 2 ?"}
+    J -->|"Yes"| K["Prepare Telegram Data"]
+    K --> L["Send Telegram Alert"]
 ```
 
 ---
