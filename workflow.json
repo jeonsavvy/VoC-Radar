@@ -78,7 +78,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const aiResponse = $input.item.json.text || $input.item.json.output || '';\n\nlet originalEntries = [];\ntry {\n  const httpRequestData = $('HTTP Request').item.json;\n  if (httpRequestData?.feed?.entry) {\n    originalEntries = httpRequestData.feed.entry;\n  }\n} catch (error) {\n  console.error('원본 데이터 가져오기 실패:', error);\n}\n\nlet jsonString = aiResponse.trim().replace(/```json\\s*/g, '').replace(/```\\s*/g, '').trim();\n\nlet parsedData = [];\ntry {\n  parsedData = JSON.parse(jsonString);\n  if (!Array.isArray(parsedData)) {\n    parsedData = [parsedData];\n  }\n} catch (error) {\n  console.error('JSON 파싱 실패:', error);\n  parsedData = [];\n}\n\nconst items = parsedData.map((item, index) => {\n  const originalEntry = originalEntries[index] || {};\n  \n  const originalAuthor = originalEntry.author?.name?.label || originalEntry.author?.name || item.author || '';\n  const originalDate = originalEntry.updated?.label || originalEntry.updated || item.date || '';\n  const originalRating = originalEntry['im:rating']?.label || originalEntry['im:rating'] || item.rating || '';\n  const originalContent = originalEntry.content?.label || originalEntry.content || originalEntry.content?.['#text'] || item.content || '';\n  const originalId = originalEntry.id?.label || originalEntry.id || '';\n  \n  return {\n    json: {\n      priority: item.priority || '',\n      category: item.category || '',\n      summary: item.summary || '',\n      author: originalAuthor,\n      date: originalDate,\n      rating: originalRating,\n      content: originalContent,\n      id: originalId,\n      _originalEntry: originalEntry,\n      _index: index\n    }\n  };\n});\n\nreturn items.length > 0 ? items : [{ json: { error: 'No valid data parsed' } }];"
+        "jsCode": "const aiResponse = $input.item.json.text || $input.item.json.output || '';\n\nlet originalEntries = [];\ntry {\n  const httpRequestData = $('HTTP Request').item.json;\n  if (httpRequestData?.feed?.entry) {\n    originalEntries = httpRequestData.feed.entry;\n  }\n} catch (error) {\n  console.error('원본 데이터 가져오기 실패:', error);\n}\n\nlet jsonString = aiResponse.trim().replace(/```json\\s*/g, '').replace(/```\\s*/g, '').trim();\n\nlet parsedData = [];\ntry {\n  parsedData = JSON.parse(jsonString);\n  if (!Array.isArray(parsedData)) {\n    parsedData = [parsedData];\n  }\n} catch (error) {\n  console.error('JSON 파싱 실패:', error);\n  parsedData = [];\n}\n\nconst items = parsedData.map((item, index) => {\n  const originalEntry = originalEntries[index] || {};\n\n  const originalAuthor = originalEntry.author?.name?.label || originalEntry.author?.name || item.author || '';\n  const originalDate = originalEntry.updated?.label || originalEntry.updated || item.date || '';\n  const originalRating = originalEntry['im:rating']?.label || originalEntry['im:rating'] || item.rating || '';\n  const originalContent = originalEntry.content?.label || originalEntry.content || originalEntry.content?.['#text'] || item.content || '';\n  const originalId = originalEntry.id?.label || originalEntry.id || '';\n\n  return {\n    json: {\n      priority: item.priority || '',\n      category: item.category || '',\n      summary: item.summary || '',\n      author: originalAuthor,\n      date: originalDate,\n      rating: originalRating,\n      content: originalContent,\n      id: originalId,\n      _originalEntry: originalEntry,\n      _index: index\n    }\n  };\n});\n\nif (items.length > 0) {\n  return items;\n}\n\nreturn [{\n  json: {\n    ID: `PARSE_ERROR_${Date.now()}`,\n    긴급도: 'ERROR',\n    유형: '파싱실패',\n    요약: 'No valid data parsed',\n    원본: aiResponse.toString().slice(0, 1500),\n    별점: '',\n    작성자: 'system',\n    작성일시: new Date().toISOString()\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -147,7 +147,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const existingIds = new Set();\n\ntry {\n  const existingReviewsNode = $('Get Existing Reviews');\n  if (existingReviewsNode) {\n    const existingReviews = existingReviewsNode.all();\n    if (Array.isArray(existingReviews) && existingReviews.length > 0) {\n      existingReviews.forEach(item => {\n        const id = (item.json?.ID || item.json?.id || '').trim();\n        if (id) {\n          existingIds.add(id);\n        }\n      });\n    }\n  }\n} catch (error) {\n  console.log('기존 리뷰 데이터를 가져올 수 없습니다:', error.message || error);\n}\n\nconst currentItems = $input.all();\nif (!currentItems || currentItems.length === 0) {\n  return [];\n}\n\nconst newItems = currentItems.filter(item => {\n  const id = (item.json?.id || '').trim();\n  \n  return id.length > 0 && !existingIds.has(id);\n});\n\nreturn newItems.map(item => ({ json: item.json || {} }));"
+        "jsCode": "const existingIds = new Set();\n\ntry {\n  const existingReviewsNode = $('Get Existing Reviews');\n  if (existingReviewsNode) {\n    const existingReviews = existingReviewsNode.all();\n    if (Array.isArray(existingReviews) && existingReviews.length > 0) {\n      existingReviews.forEach(item => {\n        const id = (item.json?.ID || item.json?.id || '').toString().trim();\n        if (id) {\n          existingIds.add(id);\n        }\n      });\n    }\n  }\n} catch (error) {\n  console.log('기존 리뷰 데이터를 가져올 수 없습니다:', error.message || error);\n}\n\nconst currentItems = $input.all();\nif (!currentItems || currentItems.length === 0) {\n  return [];\n}\n\nconst newItems = currentItems.filter(item => {\n  const id = (item.json?.id || '').toString().trim();\n  return id.length > 0 && !existingIds.has(id);\n});\n\nreturn newItems.map(item => {\n  const row = item.json || {};\n  return {\n    json: {\n      ID: row.id || '',\n      긴급도: row.priority || '',\n      유형: row.category || '',\n      요약: row.summary || '',\n      원본: row.content || '',\n      별점: row.rating || '',\n      작성자: row.author || '',\n      작성일시: row.date || ''\n    }\n  };\n});"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -176,106 +176,17 @@
           "cachedResultUrl": ""
         },
         "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "ID": "={{ $json.id || '' }}",
-            "긴급도": "={{ $json.priority || '' }}",
-            "유형": "={{ $json.category || '' }}",
-            "요약": "={{ $json.summary || '' }}",
-            "원본": "={{ $json.content || '' }}",
-            "별점": "={{ $json.rating || '' }}",
-            "작성자": "={{ $json.author || '' }}",
-            "작성일시": "={{ $json.date || '' }}"
-          },
+          "mappingMode": "autoMapInputData",
+          "value": {},
           "matchingColumns": [],
-          "schema": [
-            {
-              "id": "ID",
-              "displayName": "ID",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "작성일시",
-              "displayName": "작성일시",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "작성자",
-              "displayName": "작성자",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "별점",
-              "displayName": "별점",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "긴급도",
-              "displayName": "긴급도",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "유형",
-              "displayName": "유형",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "요약",
-              "displayName": "요약",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "원본",
-              "displayName": "원본",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            }
-          ],
+          "schema": [],
           "attemptToConvertTypes": false,
           "convertFieldsToString": false
         },
         "options": {
           "useAppend": true,
-          "cellFormat": "USER_ENTERED"
+          "cellFormat": "USER_ENTERED",
+          "handlingExtraData": "insertInNewColumn"
         }
       },
       "type": "n8n-nodes-base.googleSheets",
@@ -368,7 +279,7 @@
           "conditions": [
             {
               "id": "check-parse-error",
-              "leftValue": "={{ $json.error ? \"yes\" : \"no\" }}",
+              "leftValue": "={{ (($json.ID || '').toString().startsWith('PARSE_ERROR_')) ? \"yes\" : \"no\" }}",
               "rightValue": "yes",
               "operator": {
                 "type": "string",
@@ -407,106 +318,17 @@
           "cachedResultUrl": ""
         },
         "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "ID": "={{ 'PARSE_ERROR_' + Date.now() }}",
-            "긴급도": "={{ 'ERROR' }}",
-            "유형": "={{ '파싱실패' }}",
-            "요약": "={{ $json.error || 'No valid data parsed' }}",
-            "원본": "={{ ($('Basic LLM Chain').item.json.text || '').toString().slice(0, 1500) }}",
-            "별점": "={{ '' }}",
-            "작성자": "={{ 'system' }}",
-            "작성일시": "={{ new Date().toISOString() }}"
-          },
+          "mappingMode": "autoMapInputData",
+          "value": {},
           "matchingColumns": [],
-          "schema": [
-            {
-              "id": "ID",
-              "displayName": "ID",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "작성일시",
-              "displayName": "작성일시",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "작성자",
-              "displayName": "작성자",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "별점",
-              "displayName": "별점",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "긴급도",
-              "displayName": "긴급도",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "유형",
-              "displayName": "유형",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "요약",
-              "displayName": "요약",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            },
-            {
-              "id": "원본",
-              "displayName": "원본",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
-            }
-          ],
+          "schema": [],
           "attemptToConvertTypes": false,
           "convertFieldsToString": false
         },
         "options": {
           "useAppend": true,
-          "cellFormat": "USER_ENTERED"
+          "cellFormat": "USER_ENTERED",
+          "handlingExtraData": "insertInNewColumn"
         }
       },
       "type": "n8n-nodes-base.googleSheets",
@@ -546,13 +368,7 @@
             "node": "Get Existing Reviews",
             "type": "main",
             "index": 0
-          }
-        ]
-      ]
-    },
-    "Get Existing Reviews": {
-      "main": [
-        [
+          },
           {
             "node": "Basic LLM Chain",
             "type": "main",
