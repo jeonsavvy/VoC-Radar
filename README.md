@@ -1,106 +1,82 @@
 # VoC-Radar
 
-<div align="center">
-  <img src="./assets/screenshots/demo.png" alt="Project Demo" width="100%" />
-  
-  <br />
-
-  <img src="https://img.shields.io/badge/n8n-Workflow-FF6584?style=flat-square&logo=n8n&logoColor=white" />
-  <img src="https://img.shields.io/badge/Google_Gemini-AI-8E75B2?style=flat-square&logo=googlegemini&logoColor=white" />
-  <img src="https://img.shields.io/badge/Google_Sheets-Database-34A853?style=flat-square&logo=googlesheets&logoColor=white" />
-</div>
-
-<br />
-
-**VoC-Radar**는 **iTunes App Store 리뷰**를 실시간으로 모니터링하고 분석하는 **자동화 에이전트**입니다.
-Google Gemini API를 통해 고객 리뷰의 감정과 의도를 분석하고, 긴급 이슈(Critical) 감지 시 텔레그램으로 즉시 알림을 발송하여 운영팀의 신속한 대응을 지원합니다.
+iTunes App Store 리뷰를 주기적으로 수집해서, Gemini로 분류/요약하고 Google Sheets에 적재하며, `Critical` 항목만 Telegram으로 알림 보내는 n8n 워크플로우입니다.
 
 ---
 
-## 🛠 Features
-
-*   **Automated Review Collection**: 매일 앱스토어 RSS 피드에서 최신 리뷰 데이터를 수집하여 누락 없이 관리
-*   **AI Sentiment Analysis**: Google Gemini를 활용해 리뷰의 긍/부정 감정, 긴급도(Criticality), 주요 키워드 자동 태깅
-*   **Deduplication Storage**: Google Sheets를 Database로 활용하여 **Review ID**를 기준으로 중복을 식별하고 데이터를 구조화하여 누적
-*   **Critical Alerts**: 별점 1~2점 및 '심각' 판정된 리뷰 발생 시 담당자에게 텔레그램 푸시 알림 전송
-*   **Full Automation**: n8n 워크플로우를 통해 수집-분석-저장-알림의 전 과정을 100% 자동화
-
----
-
-## 🏗 Architecture
+## 핵심 흐름
 
 ```mermaid
 graph TD
-    AppStore[📱 App Store RSS] -->|Fetch Reviews| n8n[n8n Workflow]
-    
-    subgraph "Intelligence Layer"
-        n8n -->|Review Text| AI[🧠 Google Gemini]
-        AI --"Sentiment & Urgency"--> n8n
-    end
-    
-    n8n -->|Save Row| Sheets[(Google Sheets)]
-    n8n -->|Filter Critical| Router{Is Urgent?}
-    
-    Router --"Yes"--> Telegram[Telegram Bot]
-    Telegram -->|Alert| Manager([CS Manager])
+    A[Schedule Trigger (Hourly)] --> B[HTTP Request: iTunes RSS]
+    B --> C[Get Existing Reviews: Google Sheets]
+    C --> D[Basic LLM Chain + Gemini]
+    D --> E[Parse JSON Response]
+    E --> F[Filter Duplicates]
+    F --> G[Append row in sheet]
+    G --> H{Check Critical Priority}
+    H -->|Yes| I[Prepare Telegram Data]
+    I --> J[Send Telegram Alert]
 ```
 
 ---
 
-## 📦 Tech Stack
+## 현재 구현 기능
 
-| Category | Technology |
-| :--- | :--- |
-| **Orchestration** | n8n |
-| **AI Model** | Google Gemini API |
-| **Data Source** | iTunes RSS API |
-| **Storage** | Google Sheets API |
-| **Notification** | Telegram Bot API |
+- **수집 주기**: 1시간 간격 스케줄
+- **소스**: iTunes RSS (`limit=50`, `sortBy=mostRecent`)
+- **AI 분석 결과**: `priority`, `category`, `summary`
+- **중복 제거**: 기존 시트의 `ID` 기준 필터링
+- **알림 조건**: priority 문자열에 `Critical` 포함 시만 Telegram 전송
 
 ---
 
-## 🚀 Getting Started
+## 빠른 시작
 
-### Prerequisites
-*   n8n Instance
-*   Google Gemini API Key
-*   Google Cloud Console (Sheets API)
-*   Telegram Bot Token
+### 1) 워크플로우 Import
 
-### Installation
+- n8n → Workflows → Import from File
+- `workflow.json` 업로드
 
-1.  **Repository Clone**
-    ```bash
-    git clone https://github.com/jeonsavvy/VoC-Radar.git
-    cd VoC-Radar
-    ```
+### 2) Credential 연결
 
-2.  **Import Workflow**
-    *   n8n 대시보드 > **Workflows** > **Import from File**
-    *   `workflow.json` 파일 업로드
+- Google Gemini
+- Google Sheets OAuth2
+- Telegram Bot
 
-3.  **Credentials Setup**
-    *   **Google Gemini**: API Key 등록 (Header Auth)
-    *   **Google Sheets**: OAuth2 자격 증명 설정
-    *   **Telegram**: Bot Token 등록
+### 3) 노드 설정
 
-4.  **Configure Nodes**
-    *   `Get Reviews`: 타겟 앱 ID 수정
-    *   `Sheet Append`: 저장할 Google Sheet ID 연결
-    *   `Telegram`: 수신할 Chat ID 설정
+- `HTTP Request`: 앱 ID/국가코드 필요 시 수정
+- `Get Existing Reviews` / `Append row in sheet`: 문서 ID, 시트명 연결
+- `Send Telegram Alert`: Chat ID 설정
 
-5.  **Run Automation**
-    *   **Execute Workflow** 버튼으로 테스트 실행 후 **Active** 전환
+### 4) 실행
+
+- `Execute Workflow`로 테스트
+- 검증 후 `Active` ON
 
 ---
 
-## 📂 Directory Structure
+## 중요: Import 후 꼭 확인할 항목
+
+현재 `workflow.json`에는 스케줄 노드 연결 키가 과거 이름(`Schedule Trigger (Daily 09:00 KST)`)으로 남아 있습니다.
+
+- 실제 노드 이름: `Schedule Trigger (Hourly Strategy)`
+- 따라서 **Import 후 Schedule → HTTP Request 연결이 정상인지** n8n 에디터에서 반드시 확인/재연결하세요.
+
+---
+
+## 주의사항 (현재 상태)
+
+- README에서 흔히 쓰는 “별점 1~2 + Critical” 복합 조건이 아니라, 실제 IF 노드는 `priority contains Critical` 기준입니다.
+- HTTP Request 노드에 명시적 retry/timeout 옵션은 현재 JSON에 설정되어 있지 않습니다.
+
+---
+
+## 파일 구조
 
 ```bash
-├── assets/              # Demo Images
-├── workflow.json        # Main n8n Workflow
+├── workflow.json
+├── assets/
 └── README.md
 ```
-
-> [!NOTE]
-> **Limitations**: iTunes RSS API는 최근 50개의 리뷰만 제공하므로, 리뷰 유입이 폭증하는 대형 앱의 경우 주기(Interval)를 짧게 설정해야 합니다.
