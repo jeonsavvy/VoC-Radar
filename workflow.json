@@ -40,7 +40,10 @@
             "response": {
               "responseFormat": "json"
             }
-          }
+          },
+          "timeout": 30000,
+          "retryOnFail": true,
+          "maxTries": 3
         }
       },
       "type": "n8n-nodes-base.httpRequest",
@@ -149,7 +152,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1064,
+        1088,
         256
       ],
       "id": "check-duplicate-filter",
@@ -278,7 +281,7 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.7,
       "position": [
-        1264,
+        1312,
         256
       ],
       "id": "0489b3d5-2b66-4697-aa8c-8800f55c8857",
@@ -301,12 +304,12 @@
           },
           "conditions": [
             {
-              "id": "check-critical",
-              "leftValue": "={{ ($json.priority || $json.긴급도 || '').toString().replace(/[🚨⚠️✅]/g, '').trim() }}",
-              "rightValue": "Critical",
+              "id": "check-critical-rating",
+              "leftValue": "={{ (() => { const p = (($json.priority || $json.긴급도 || '').toString().replace(/[🚨⚠️✅]/g, '').trim().toLowerCase()); const r = Number(($json.rating || $json.별점 || '0').toString().trim()); return (p.includes('critical') && r <= 2) ? 'yes' : 'no'; })() }}",
+              "rightValue": "yes",
               "operator": {
                 "type": "string",
-                "operation": "contains"
+                "operation": "equals"
               }
             }
           ],
@@ -317,7 +320,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        1464,
+        1520,
         256
       ],
       "id": "check-critical-priority",
@@ -330,8 +333,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1564,
-        256
+        1728,
+        144
       ],
       "id": "prepare-telegram-data",
       "name": "Prepare Telegram Data"
@@ -347,22 +350,223 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1664,
-        256
+        1936,
+        144
       ],
       "id": "telegram-notification",
       "name": "Send Telegram Alert",
       "notes": "텔레그램 알림 전송\n\nCritical 리뷰 발견 시 텔레그램으로 알림 전송\n설정: Chat ID 필드에 텔레그램 Chat ID 입력, Credentials에 봇 토큰 연결"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-parse-error",
+              "leftValue": "={{ $json.error ? \"yes\" : \"no\" }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        864,
+        256
+      ],
+      "id": "cdcd9089-0930-40f0-8be9-7876aa998a88",
+      "name": "Has Parse Error?"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "=",
+          "mode": "id",
+          "cachedResultName": "VOC_DB",
+          "cachedResultUrl": ""
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "=Sheet1",
+          "mode": "name",
+          "cachedResultName": "1",
+          "cachedResultUrl": ""
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "ID": "={{ 'PARSE_ERROR_' + Date.now() }}",
+            "긴급도": "={{ 'ERROR' }}",
+            "유형": "={{ '파싱실패' }}",
+            "요약": "={{ $json.error || 'No valid data parsed' }}",
+            "원본": "={{ ($('Basic LLM Chain').item.json.text || '').toString().slice(0, 1500) }}",
+            "별점": "={{ '' }}",
+            "작성자": "={{ 'system' }}",
+            "작성일시": "={{ new Date().toISOString() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "ID",
+              "displayName": "ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "작성일시",
+              "displayName": "작성일시",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "작성자",
+              "displayName": "작성자",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "별점",
+              "displayName": "별점",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "긴급도",
+              "displayName": "긴급도",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "유형",
+              "displayName": "유형",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "요약",
+              "displayName": "요약",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "원본",
+              "displayName": "원본",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "useAppend": true,
+          "cellFormat": "USER_ENTERED"
+        }
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1088,
+        64
+      ],
+      "id": "200b3761-1dd2-4585-9181-e94459fc881c",
+      "name": "Append parse error row",
+      "notes": "LLM/파싱 오류 로그를 시트에 저장",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "pbOdmn4YKzkqCylB",
+          "name": "Google Sheets account 2"
+        }
+      }
     }
   ],
   "pinData": {},
   "connections": {
+    "Schedule Trigger (Hourly Strategy)": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
     "HTTP Request": {
       "main": [
         [
           {
             "node": "Get Existing Reviews",
             "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Existing Reviews": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
             "index": 0
           }
         ]
@@ -383,18 +587,25 @@
       "main": [
         [
           {
-            "node": "Filter Duplicates",
+            "node": "Has Parse Error?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Get Existing Reviews": {
+    "Has Parse Error?": {
       "main": [
         [
           {
-            "node": "Basic LLM Chain",
+            "node": "Append parse error row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Filter Duplicates",
             "type": "main",
             "index": 0
           }
@@ -407,17 +618,6 @@
           {
             "node": "Append row in sheet",
             "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Google Gemini Chat Model": {
-      "ai_languageModel": [
-        [
-          {
-            "node": "Basic LLM Chain",
-            "type": "ai_languageModel",
             "index": 0
           }
         ]
@@ -451,17 +651,6 @@
         [
           {
             "node": "Send Telegram Alert",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Schedule Trigger (Daily 09:00 KST)": {
-      "main": [
-        [
-          {
-            "node": "HTTP Request",
             "type": "main",
             "index": 0
           }

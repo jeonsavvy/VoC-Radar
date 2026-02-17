@@ -12,11 +12,13 @@ graph TD
     B --> C[Get Existing Reviews: Google Sheets]
     C --> D[Basic LLM Chain + Gemini]
     D --> E[Parse JSON Response]
-    E --> F[Filter Duplicates]
-    F --> G[Append row in sheet]
-    G --> H{Check Critical Priority}
-    H -->|Yes| I[Prepare Telegram Data]
-    I --> J[Send Telegram Alert]
+    E --> F{Has Parse Error?}
+    F -->|Yes| G[Append parse error row]
+    F -->|No| H[Filter Duplicates]
+    H --> I[Append row in sheet]
+    I --> J{Check Critical Priority + Rating<=2}
+    J -->|Yes| K[Prepare Telegram Data]
+    K --> L[Send Telegram Alert]
 ```
 
 ---
@@ -27,7 +29,8 @@ graph TD
 - **소스**: iTunes RSS (`limit=50`, `sortBy=mostRecent`)
 - **AI 분석 결과**: `priority`, `category`, `summary`
 - **중복 제거**: 기존 시트의 `ID` 기준 필터링
-- **알림 조건**: priority 문자열에 `Critical` 포함 시만 Telegram 전송
+- **알림 조건**: `Critical` 우선순위 + `별점 <= 2`일 때만 Telegram 전송
+- **실패 로그 경로**: JSON 파싱 실패 항목은 `Append parse error row` 노드로 시트에 적재
 
 ---
 
@@ -59,17 +62,15 @@ graph TD
 
 ## 중요: Import 후 꼭 확인할 항목
 
-현재 `workflow.json`에는 스케줄 노드 연결 키가 과거 이름(`Schedule Trigger (Daily 09:00 KST)`)으로 남아 있습니다.
-
-- 실제 노드 이름: `Schedule Trigger (Hourly Strategy)`
-- 따라서 **Import 후 Schedule → HTTP Request 연결이 정상인지** n8n 에디터에서 반드시 확인/재연결하세요.
+- 현재 버전은 스케줄 연결 키를 실제 노드명(`Schedule Trigger (Hourly Strategy)`)으로 맞춰둔 상태입니다.
+- 그래도 n8n Import 환경에 따라 연결이 끊길 수 있으니, **Import 직후 Schedule → HTTP Request 연결**은 한 번 확인하세요.
 
 ---
 
 ## 주의사항 (현재 상태)
 
-- README에서 흔히 쓰는 “별점 1~2 + Critical” 복합 조건이 아니라, 실제 IF 노드는 `priority contains Critical` 기준입니다.
-- HTTP Request 노드에 명시적 retry/timeout 옵션은 현재 JSON에 설정되어 있지 않습니다.
+- HTTP Request 노드에 timeout/retry가 포함되어 있지만, 외부 API 상태에 따라 수집 누락이 발생할 수 있습니다.
+- 파싱 오류는 별도 에러 row로 저장되므로, 운영 시 시트에서 `ID`가 `PARSE_ERROR_`로 시작하는 항목을 주기적으로 확인하세요.
 
 ---
 
