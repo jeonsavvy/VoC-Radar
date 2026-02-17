@@ -2,6 +2,8 @@
 
 iTunes App Store 리뷰를 주기적으로 수집해서, Gemini로 분류/요약하고 Google Sheets에 적재하며, `Critical + 저평점(<=2)` 조건일 때 Telegram으로 알림 보내는 n8n 워크플로우입니다.
 
+> 기본 사례 데이터는 **당근 iOS 앱**(앱 ID: `1018769995`, 국가: `kr`) 기준으로 구성되어 있습니다.
+
 ---
 
 ## 핵심 흐름
@@ -91,6 +93,17 @@ graph TD
 1. `Execute Workflow`로 수동 1회 테스트
 2. Google Sheets에 row가 들어오는지 확인
 3. 검증 완료 후 `Active` ON
+
+### 6) 다른 App Store 앱으로 바꾸는 방법
+
+1. 바꾸려는 앱의 **앱 ID**를 확인합니다.
+   - App Store URL에서 확인: `.../id123456789` 형태의 숫자
+   - 또는 Lookup API 사용: `https://itunes.apple.com/lookup?bundleId=<BUNDLE_ID>&country=<COUNTRY>`
+2. `HTTP Request` 노드 URL을 아래 형식으로 수정합니다.
+   - `https://itunes.apple.com/{country}/rss/customerreviews/limit=50/id={appId}/sortBy=mostRecent/json`
+3. 앱을 바꿀 때는 시트 분리를 권장합니다.
+   - `Sheet1` 대신 앱별 탭(예: `Daangn`, `MyTargetApp`)을 만들고
+   - `Get Existing Reviews` / `Append row in sheet` / `Append parse error row`의 `Sheet`를 동일하게 맞춥니다.
 
 ---
 
