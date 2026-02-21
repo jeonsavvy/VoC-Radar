@@ -21,7 +21,8 @@ graph TD
     H --> I["Append row in sheet"]
     I --> J{"Critical + Rating <= 2 ?"}
     J -->|"Yes"| K["Prepare Telegram Data"]
-    K --> L["Send Telegram Alert"]
+    K --> M{"Has Telegram Chat ID?"}
+    M -->|"Yes"| L["Send Telegram Alert"]
 ```
 
 ---
@@ -30,10 +31,15 @@ graph TD
 
 - **수집 주기**: 1시간 간격 스케줄
 - **소스**: iTunes RSS (`limit=50`, `sortBy=mostRecent`)
+- **리뷰 필터링**: 앱 메타 엔트리 제외, 실제 리뷰만 분석
 - **AI 분석 결과**: `priority`, `category`, `summary`
+- **LLM 안정화**: Gemini 호출 실패 시 재시도(최대 3회)
 - **중복 제거**: 기존 시트의 `ID` 기준 필터링
+- **중복 방지 강화**: 동일 실행 배치 내 중복 ID도 제거
 - **시트 초기화 자동화**: 빈 시트에서도 첫 실행 시 컬럼 자동 생성
+- **환경변수 기반 설정**: 시트/텔레그램 대상값은 코드 하드코딩 없이 주입
 - **알림 조건**: `Critical` 우선순위 + `별점 <= 2`일 때만 Telegram 전송
+- **알림 기본값 OFF**: `TELEGRAM_CHAT_ID` 미설정 시 알림 노드 자동 스킵
 - **실패 로그 경로**: JSON 파싱 실패 항목은 `Append parse error row` 노드로 시트에 적재
 
 ---
@@ -60,9 +66,19 @@ graph TD
 - **Google Sheets OAuth2**
 - **Telegram Bot**
 
-### 3) Google Sheets 설정 (가장 자주 막히는 구간)
+### 3) 환경변수 설정 (권장)
 
-아래 3개 노드 모두 같은 문서를 바라보게 맞춰주세요.
+워크플로우는 아래 환경변수를 읽습니다.
+
+- `VOC_SHEET_ID`: Google Spreadsheet ID
+- `VOC_SHEET_NAME`: 시트명 (기본값 `Sheet1`)
+- `TELEGRAM_CHAT_ID`: 텔레그램 채팅 ID (미설정 시 알림 OFF)
+
+> n8n 환경변수 설정이 어려우면, 노드에서 직접 값을 넣어도 동작합니다.
+
+### 4) Google Sheets 설정 (직접 입력 방식)
+
+아래 3개 노드가 같은 문서를 바라보게 맞춰주세요.
 
 - `Get Existing Reviews`
 - `Append row in sheet`
@@ -78,7 +94,7 @@ graph TD
 > 참고: `By ID`는 목록 선택이 아니라 **문서 ID 직접 입력 모드**입니다.
 > 아무것도 안 뜨는 게 정상일 수 있습니다.
 
-### 4) Telegram 설정
+### 5) Telegram 설정
 
 `Send Telegram Alert` 노드에서 설정합니다.
 
@@ -88,13 +104,13 @@ graph TD
 
 `chat not found` 오류가 나면 대부분 Chat ID 불일치(또는 `/start` 미실행)입니다.
 
-### 5) 실행
+### 6) 실행
 
 1. `Execute Workflow`로 수동 1회 테스트
 2. Google Sheets에 row가 들어오는지 확인
 3. 검증 완료 후 `Active` ON
 
-### 6) 다른 App Store 앱으로 바꾸는 방법
+### 7) 다른 App Store 앱으로 바꾸는 방법
 
 1. 바꾸려는 앱의 **앱 ID**를 확인합니다.
    - App Store URL에서 확인: `.../id123456789` 형태의 숫자
@@ -135,6 +151,7 @@ graph TD
 | 증상 | 원인 | 해결 |
 | --- | --- | --- |
 | Google Sheets에서 `By ID` 눌렀는데 목록이 안 보임 | `By ID`는 목록 모드가 아님 | 문서 ID를 직접 입력하거나 `By URL` 사용 |
+| Telegram 알림이 안 감 | `TELEGRAM_CHAT_ID` 미설정 또는 조건 미충족 | 환경변수 설정 확인 + `Critical && rating<=2` 데이터로 테스트 |
 | `Bad Request: chat not found` | Chat ID 오입력 / 봇 대화 시작 안 함 | `/start` 후 `getUpdates`로 chat.id 재확인 |
 | `No valid data parsed`가 저장됨 | LLM 응답이 JSON 파싱 실패 | Parse error row 원문 확인 후 프롬프트/모델 응답 점검 |
 | 실행은 되는데 신규 row가 없음 | 모두 중복 ID이거나 신규 리뷰 없음 | `Filter Duplicates` 출력 item 수 확인 |
@@ -145,6 +162,5 @@ graph TD
 
 ```bash
 ├── workflow.json
-├── assets/
 └── README.md
 ```
