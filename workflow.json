@@ -216,7 +216,7 @@
           "conditions": [
             {
               "id": "check-critical-rating",
-              "leftValue": "={{ (() => { const p = (($json.priority || $json.긴급도 || '').toString().replace(/[🚨⚠️✅]/g, '').trim().toLowerCase()); const r = Number(($json.rating || $json.별점 || '0').toString().trim()); return (p.includes('critical') && r <= 2) ? 'yes' : 'no'; })() }}",
+              "leftValue": "={{ (() => { const p = (($json.priority || $json.긴급도 || '').toString().replace(/[🚨⚠️✅]/g, '').trim().toLowerCase()); const r = Number(($json.rating || $json.별점 || '0').toString().trim()); const rawMax = ($env.VOC_ALERT_MAX_RATING || '2').toString().trim(); const parsedMax = Number(rawMax); const maxRating = Number.isFinite(parsedMax) ? Math.min(Math.max(parsedMax, 1), 5) : 2; return (p.includes('critical') && r <= maxRating) ? 'yes' : 'no'; })() }}",
               "rightValue": "yes",
               "operator": {
                 "type": "string",

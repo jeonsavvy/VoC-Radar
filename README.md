@@ -1,12 +1,13 @@
 # VoC-Radar
 
-iTunes App Store 리뷰를 주기적으로 수집해서, Gemini로 분류/요약하고 Google Sheets에 적재하며, `Critical + 저평점(<=2)` 조건일 때 Telegram으로 알림 보내는 n8n 워크플로우입니다.
+iTunes App Store 리뷰를 주기적으로 수집하고, Gemini로 분류/요약한 뒤 Google Sheets에 저장합니다.
+또한 **`Critical + 저평점`** 조건을 만족하면 Telegram으로 즉시 알림을 보냅니다.
 
-> 기본 사례 데이터는 **당근 iOS 앱**(앱 ID: `1018769995`, 국가: `kr`) 기준으로 구성되어 있습니다.
+> 기본 예시는 **당근 iOS 앱**(App ID: `1018769995`, 국가: `kr`) 기준입니다.
 
 ---
 
-## 핵심 흐름
+## 아키텍처 한눈에 보기
 
 ```mermaid
 graph TD
@@ -19,7 +20,7 @@ graph TD
     F -->|"No"| H["Filter Duplicates"]
     C --> H
     H --> I["Append row in sheet"]
-    I --> J{"Critical + Rating <= 2 ?"}
+    I --> J{"Critical + Rating <= Threshold?"}
     J -->|"Yes"| K["Prepare Telegram Data"]
     K --> M{"Has Telegram Chat ID?"}
     M -->|"Yes"| L["Send Telegram Alert"]
@@ -27,29 +28,25 @@ graph TD
 
 ---
 
-## 현재 구현 기능
+## 주요 기능
 
 - **수집 주기**: 1시간 간격 스케줄
 - **소스**: iTunes RSS (`limit=50`, `sortBy=mostRecent`)
-- **리뷰 필터링**: 앱 메타 엔트리 제외, 실제 리뷰만 분석
-- **AI 분석 결과**: `priority`, `category`, `summary`
-- **LLM 안정화**: Gemini 호출 실패 시 재시도(최대 3회)
-- **중복 제거**: 기존 시트의 `ID` 기준 필터링
-- **중복 방지 강화**: 동일 실행 배치 내 중복 ID도 제거
-- **시트 초기화 자동화**: 빈 시트에서도 첫 실행 시 컬럼 자동 생성
-- **환경변수 기반 설정**: 시트/텔레그램 대상값은 코드 하드코딩 없이 주입
-- **알림 조건**: `Critical` 우선순위 + `별점 <= 2`일 때만 Telegram 전송
-- **알림 기본값 OFF**: `TELEGRAM_CHAT_ID` 미설정 시 알림 노드 자동 스킵
-- **실패 로그 경로**: JSON 파싱 실패 항목은 `Append parse error row` 노드로 시트에 적재
+- **분석**: Gemini 기반 `priority / category / summary` 생성
+- **안정성**: HTTP + LLM 재시도(최대 3회)
+- **중복 제거**: 기존 시트 ID + 현재 배치 ID 중복 모두 제거
+- **시트 초기화 대응**: 빈 시트에서도 첫 실행 가능
+- **알림 기본값 OFF**: `TELEGRAM_CHAT_ID` 미설정 시 Telegram 자동 스킵
+- **운영 가시성**: 파싱 실패는 `PARSE_ERROR_` row로 별도 저장
 
 ---
 
-## 빠른 시작 (처음 쓰는 사람 기준)
+## 빠른 시작
 
 ### 0) 준비물
 
-- n8n 인스턴스 (Self-hosted/Cloud)
-- Google Sheets 문서 1개 (빈 시트 가능)
+- n8n 인스턴스 (Self-hosted 또는 Cloud)
+- Google Sheets 문서 1개
 - Google Gemini API Credential
 - Telegram Bot Token + Chat ID
 
@@ -60,7 +57,7 @@ graph TD
 
 ### 2) Credential 연결
 
-아래 3개 Credential을 먼저 만들고 노드에 연결합니다.
+아래 Credential을 생성 후 노드에 연결합니다.
 
 - **Google Gemini(PaLM) Api**
 - **Google Sheets OAuth2**
@@ -68,81 +65,85 @@ graph TD
 
 ### 3) 환경변수 설정 (권장)
 
-워크플로우는 아래 환경변수를 읽습니다.
+| 변수명 | 설명 | 기본값 |
+| --- | --- | --- |
+| `VOC_SHEET_ID` | Google Spreadsheet ID | 없음 (직접 입력 필요) |
+| `VOC_SHEET_NAME` | 시트명 | `Sheet1` |
+| `TELEGRAM_CHAT_ID` | Telegram Chat ID | 미설정 시 알림 OFF |
+| `VOC_ALERT_MAX_RATING` | 알림 별점 상한 (1~5) | `2` |
 
-- `VOC_SHEET_ID`: Google Spreadsheet ID
-- `VOC_SHEET_NAME`: 시트명 (기본값 `Sheet1`)
-- `TELEGRAM_CHAT_ID`: 텔레그램 채팅 ID (미설정 시 알림 OFF)
+> 환경변수를 쓰기 어렵다면 노드에서 직접 입력해도 동작합니다.
 
-> n8n 환경변수 설정이 어려우면, 노드에서 직접 값을 넣어도 동작합니다.
+### 4) Google Sheets 노드 맞추기
 
-### 4) Google Sheets 설정 (직접 입력 방식)
-
-아래 3개 노드가 같은 문서를 바라보게 맞춰주세요.
+아래 3개 노드가 **같은 문서/시트**를 바라보게 설정합니다.
 
 - `Get Existing Reviews`
 - `Append row in sheet`
 - `Append parse error row`
 
-권장 설정:
+권장 방식:
 
 1. **Document = By URL**
-2. 구글 시트 URL 전체 붙여넣기
-   예: `https://docs.google.com/spreadsheets/d/문서ID/edit#gid=0`
-3. **Sheet = By Name** → `Sheet1` (원하는 시트명으로 변경 가능)
+2. 구글 시트 URL 전체 입력
+3. **Sheet = By Name**로 시트명 지정
 
-> 참고: `By ID`는 목록 선택이 아니라 **문서 ID 직접 입력 모드**입니다.
-> 아무것도 안 뜨는 게 정상일 수 있습니다.
+> `By ID`는 목록 선택이 아니라 **문서 ID 직접 입력 모드**입니다.
 
 ### 5) Telegram 설정
 
-`Send Telegram Alert` 노드에서 설정합니다.
+`Send Telegram Alert` 노드 기준:
 
-1. Bot과 개인/그룹 채팅에서 먼저 `/start`
+1. 봇과 개인/그룹 채팅에서 `/start`
 2. `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates` 호출
-3. 응답 JSON의 `message.chat.id` 값을 `Chat ID`에 입력
+3. 응답 JSON의 `message.chat.id` 값을 `TELEGRAM_CHAT_ID`로 설정
 
-`chat not found` 오류가 나면 대부분 Chat ID 불일치(또는 `/start` 미실행)입니다.
+`chat not found`는 대부분 Chat ID 불일치 또는 `/start` 미실행입니다.
 
-### 6) 실행
+---
 
-1. `Execute Workflow`로 수동 1회 테스트
-2. Google Sheets에 row가 들어오는지 확인
-3. 검증 완료 후 `Active` ON
+## 원하는 알림 별점 설정법 (핵심)
 
-### 7) 다른 App Store 앱으로 바꾸는 방법
+### 방법 A) 권장: 환경변수로 제어
 
-1. 바꾸려는 앱의 **앱 ID**를 확인합니다.
-   - App Store URL에서 확인: `.../id123456789` 형태의 숫자
-   - 또는 Lookup API 사용: `https://itunes.apple.com/lookup?bundleId=<BUNDLE_ID>&country=<COUNTRY>`
-2. `HTTP Request` 노드 URL을 아래 형식으로 수정합니다.
+`VOC_ALERT_MAX_RATING` 값을 바꾸면 됩니다.
+
+- `1` → 1점 리뷰만 알림
+- `2` → 1~2점 알림 (기본)
+- `3` → 1~3점 알림
+
+예) 3점 이하를 알림으로 받고 싶다면:
+
+```bash
+VOC_ALERT_MAX_RATING=3
+```
+
+### 방법 B) 노드식 직접 수정
+
+`Check Critical Priority` 노드의 조건식에서 숫자 임계값(상한)을 직접 수정해도 됩니다.
+
+> 현재 우선순위 조건은 `Critical` 고정입니다.
+> `High`까지 포함하려면 같은 노드의 조건식에서 `priority` 판단 로직을 함께 수정하세요.
+
+---
+
+## 다른 App Store 앱으로 바꾸기
+
+1. 대상 앱의 App ID 확인 (`.../id123456789` 형태)
+2. `HTTP Request` 노드 URL 수정
    - `https://itunes.apple.com/{country}/rss/customerreviews/limit=50/id={appId}/sortBy=mostRecent/json`
-3. 앱을 바꿀 때는 시트 분리를 권장합니다.
-   - `Sheet1` 대신 앱별 탭(예: `Daangn`, `MyTargetApp`)을 만들고
-   - `Get Existing Reviews` / `Append row in sheet` / `Append parse error row`의 `Sheet`를 동일하게 맞춥니다.
+3. 앱별 시트 분리를 권장
+   - 예: `Daangn`, `MyTargetApp` 탭을 분리해서 운영
 
 ---
 
-## 중요: Import 후 꼭 확인할 항목
+## 운영 체크리스트
 
-- 현재 버전은 스케줄 연결 키를 실제 노드명(`Schedule Trigger (Hourly Strategy)`)으로 맞춰둔 상태입니다.
-- 그래도 n8n Import 환경에 따라 연결이 끊길 수 있으니, **Import 직후 Schedule → HTTP Request 연결**은 한 번 확인하세요.
-
----
-
-## 주의사항 (현재 상태)
-
-- HTTP Request 노드에 timeout/retry가 포함되어 있지만, 외부 API 상태에 따라 수집 누락이 발생할 수 있습니다.
-- 파싱 오류는 별도 에러 row로 저장되므로, 운영 시 시트에서 `ID`가 `PARSE_ERROR_`로 시작하는 항목을 주기적으로 확인하세요.
-
----
-
-## 실행 결과 해석 가이드
-
-- `Get Existing Reviews`가 0건이어도 정상입니다. (첫 실행/빈 시트)
-- `Append row in sheet`가 실행되면 신규 리뷰 저장 성공입니다.
-- Telegram은 **Critical + 별점 <= 2** 조건일 때만 옵니다.
-  (알림이 안 와도 저장은 정상일 수 있음)
+- Import 직후 **Schedule → HTTP Request 연결** 확인
+- 수동 `Execute Workflow` 1회로 초기 검증
+- Google Sheets 저장 여부 확인
+- Telegram은 조건 충족 시에만 발송되는지 확인
+- `PARSE_ERROR_` row를 주기적으로 점검
 
 ---
 
@@ -150,11 +151,11 @@ graph TD
 
 | 증상 | 원인 | 해결 |
 | --- | --- | --- |
-| Google Sheets에서 `By ID` 눌렀는데 목록이 안 보임 | `By ID`는 목록 모드가 아님 | 문서 ID를 직접 입력하거나 `By URL` 사용 |
-| Telegram 알림이 안 감 | `TELEGRAM_CHAT_ID` 미설정 또는 조건 미충족 | 환경변수 설정 확인 + `Critical && rating<=2` 데이터로 테스트 |
-| `Bad Request: chat not found` | Chat ID 오입력 / 봇 대화 시작 안 함 | `/start` 후 `getUpdates`로 chat.id 재확인 |
-| `No valid data parsed`가 저장됨 | LLM 응답이 JSON 파싱 실패 | Parse error row 원문 확인 후 프롬프트/모델 응답 점검 |
-| 실행은 되는데 신규 row가 없음 | 모두 중복 ID이거나 신규 리뷰 없음 | `Filter Duplicates` 출력 item 수 확인 |
+| `By ID`에서 문서 목록이 안 보임 | `By ID`는 목록 모드가 아님 | 문서 ID 직접 입력 또는 `By URL` 사용 |
+| Telegram 알림이 안 감 | Chat ID 미설정 또는 조건 미충족 | `TELEGRAM_CHAT_ID` / `VOC_ALERT_MAX_RATING` / 조건 데이터를 점검 |
+| `Bad Request: chat not found` | Chat ID 오류 또는 `/start` 미실행 | `/start` 실행 후 `getUpdates`로 `chat.id` 재확인 |
+| `No valid data parsed` 저장됨 | LLM 응답 JSON 파싱 실패 | `Append parse error row`의 원문 확인 후 프롬프트/모델 응답 점검 |
+| 실행되는데 신규 row가 없음 | 신규 리뷰 없음 또는 전부 중복 | `Filter Duplicates` 출력 item 수 확인 |
 
 ---
 
