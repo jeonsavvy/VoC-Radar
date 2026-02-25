@@ -1,0 +1,86 @@
+import { useEffect, useState } from 'react';
+import { useParams } from 'react-router-dom';
+import { getOverview } from '../lib/api';
+import type { PublicOverview } from '../types';
+
+const defaultCountry = import.meta.env.VITE_DEFAULT_COUNTRY || 'kr';
+
+export function AppOverviewPage() {
+  const params = useParams();
+  const appId = params.appId || import.meta.env.VITE_DEFAULT_APP_ID || '1018769995';
+
+  const [overview, setOverview] = useState<PublicOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+
+    setLoading(true);
+    setError(null);
+
+    getOverview(appId, defaultCountry)
+      .then((response) => {
+        if (!mounted) {
+          return;
+        }
+        setOverview(response.data);
+      })
+      .catch((err) => {
+        if (!mounted) {
+          return;
+        }
+        setError(err instanceof Error ? err.message : '요약 데이터 조회에 실패했습니다.');
+      })
+      .finally(() => {
+        if (mounted) {
+          setLoading(false);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [appId]);
+
+  return (
+    <section className="panel" aria-labelledby="app-summary-heading">
+      <h2 id="app-summary-heading">앱 요약 리포트</h2>
+      <p className="muted">
+        App ID: <code>{appId}</code> · Country: <code>{defaultCountry}</code>
+      </p>
+
+      {loading && <p>불러오는 중...</p>}
+      {error && <p className="error">{error}</p>}
+
+      {overview && !loading && !error && (
+        <dl className="metric-grid">
+          <div>
+            <dt>전체 리뷰</dt>
+            <dd>{overview.total_reviews.toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt>Critical 건수</dt>
+            <dd>{overview.critical_count.toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt>저평점(≤2) 건수</dt>
+            <dd>{overview.low_rating_count.toLocaleString()}</dd>
+          </div>
+          <div>
+            <dt>평균 평점</dt>
+            <dd>{overview.average_rating.toFixed(2)}</dd>
+          </div>
+          <div>
+            <dt>긍정 비율(4~5)</dt>
+            <dd>{overview.positive_ratio.toFixed(1)}%</dd>
+          </div>
+          <div>
+            <dt>마지막 리뷰 시각</dt>
+            <dd>{overview.last_review_at ? new Date(overview.last_review_at).toLocaleString() : '-'}</dd>
+          </div>
+        </dl>
+      )}
+    </section>
+  );
+}

@@ -31,3 +31,11 @@ build
 __pycache__
 venv
 .venv
+
+# Cloudflare
+.wrangler/
+.dev.vars
+apps/worker/.dev.vars
+
+# Local env per app
+apps/web/.env.local

@@ -1,0 +1,16 @@
+{
+  "name": "voc-radar",
+  "private": true,
+  "version": "0.2.0",
+  "workspaces": [
+    "apps/web",
+    "apps/worker"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @voc-radar/web && npm run build --workspace @voc-radar/worker",
+    "typecheck": "npm run typecheck --workspace @voc-radar/web && npm run typecheck --workspace @voc-radar/worker",
+    "lint": "npm run lint --workspace @voc-radar/web && npm run lint --workspace @voc-radar/worker",
+    "dev:web": "npm run dev --workspace @voc-radar/web",
+    "dev:worker": "npm run dev --workspace @voc-radar/worker"
+  }
+}

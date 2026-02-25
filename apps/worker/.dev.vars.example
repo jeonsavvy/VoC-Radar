@@ -1,0 +1,8 @@
+SUPABASE_URL=https://<your-project>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+SUPABASE_ANON_KEY=<anon-key>
+PIPELINE_WEBHOOK_SECRET=<strong-secret>
+DETAIL_VIEW_ENABLED=true
+API_TIMEOUT_MS=10000
+API_RETRY_COUNT=2
+CORS_ORIGIN=http://localhost:5173
