@@ -8,9 +8,12 @@
   ],
   "scripts": {
     "build": "npm run build --workspace @voc-radar/web && npm run build --workspace @voc-radar/worker",
+    "build:web": "npm run build --workspace @voc-radar/web",
+    "build:worker": "npm run build --workspace @voc-radar/worker",
     "typecheck": "npm run typecheck --workspace @voc-radar/web && npm run typecheck --workspace @voc-radar/worker",
     "lint": "npm run lint --workspace @voc-radar/web && npm run lint --workspace @voc-radar/worker",
     "dev:web": "npm run dev --workspace @voc-radar/web",
-    "dev:worker": "npm run dev --workspace @voc-radar/worker"
+    "dev:worker": "npm run dev --workspace @voc-radar/worker",
+    "deploy:worker": "npm run deploy --workspace @voc-radar/worker"
   }
 }

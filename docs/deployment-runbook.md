@@ -32,11 +32,17 @@ select count(*) from public.pipeline_runs;
 
 ## 2) Worker 배포
 
-`apps/worker` 기준:
+⚠️ 이 저장소는 npm workspace라서 **repo 루트에서 `npx wrangler deploy`를 직접 실행하면 실패**합니다.
+
+권장:
 
 ```bash
-npm run dev:worker
-# 또는
+npm run deploy:worker
+```
+
+또는:
+
+```bash
 cd apps/worker
 npx wrangler deploy
 ```
@@ -71,7 +77,7 @@ curl https://<worker-domain>/api/health
 빌드 커맨드:
 
 ```bash
-npm run build --workspace @voc-radar/web
+npm run build:web
 ```
 
 Output dir:
@@ -79,6 +85,10 @@ Output dir:
 ```bash
 apps/web/dist
 ```
+
+주의:
+- Pages 프로젝트의 deploy command에 `wrangler deploy`를 넣지 마세요.
+- Pages는 build output(`apps/web/dist`)만 배포하면 됩니다.
 
 ---
 
