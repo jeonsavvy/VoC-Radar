@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getCategories, getOverview, getTrends } from '../lib/api';
+import { getCategories, getOverview, getPublicApps, getTrends } from '../lib/api';
 import type { AppSelection } from '../lib/appSelection';
 import type { PublicCategoryPoint, PublicOverview, PublicTrendPoint } from '../types';
 
@@ -22,6 +22,7 @@ export function HomePage({ selection }: Props) {
   const [overview, setOverview] = useState<PublicOverview | null>(null);
   const [trends, setTrends] = useState<PublicTrendPoint[]>([]);
   const [categories, setCategories] = useState<PublicCategoryPoint[]>([]);
+  const [appName, setAppName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,19 +62,41 @@ export function HomePage({ selection }: Props) {
     };
   }, [selection.appId, selection.country]);
 
-  const latestTrend = trends.length > 0 ? trends[trends.length - 1] : null;
-  const previousTrend = trends.length > 1 ? trends[trends.length - 2] : null;
+  useEffect(() => {
+    let active = true;
 
-  const reviewDelta = useMemo(() => {
-    if (!latestTrend || !previousTrend) {
-      return null;
-    }
-    const delta = latestTrend.total_reviews - previousTrend.total_reviews;
-    const direction = delta >= 0 ? '증가' : '감소';
-    return `전일 대비 ${Math.abs(delta)}건 ${direction}`;
-  }, [latestTrend, previousTrend]);
+    getPublicApps(100)
+      .then((response) => {
+        if (!active) {
+          return;
+        }
+        const found = response.data.find(
+          (item) => item.app_store_id === selection.appId && item.country.toLowerCase() === selection.country.toLowerCase(),
+        );
+        setAppName(found?.app_name?.trim() || null);
+      })
+      .catch(() => {
+        if (active) {
+          setAppName(null);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selection.appId, selection.country]);
 
   const topCategories = categories.slice(0, 3);
+  const recent7Days = trends.slice(-7);
+  const recentReviewCount = useMemo(
+    () => recent7Days.reduce((acc, point) => acc + point.total_reviews, 0),
+    [recent7Days],
+  );
+  const recentCriticalCount = useMemo(
+    () => recent7Days.reduce((acc, point) => acc + point.critical_count, 0),
+    [recent7Days],
+  );
+  const recentDailyAverage = recent7Days.length > 0 ? recentReviewCount / recent7Days.length : 0;
 
   return (
     <div className="story-grid">
@@ -86,7 +109,8 @@ export function HomePage({ selection }: Props) {
             제품 우선순위를 <span>정렬</span>합니다.
           </h2>
           <p className="lead-copy">
-            선택한 앱(<code>{selection.appId}</code> / <code>{selection.country}</code>) 기준으로 누적 리뷰 지표를 바로 확인하세요.
+            선택 앱: <strong>{appName || 'Unknown App'}</strong> (
+            <code>{selection.appId}</code> / <code>{selection.country}</code>) 기준으로 누적 지표와 최근 분석 결과를 확인하세요.
           </p>
 
           <div className="hero-actions">
@@ -134,20 +158,20 @@ export function HomePage({ selection }: Props) {
           <>
             <dl className="metric-grid">
               <div>
-                <dt>저평점(≤2)</dt>
-                <dd>{overview.low_rating_count.toLocaleString()}</dd>
+                <dt>최근 7일 리뷰 수</dt>
+                <dd>{recentReviewCount.toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>최근 7일 일평균</dt>
+                <dd>{recentDailyAverage > 0 ? recentDailyAverage.toFixed(1) : '-'}</dd>
+              </div>
+              <div>
+                <dt>최근 7일 Critical</dt>
+                <dd>{recentCriticalCount.toLocaleString()}</dd>
               </div>
               <div>
                 <dt>최신 리뷰 시각</dt>
-                <dd>{overview.last_review_at ? new Date(overview.last_review_at).toLocaleDateString() : '-'}</dd>
-              </div>
-              <div>
-                <dt>최근 일일 리뷰량</dt>
-                <dd>{latestTrend ? latestTrend.total_reviews.toLocaleString() : '-'}</dd>
-              </div>
-              <div>
-                <dt>전일 변화</dt>
-                <dd>{reviewDelta || '-'}</dd>
+                <dd>{overview.last_review_at ? new Date(overview.last_review_at).toLocaleString() : '-'}</dd>
               </div>
             </dl>
 

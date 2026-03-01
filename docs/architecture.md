@@ -11,8 +11,8 @@
 
 1. Frontend can enqueue app analysis requests (`pipeline_jobs`).
 2. n8n claims queued jobs first, then fallback app 설정으로 실행.
-3. n8n fetches iTunes RSS.
-4. n8n prefilters existing review IDs via Worker internal endpoint.
+3. n8n fetches iTunes reviews through Worker internal endpoint (`/fetch-reviews`, 최대 500).
+4. n8n prefilters existing review IDs via Worker internal endpoint (`/filter-new-reviews`).
 5. n8n requests Gemini classification only for new reviews.
 6. n8n normalizes + signs payload.
 7. Worker verifies HMAC + upserts Supabase tables.
@@ -27,6 +27,5 @@
 
 ## Rollback
 
-- Keep dual-write to Google Sheets for temporary fallback.
-- Keep `n8n/workflow.v1.json` as rollback baseline.
+- Rollback via previous Git commit workflow re-import.
 - Set `DETAIL_VIEW_ENABLED=false` to disable private exposure.

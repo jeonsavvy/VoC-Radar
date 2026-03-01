@@ -3,6 +3,7 @@ import type {
   ClaimJobRequest,
   CreatePipelineJobRequest,
   Env,
+  FetchReviewsRequest,
   FilterNewReviewsRequest,
   JobStatusRequest,
   ParseErrorRequest,
@@ -17,6 +18,8 @@ const JSON_HEADERS = {
 const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_RETRY_COUNT = 2;
 const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
+const ITUNES_REVIEWS_PER_PAGE = 50;
+const MAX_FETCH_REVIEW_LIMIT = 500;
 
 type JsonValue = Record<string, unknown> | unknown[];
 
@@ -320,6 +323,127 @@ function normalizeRating(rawValue: unknown) {
     return 0;
   }
   return Math.max(0, Math.min(5, Math.round(numeric)));
+}
+
+type NormalizedReview = {
+  reviewId: string;
+  author: string;
+  content: string;
+  rating: number;
+  reviewedAt: string;
+};
+
+async function handleInternalFetchReviews(env: Env, request: Request, rawBody: string) {
+  const verified = await verifySignedRequest(env, request, rawBody);
+  if (!verified) {
+    return unauthorized(env, 'invalid signature');
+  }
+
+  let body: FetchReviewsRequest;
+  try {
+    body = JSON.parse(rawBody) as FetchReviewsRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+
+  const appStoreId = normalizeAppStoreId(body?.appStoreId);
+  if (!appStoreId) {
+    return badRequest(env, 'appStoreId must be numeric');
+  }
+
+  const country = normalizeCountry(body?.country);
+  const requestedLimit = clampLimit(String(body?.limit ?? MAX_FETCH_REVIEW_LIMIT), MAX_FETCH_REVIEW_LIMIT, MAX_FETCH_REVIEW_LIMIT);
+  const limit = Math.min(MAX_FETCH_REVIEW_LIMIT, requestedLimit);
+
+  const maxPages = Math.max(1, Math.ceil(limit / ITUNES_REVIEWS_PER_PAGE));
+  const reviews: NormalizedReview[] = [];
+  const seenIds = new Set<string>();
+  let pagesFetched = 0;
+
+  for (let page = 1; page <= maxPages && reviews.length < limit; page += 1) {
+    const url = `https://itunes.apple.com/${country}/rss/customerreviews/page=${page}/limit=${ITUNES_REVIEWS_PER_PAGE}/id=${appStoreId}/sortBy=mostRecent/json`;
+    const response = await fetchWithRetry(env, url, {
+      method: 'GET',
+      timeoutMs: 30000,
+      retries: 2,
+      idempotent: true,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      if (page === 1) {
+        throw new Error(`iTunes fetch failed (${response.status}): ${text}`);
+      }
+      break;
+    }
+
+    pagesFetched += 1;
+
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = (await response.json()) as Record<string, unknown>;
+    } catch {
+      if (page === 1) {
+        throw new Error('iTunes response parse failed');
+      }
+      break;
+    }
+
+    const feed = payload.feed as Record<string, unknown> | undefined;
+    const entries = Array.isArray(feed?.entry) ? (feed.entry as Array<Record<string, unknown>>) : [];
+    if (entries.length === 0) {
+      break;
+    }
+
+    let addedInPage = 0;
+    for (const entry of entries) {
+      const reviewId = String((entry.id as { label?: string } | undefined)?.label ?? entry.id ?? '').trim();
+      const rating = normalizeRating((entry['im:rating'] as { label?: string } | undefined)?.label ?? entry['im:rating']);
+
+      if (!reviewId || rating <= 0 || seenIds.has(reviewId)) {
+        continue;
+      }
+      seenIds.add(reviewId);
+      addedInPage += 1;
+
+      reviews.push({
+        reviewId,
+        author: String(
+          ((entry.author as { name?: { label?: string } } | undefined)?.name?.label ??
+            (entry.author as { name?: string } | undefined)?.name ??
+            'unknown'),
+        ).trim(),
+        content: String(
+          ((entry.content as { label?: string; '#text'?: string } | undefined)?.label ??
+            (entry.content as { '#text'?: string } | undefined)?.['#text'] ??
+            entry.content ??
+            ''),
+        ).trim(),
+        rating,
+        reviewedAt: normalizeReviewedAt((entry.updated as { label?: string } | undefined)?.label ?? entry.updated),
+      });
+
+      if (reviews.length >= limit) {
+        break;
+      }
+    }
+
+    if (addedInPage === 0) {
+      break;
+    }
+  }
+
+  return jsonResponse(env, 200, {
+    ok: true,
+    data: {
+      appStoreId,
+      country,
+      limit,
+      pagesFetched,
+      reviews,
+      totalFetched: reviews.length,
+    },
+  });
 }
 
 async function handlePublicOverview(env: Env, request: Request) {
@@ -1129,6 +1253,10 @@ export default {
 
       if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/claim-job') {
         return await handleInternalClaimJob(env, request, await request.text());
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/fetch-reviews') {
+        return await handleInternalFetchReviews(env, request, await request.text());
       }
 
       if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/job-status') {

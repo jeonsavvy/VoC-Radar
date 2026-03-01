@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { isValidAppId, normalizeCountry, type AppSelection } from '../lib/appSelection';
+import { getPublicApps } from '../lib/api';
 
 type Props = {
   loggedIn: boolean;
@@ -12,10 +13,35 @@ type Props = {
 export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Props) {
   const [appIdInput, setAppIdInput] = useState(selection.appId);
   const [countryInput, setCountryInput] = useState(selection.country);
+  const [appName, setAppName] = useState<string | null>(null);
 
   useEffect(() => {
     setAppIdInput(selection.appId);
     setCountryInput(selection.country);
+  }, [selection.appId, selection.country]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    getPublicApps(100)
+      .then((response) => {
+        if (!mounted) {
+          return;
+        }
+        const found = response.data.find(
+          (item) => item.app_store_id === selection.appId && item.country.toLowerCase() === selection.country.toLowerCase(),
+        );
+        setAppName(found?.app_name?.trim() || null);
+      })
+      .catch(() => {
+        if (mounted) {
+          setAppName(null);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
   }, [selection.appId, selection.country]);
 
   const navItems = [
@@ -74,9 +100,14 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
               로그아웃
             </button>
           ) : (
-            <NavLink to="/login" className="ghost-button">
-              로그인
-            </NavLink>
+            <div className="auth-links">
+              <NavLink to="/login" className="ghost-button">
+                로그인
+              </NavLink>
+              <NavLink to="/login?mode=signup" className="ghost-button">
+                회원가입
+              </NavLink>
+            </div>
           )}
         </div>
 
@@ -100,6 +131,11 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
             적용
           </button>
         </form>
+
+        <p className="topbar-help">
+          선택 앱: <strong>{appName || 'Unknown App'}</strong> · ID <code>{selection.appId}</code> ·{' '}
+          <code>{selection.country}</code> · 앱스토어 URL의 <code>id숫자</code>가 App ID입니다.
+        </p>
       </header>
 
       <main className="content" role="main">

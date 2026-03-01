@@ -44,6 +44,18 @@ a {
   align-items: center;
 }
 
+.topbar-help {
+  margin: 0;
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.auth-links {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+
 .topbar-form {
   display: inline-grid;
   grid-template-columns: auto minmax(120px, 160px) auto 64px auto;
@@ -187,6 +199,10 @@ a {
 .ghost-button {
   background: transparent;
   color: var(--text);
+}
+
+.ghost-button.active-tab {
+  background: #1a2440;
 }
 
 .kpi-panel {
@@ -346,12 +362,34 @@ th {
   max-width: 360px;
 }
 
+.auth-mode-switch {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.8rem;
+}
+
+.helper-panel {
+  border: 1px solid var(--border);
+  background: #0d152a;
+  border-radius: 0.8rem;
+  padding: 0.8rem;
+  margin: 0.8rem 0;
+}
+
+.helper-panel h3 {
+  margin: 0 0 0.55rem;
+}
+
 .inline-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 0.6rem;
   margin-top: 0.8rem;
   margin-bottom: 0.7rem;
+}
+
+.compact-form {
+  margin-top: 0.5rem;
 }
 
 .inline-form button {

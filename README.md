@@ -7,22 +7,22 @@ VoC-Radar는 App Store 리뷰 VoC 파이프라인을 **n8n 오케스트레이션
 
 ```mermaid
 graph TD
-    A[Schedule Trigger in n8n] --> B[iTunes RSS Fetch]
-    B --> C[Gemini Classification]
-    C --> D[Parse + Normalize]
-    D --> E[Dual Write: Google Sheets]
-    D --> F[Signed Internal Webhook: /upsert-reviews]
-    F --> G[Supabase: reviews/review_ai/pipeline_runs]
-    G --> H[Signed Internal Webhook: /publish]
-    H --> I[Cloudflare Worker Cache Version Update]
-    I --> J[Cloudflare Pages Frontend]
-    J --> K[Public APIs / Private APIs]
-    D --> L[Parse Error Branch]
-    L --> M[Signed Internal Webhook: /parse-error]
-    M --> N[Supabase parse_errors]
-    C --> O[Critical + Rating<=Threshold]
-    O --> P[Telegram Alert]
-    O --> Q[Signed Internal Webhook: /alert-events]
+    A[Schedule Trigger in n8n] --> B[Claim Job from Worker Queue]
+    B --> C[Signed Internal Webhook: /fetch-reviews]
+    C --> D[Signed Internal Webhook: /filter-new-reviews]
+    D --> E[Gemini Classification]
+    E --> F[Parse + Normalize]
+    F --> G[Signed Internal Webhook: /upsert-reviews]
+    G --> H[Supabase: reviews/review_ai/pipeline_runs]
+    H --> I[Signed Internal Webhook: /publish]
+    I --> J[Cloudflare Worker Cache Version Update]
+    J --> K[Cloudflare Pages Frontend]
+    K --> L[Public APIs / Private APIs]
+    F --> M[Parse Error Branch]
+    M --> N[Signed Internal Webhook: /parse-error]
+    N --> O[Supabase parse_errors]
+    F --> P[Critical 이벤트 적재]
+    P --> Q[Signed Internal Webhook: /alert-events]
     Q --> R[Supabase alert_events]
 ```
 
@@ -30,8 +30,7 @@ graph TD
 
 ## 구성 요소
 
-- `workflow.json`: n8n v2 워크플로우 (Supabase/Worker 연동 포함)
-- `n8n/workflow.v1.json`: 기존 시트 중심 워크플로우 백업
+- `n8n/workflow.supabase-only.json`: 단일 운영 워크플로우 (요청 큐 + 최대 500개 리뷰 수집)
 - `apps/worker`: Cloudflare Worker(BFF + internal webhook)
 - `apps/web`: Cloudflare Pages용 React 리포트 사이트
 - `supabase/migrations`: 스키마/RLS/함수 마이그레이션
@@ -111,8 +110,7 @@ npm run dev:web
 
 n8n import 파일 선택:
 
-- `n8n/workflow.supabase-only.json` (권장, Google Sheets 의존 없음)
-- `workflow.json` (Dual-write: Supabase + Google Sheets)
+- `n8n/workflow.supabase-only.json` (단일 운영본)
 
 import 후 아래 환경변수 사용:
 
@@ -124,11 +122,9 @@ import 후 아래 환경변수 사용:
 | `VOC_APP_COUNTRY` | 국가 코드 (`kr` 등) |
 | `VOC_APP_NAME` | 앱 표시명 |
 | `VOC_ALLOW_FALLBACK` | `true`면 큐 비어도 fallback 앱 수집, 기본 `false` |
+| `VOC_FETCH_LIMIT` | 요청당 수집 최대 개수(기본/최대 500) |
 | `VOC_MODEL_VERSION` | 모델 버전 라벨 |
 | `VOC_ALERT_MAX_RATING` | 알림 평점 상한 |
-| `VOC_SHEET_ID` | Dual-write 백업용 Google Sheet ID |
-| `VOC_SHEET_NAME` | Dual-write 시트명 |
-| `TELEGRAM_CHAT_ID` | Telegram 알림 대상 (없으면 알림 OFF) |
 
 > v2.1부터는 `Analyze` 화면에서 앱/국가를 요청 큐로 등록할 수 있어, 고정값(`VOC_APP_*`)은 fallback 용도로만 사용 가능합니다.
 
@@ -153,6 +149,7 @@ import 후 아래 환경변수 사용:
 ### Internal (n8n 전용, HMAC 서명 필수)
 
 - `POST /api/internal/pipeline/claim-job`
+- `POST /api/internal/pipeline/fetch-reviews`
 - `POST /api/internal/pipeline/job-status`
 - `POST /api/internal/pipeline/filter-new-reviews`
 - `POST /api/internal/pipeline/upsert-reviews`
@@ -168,7 +165,7 @@ import 후 아래 환경변수 사용:
 - 내부 API는 `x-voc-timestamp` + `x-voc-signature`(HMAC SHA-256) 검증
 - 외부 호출(Supabase/Auth)은 timeout + retry(멱등성 고려) 적용
 - n8n은 LLM 호출 전 `filter-new-reviews`를 통해 이미 처리된 review_id를 제거
-- Dual-write 유지로 롤백 경로 보장 (`n8n/workflow.v1.json`)
+- Telegram 노드는 제거되어 외부 메신저 연동 없이 동작
 
 ---
 

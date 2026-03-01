@@ -34,7 +34,28 @@
     },
     {
       "parameters": {
-        "url": "={{ 'https://itunes.apple.com/' + (($json.country || 'kr').toString().toLowerCase()) + '/rss/customerreviews/limit=50/id=' + ($json.appStoreId || '1018769995').toString().trim() + '/sortBy=mostRecent/json' }}",
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/fetch-reviews' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-signature",
+              "value": "={{ $json.fetchSignature }}"
+            },
+            {
+              "name": "x-voc-timestamp",
+              "value": "={{ $json.fetchTimestamp }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.fetchPayload }}",
         "options": {
           "response": {
             "response": {
@@ -156,35 +177,6 @@
     },
     {
       "parameters": {
-        "jsCode": "const inputItems = $input.all();\nif (!Array.isArray(inputItems) || inputItems.length === 0) {\n  return [];\n}\n\nconst asText = (value, fallback = 'N/A') => {\n  const normalized = (value ?? '').toString().trim();\n  return normalized.length > 0 ? normalized : fallback;\n};\n\nconst first = inputItems[0]?.json || {};\nconst appStoreId = (first.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (first.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst runId = (first.runId || `RUN_${Date.now()}`).toString();\n\nreturn inputItems.map(({ json = {} }) => ({\n  json: {\n    reviewId: asText(json.ID || json.id, `MISSING_ID_${Date.now()}`),\n    runId,\n    appStoreId,\n    country,\n    author: asText(json.author || json.작성자, '알 수 없음'),\n    rating: asText(json.rating || json.별점),\n    date: asText(json.date || json.작성일시),\n    content: asText(json.content || json.원본),\n    priority: asText(json.priority || json.긴급도),\n    category: asText(json.category || json.유형),\n    summary: asText(json.summary || json.요약),\n  }\n}));"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1728,
-        144
-      ],
-      "id": "prepare-telegram-data",
-      "name": "Prepare Telegram Data"
-    },
-    {
-      "parameters": {
-        "chatId": "={{ $env.TELEGRAM_CHAT_ID || '' }}",
-        "text": "=🚨 긴급 리뷰 알림\n작성자: {{ $json.author || '알 수 없음' }}\n별점: {{ $json.rating || 'N/A' }}\n긴급도: {{ $json.priority || 'N/A' }}\n유형: {{ $json.category || 'N/A' }}\n요약: {{ $json.summary || 'N/A' }}\n\n원본 리뷰:\n{{ $json.content || 'N/A' }}\n\n작성일시: {{ $json.date || 'N/A' }}",
-        "additionalFields": {}
-      },
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        2144,
-        144
-      ],
-      "id": "telegram-notification",
-      "name": "Send Telegram Alert",
-      "notes": "텔레그램 알림 전송\n\nCritical 리뷰 발견 시 텔레그램으로 알림 전송\n설정: TELEGRAM_CHAT_ID 환경변수와 Telegram Bot Credential을 연결하세요."
-    },
-    {
-      "parameters": {
         "conditions": {
           "options": {
             "caseSensitive": false,
@@ -217,38 +209,6 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": false,
-            "leftValue": "",
-            "typeValidation": "strict"
-          },
-          "conditions": [
-            {
-              "id": "has-telegram-chat-id",
-              "leftValue": "={{ ($env.TELEGRAM_CHAT_ID || '').toString().trim() }}",
-              "rightValue": "",
-              "operator": {
-                "type": "string",
-                "operation": "notEmpty"
-              }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
-      },
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        1936,
-        144
-      ],
-      "id": "check-telegram-chat-id",
-      "name": "Has Telegram Chat ID?"
-    },
-    {
-      "parameters": {
         "jsCode": "const inputItems = $input.all();\nif (!Array.isArray(inputItems) || inputItems.length === 0) {\n  return [];\n}\n\nconst context = inputItems[0]?.json || {};\nconst appStoreId = (context.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (context.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst appName = (context.appName || $env.VOC_APP_NAME || '').toString().trim();\nconst runId = (context.runId || `RUN_${Date.now()}`).toString();\nconst jobId = (context.jobId || '').toString().trim() || null;\n\nconst normalizePriority = (value) => {\n  const normalized = (value ?? '')\n    .toString()\n    .replace(/[🚨⚠️✅]/g, '')\n    .trim()\n    .toLowerCase();\n\n  if (normalized.includes('critical')) {\n    return 'Critical';\n  }\n  if (normalized.includes('high')) {\n    return 'High';\n  }\n  return 'Normal';\n};\n\nconst reviews = inputItems.map(({ json = {} }) => ({\n  reviewId: (json.ID || json.id || '').toString().trim(),\n  rating: Number((json.rating || json.별점 || '0').toString().trim()) || 0,\n  author: (json.author || json.작성자 || '').toString().trim(),\n  content: (json.content || json.원본 || '').toString().trim(),\n  reviewedAt: (json.date || json.작성일시 || new Date().toISOString()).toString(),\n  priority: normalizePriority(json.priority || json.긴급도),\n  category: (json.category || json.유형 || '기타').toString().trim(),\n  summary: (json.summary || json.요약 || '분류 결과 없음').toString().trim(),\n  modelVersion: ($env.VOC_MODEL_VERSION || 'gemini').toString(),\n  rawSource: {\n    id: json.ID || json.id,\n    content: json.content || json.원본,\n    author: json.author || json.작성자,\n    rating: json.rating || json.별점,\n    date: json.date || json.작성일시,\n  },\n})).filter((review) => review.reviewId && review.rating > 0);\n\nif (reviews.length === 0) {\n  return [];\n}\n\nreturn [{\n  json: {\n    runId,\n    jobId,\n    payload: {\n      runId,\n      jobId,\n      source: 'n8n',\n      app: {\n        appStoreId,\n        country,\n        appName,\n      },\n      reviews,\n    }\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
@@ -263,7 +223,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    runId: $json.runId || payload.runId,\n    payload,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -340,7 +300,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -417,7 +377,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -476,7 +436,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const inputItems = $input.all();\nif (!Array.isArray(inputItems) || inputItems.length === 0) {\n  return [];\n}\n\nconst first = inputItems[0].json || {};\nconst appStoreId = (first.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (first.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst runId = (first.runId || `RUN_${Date.now()}`).toString();\n\nconst alerts = inputItems.map(({ json = {} }) => ({\n  reviewId: (json.reviewId || '').toString().trim(),\n  rating: Number((json.rating || '0').toString().trim()) || 0,\n  priority: (json.priority || '').toString().trim(),\n  category: (json.category || '').toString().trim(),\n  summary: (json.summary || '').toString().trim(),\n  sentAt: new Date().toISOString(),\n})).filter((alert) => alert.reviewId && alert.rating > 0);\n\nif (alerts.length === 0) {\n  return [];\n}\n\nreturn [{\n  json: {\n    runId,\n    payload: {\n      runId,\n      appStoreId,\n      country,\n      alerts,\n    }\n  }\n}];"
+        "jsCode": "const inputItems = $input.all();\nif (!Array.isArray(inputItems) || inputItems.length === 0) {\n  return [];\n}\n\nconst first = inputItems[0].json || {};\nconst appStoreId = (first.appStoreId || $env.VOC_APP_ID || '').toString().trim();\nconst country = (first.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst runId = (first.runId || `RUN_${Date.now()}`).toString();\n\nif (!appStoreId) {\n  return [];\n}\n\nconst alerts = inputItems.map(({ json = {} }) => ({\n  reviewId: (json.reviewId || json.ID || json.id || '').toString().trim(),\n  rating: Number((json.rating || json.별점 || '0').toString().trim()) || 0,\n  priority: (json.priority || json.긴급도 || '').toString().trim(),\n  category: (json.category || json.유형 || '').toString().trim(),\n  summary: (json.summary || json.요약 || '').toString().trim(),\n  sentAt: new Date().toISOString(),\n})).filter((alert) => alert.reviewId && alert.rating > 0);\n\nif (alerts.length === 0) {\n  return [];\n}\n\nreturn [{\n  json: {\n    runId,\n    payload: {\n      runId,\n      appStoreId,\n      country,\n      alerts,\n    }\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -490,7 +450,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -567,7 +527,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -626,7 +586,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $json.data || {};\nconst status = (data.status || '').toString().trim().toLowerCase();\nconst jobId = (data.jobId || '').toString().trim() || null;\n\nif (!jobId && status !== 'fallback') {\n  console.log('No queued job. Stop this run.');\n  return [];\n}\n\nconst appStoreId = (data.appStoreId || $env.VOC_APP_ID || '').toString().trim();\nif (!appStoreId) {\n  console.log('Missing appStoreId. Stop this run.');\n  return [];\n}\n\nconst country = (data.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst appName = (data.appName || $env.VOC_APP_NAME || '').toString().trim();\nconst runId = `RUN_${Date.now()}`;\n\nreturn [{\n  json: {\n    runId,\n    jobId,\n    appStoreId,\n    country,\n    appName,\n    status,\n  }\n}];"
+        "jsCode": "const data = $json.data || {};\nconst status = (data.status || '').toString().trim().toLowerCase();\nconst jobId = (data.jobId || '').toString().trim() || null;\n\nif (!jobId && status !== 'fallback') {\n  console.log('No queued job. Stop this run.');\n  return [];\n}\n\nconst appStoreId = (data.appStoreId || $env.VOC_APP_ID || '').toString().trim();\nif (!appStoreId) {\n  console.log('Missing appStoreId. Stop this run.');\n  return [];\n}\n\nconst country = (data.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst appName = (data.appName || $env.VOC_APP_NAME || '').toString().trim();\nconst runId = `RUN_${Date.now()}`;\n\nconst rawLimit = ($env.VOC_FETCH_LIMIT || '500').toString().trim();\nconst parsedLimit = Number(rawLimit);\nconst fetchLimit = Number.isFinite(parsedLimit) ? Math.min(Math.max(Math.floor(parsedLimit), 1), 500) : 500;\n\nconst fetchPayload = {\n  appStoreId,\n  country,\n  limit: fetchLimit,\n};\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(fetchPayload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    runId,\n    jobId,\n    appStoreId,\n    country,\n    appName,\n    status,\n    fetchPayload,\n    fetchTimestamp: timestamp,\n    fetchSignature: signature,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -640,7 +600,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const context = $('Prepare Run Context').item.json || {};\nconst appStoreId = (context.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (context.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\n\nconst feed = $input.item.json?.feed?.entry;\nconst entries = Array.isArray(feed) ? feed : [];\n\nconst seen = new Set();\nconst reviews = entries.map((entry) => {\n  const reviewId = (entry?.id?.label || entry?.id || '').toString().trim();\n  const ratingRaw = entry?.['im:rating']?.label || entry?.['im:rating'] || '';\n  const rating = Number((ratingRaw || '').toString().trim()) || 0;\n\n  return {\n    reviewId,\n    author: (entry?.author?.name?.label || entry?.author?.name || '').toString().trim(),\n    reviewedAt: (entry?.updated?.label || entry?.updated || new Date().toISOString()).toString(),\n    rating,\n    content: (entry?.content?.label || entry?.content || entry?.content?.['#text'] || '').toString().trim(),\n  };\n}).filter((review) => {\n  if (!review.reviewId || review.rating <= 0) {\n    return false;\n  }\n  if (seen.has(review.reviewId)) {\n    return false;\n  }\n  seen.add(review.reviewId);\n  return true;\n});\n\nif (reviews.length === 0) {\n  return [];\n}\n\nreturn [{\n  json: {\n    payload: {\n      appStoreId,\n      country,\n      reviews,\n    }\n  }\n}];"
+        "jsCode": "const context = $('Prepare Run Context').item.json || {};\nconst appStoreId = (context.appStoreId || $env.VOC_APP_ID || '').toString().trim();\nconst country = (context.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\n\nconst responseData = $input.item.json?.data || {};\nconst inputReviews = Array.isArray(responseData.reviews) ? responseData.reviews : [];\nif (inputReviews.length === 0) {\n  return [];\n}\n\nconst seen = new Set();\nconst reviews = inputReviews\n  .map((review) => ({\n    reviewId: (review.reviewId || '').toString().trim(),\n    author: (review.author || '').toString().trim() || 'unknown',\n    reviewedAt: (review.reviewedAt || new Date().toISOString()).toString(),\n    rating: Number((review.rating || '0').toString().trim()) || 0,\n    content: (review.content || '').toString().trim(),\n  }))\n  .filter((review) => {\n    if (!review.reviewId || review.rating <= 0) {\n      return false;\n    }\n    if (seen.has(review.reviewId)) {\n      return false;\n    }\n    seen.add(review.reviewId);\n    return true;\n  });\n\nif (reviews.length === 0) {\n  return [];\n}\n\nreturn [{\n  json: {\n    payload: {\n      appStoreId,\n      country,\n      reviews,\n    }\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -654,7 +614,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -821,35 +781,7 @@
       "main": [
         [
           {
-            "node": "Prepare Telegram Data",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        []
-      ]
-    },
-    "Prepare Telegram Data": {
-      "main": [
-        [
-          {
-            "node": "Has Telegram Chat ID?",
-            "type": "main",
-            "index": 0
-          },
-          {
             "node": "Prepare Alert Events Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Has Telegram Chat ID?": {
-      "main": [
-        [
-          {
-            "node": "Send Telegram Alert",
             "type": "main",
             "index": 0
           }

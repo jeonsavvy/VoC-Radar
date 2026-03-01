@@ -102,16 +102,15 @@ apps/web/dist
 ## 4) n8n 전환
 
 1. 워크플로우 선택 후 import
-   - Supabase only 권장: `n8n/workflow.supabase-only.json` (job queue claim 포함)
-   - Dual-write(시트 백업 유지): `workflow.json`
+   - 운영본: `n8n/workflow.supabase-only.json` (job queue claim + 최대 500개 리뷰 수집)
 2. Credential 연결
-   - Supabase only: Gemini / Telegram
-   - Dual-write: Gemini / Google Sheets / Telegram
+   - Gemini
 3. ENV 설정:
    - `VOC_BFF_BASE_URL`
    - `PIPELINE_WEBHOOK_SECRET`
    - `VOC_APP_ID`, `VOC_APP_COUNTRY`, `VOC_APP_NAME` (fallback 용)
    - `VOC_ALLOW_FALLBACK` (`false` 권장)
+   - `VOC_FETCH_LIMIT` (`500` 권장, 최대 500)
    - `VOC_ALERT_MAX_RATING`
 4. Schedule OFF 상태에서 수동 1회 실행
 5. 성공 후 Schedule ON
@@ -127,10 +126,10 @@ apps/web/dist
 - [ ] 로그인 `GET /api/private/reviews` = 200
 - [ ] 로그인 `POST /api/private/jobs` = 201
 - [ ] n8n 실행 시 `pipeline_jobs`가 `queued -> running/completed` 전이
-- [ ] 동일 리뷰가 재수집돼도 LLM 호출 건수/Telegram 알림 중복이 발생하지 않음
+- [ ] 동일 리뷰가 재수집돼도 LLM 호출 건수/이벤트 적재 중복이 발생하지 않음
 - [ ] n8n 실행 후 `pipeline_runs.status='published'`
 - [ ] parse 에러 발생 시 `parse_errors` 적재 확인
-- [ ] Telegram 알림 발생 시 `alert_events` 적재 확인
+- [ ] Critical 이벤트 발생 시 `alert_events` 적재 확인
 
 ---
 
@@ -140,7 +139,7 @@ apps/web/dist
 - Worker env `DETAIL_VIEW_ENABLED=false`
 
 ### 파이프라인 롤백
-- n8n에서 `n8n/workflow.v1.json` 재적용
+- Git에서 이전 커밋의 워크플로우 JSON으로 되돌린 뒤 재import
 
 ### 데이터 롤백
-- Dual-write 기간에는 시트를 운영 기준으로 임시 복귀 가능
+- Supabase PITR/백업 기준으로 복구

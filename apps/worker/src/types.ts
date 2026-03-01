@@ -98,3 +98,9 @@ export interface FilterNewReviewsRequest {
     reviewedAt?: string;
   }>;
 }
+
+export interface FetchReviewsRequest {
+  appStoreId: string;
+  country?: string;
+  limit?: number;
+}

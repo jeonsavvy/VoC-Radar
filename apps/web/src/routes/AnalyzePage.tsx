@@ -23,6 +23,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
   const [appId, setAppId] = useState(selection.appId);
   const [country, setCountry] = useState(selection.country);
   const [appName, setAppName] = useState('');
+  const [appStoreUrl, setAppStoreUrl] = useState('');
   const [note, setNote] = useState('');
 
   const [apps, setApps] = useState<PublicAppItem[]>([]);
@@ -154,10 +155,43 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     }
   };
 
+  const onExtractFromUrl = () => {
+    const idMatch = appStoreUrl.match(/id(\d{5,20})/i);
+    if (!idMatch?.[1]) {
+      setError('앱스토어 URL에서 App ID를 찾지 못했습니다. 예: https://apps.apple.com/kr/app/.../id1018769995');
+      return;
+    }
+    setError(null);
+    setAppId(idMatch[1]);
+  };
+
   return (
     <section className="panel" aria-labelledby="analyze-heading">
       <h2 id="analyze-heading">분석 요청</h2>
-      <p className="muted">앱 ID/국가를 입력하면 요청이 큐에 쌓이고, n8n 파이프라인이 순차 처리합니다.</p>
+      <p className="muted">
+        앱 ID/국가를 입력하면 요청이 큐에 쌓이고, n8n 파이프라인이 최근 리뷰 최대 <strong>500개</strong>까지 수집/분석합니다.
+      </p>
+
+      <div className="helper-panel">
+        <h3>App ID 찾는 법</h3>
+        <ul className="bullet-list">
+          <li>앱스토어 상세 URL의 <code>id숫자</code>가 App Store ID입니다.</li>
+          <li>예시: <code>.../id1018769995</code> → <code>1018769995</code></li>
+          <li>아래에 앱스토어 URL을 붙여넣고 ID 자동 추출도 가능합니다.</li>
+        </ul>
+        <div className="inline-form compact-form">
+          <label htmlFor="app-store-url">앱스토어 URL</label>
+          <input
+            id="app-store-url"
+            value={appStoreUrl}
+            onChange={(event) => setAppStoreUrl(event.target.value)}
+            placeholder="https://apps.apple.com/kr/app/.../id1018769995"
+          />
+          <button type="button" className="ghost-button" onClick={onExtractFromUrl}>
+            URL에서 ID 추출
+          </button>
+        </div>
+      </div>
 
       <form onSubmit={onSubmit} className="inline-form">
         <label htmlFor="app-id">App Store ID</label>
