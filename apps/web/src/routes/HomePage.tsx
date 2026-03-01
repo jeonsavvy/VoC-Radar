@@ -61,17 +61,19 @@ export function HomePage({ selection }: Props) {
     };
   }, [selection.appId, selection.country]);
 
-  const topCategories = categories.slice(0, 3);
-  const recent7Days = trends.slice(-7);
-  const recentReviewCount = useMemo(
-    () => recent7Days.reduce((acc, point) => acc + point.total_reviews, 0),
-    [recent7Days],
-  );
-  const recentCriticalCount = useMemo(
-    () => recent7Days.reduce((acc, point) => acc + point.critical_count, 0),
-    [recent7Days],
-  );
-  const recentDailyAverage = recent7Days.length > 0 ? recentReviewCount / recent7Days.length : 0;
+  const topCategories = categories.slice(0, 5);
+  const recent30ReviewCount = overview?.total_reviews ?? 0;
+  const recent30CriticalCount = overview?.critical_count ?? 0;
+  const recent30LowRatingCount = overview?.low_rating_count ?? 0;
+  const recent30PositiveRatio = overview?.positive_ratio ?? 0;
+  const recent30AverageRating = overview?.average_rating ?? 0;
+  const recent30DailyAverage = useMemo(() => {
+    if (!overview) {
+      return 0;
+    }
+    const denominator = trends.length > 0 ? trends.length : 30;
+    return overview.total_reviews / denominator;
+  }, [overview, trends.length]);
 
   return (
     <div className="story-grid">
@@ -130,26 +132,34 @@ export function HomePage({ selection }: Props) {
           <>
             <dl className="metric-grid">
               <div>
-                <dt>최근 7일 리뷰 수</dt>
-                <dd>{recentReviewCount.toLocaleString()}</dd>
+                <dt>최근 30일 리뷰 수</dt>
+                <dd>{recent30ReviewCount.toLocaleString()}</dd>
               </div>
               <div>
-                <dt>최근 7일 일평균</dt>
-                <dd>{recentDailyAverage > 0 ? recentDailyAverage.toFixed(1) : '-'}</dd>
+                <dt>최근 30일 일평균</dt>
+                <dd>{recent30DailyAverage > 0 ? recent30DailyAverage.toFixed(1) : '-'}</dd>
               </div>
               <div>
-                <dt>최근 7일 Critical</dt>
-                <dd>{recentCriticalCount.toLocaleString()}</dd>
+                <dt>최근 30일 Critical</dt>
+                <dd>{recent30CriticalCount.toLocaleString()}</dd>
               </div>
               <div>
-                <dt>최신 리뷰 시각</dt>
-                <dd>{overview.last_review_at ? new Date(overview.last_review_at).toLocaleString() : '-'}</dd>
+                <dt>최근 30일 저평점(≤2)</dt>
+                <dd>{recent30LowRatingCount.toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>최근 30일 평균 평점</dt>
+                <dd>{recent30AverageRating.toFixed(2)}</dd>
+              </div>
+              <div>
+                <dt>최근 30일 긍정 비율</dt>
+                <dd>{recent30PositiveRatio.toFixed(1)}%</dd>
               </div>
             </dl>
 
             <div className="dashboard-grid">
               <article className="story-section">
-                <h4>Top 카테고리</h4>
+                <h4>최근 30일 Top 카테고리</h4>
                 <ul className="bullet-list">
                   {topCategories.map((item) => (
                     <li key={item.category}>
@@ -161,15 +171,11 @@ export function HomePage({ selection }: Props) {
               </article>
 
               <article className="story-section">
-                <h4>최근 5일 추이</h4>
+                <h4>최근 30일 업데이트 시각</h4>
                 <ul className="bullet-list">
-                  {trends.slice(-5).map((point) => (
-                    <li key={point.bucket_date}>
-                      {point.bucket_date}: {point.total_reviews}건 / Critical {point.critical_count}건 / 평점{' '}
-                      {point.average_rating.toFixed(2)}
-                    </li>
-                  ))}
-                  {trends.length === 0 && <li>추이 데이터가 없습니다.</li>}
+                  <li>최신 리뷰 시각: {overview.last_review_at ? new Date(overview.last_review_at).toLocaleString() : '-'}</li>
+                  <li>집계 기준 기간: 최근 30일</li>
+                  <li>선택 앱 기준으로 자동 집계</li>
                 </ul>
               </article>
             </div>

@@ -1,6 +1,7 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { signInWithPassword, signUpWithPassword } from '../lib/auth';
+import { hasSupabaseConfig } from '../lib/supabase';
 
 type Props = {
   onSignedIn: () => Promise<void>;
@@ -24,6 +25,12 @@ export function LoginPage({ onSignedIn }: Props) {
     setLoading(true);
 
     try {
+      if (!hasSupabaseConfig) {
+        throw new Error(
+          'Supabase 설정(VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)이 필요합니다. Cloudflare Pages > 설정 > 환경 변수에 두 값을 추가하고 재배포하세요.',
+        );
+      }
+
       if (mode === 'signup') {
         const result = await signUpWithPassword(email, password);
         if (result.hasSession) {
@@ -100,6 +107,22 @@ export function LoginPage({ onSignedIn }: Props) {
 
       {message && <p>{message}</p>}
       {error && <p className="error">{error}</p>}
+
+      {!hasSupabaseConfig && (
+        <div className="auth-warning">
+          <p className="error">로그인이 비활성화됨: Supabase 환경변수가 누락되었습니다.</p>
+          <ul className="bullet-list">
+            <li>Cloudflare Pages 프로젝트 → 설정 → 환경 변수</li>
+            <li>
+              <code>VITE_SUPABASE_URL</code> 추가
+            </li>
+            <li>
+              <code>VITE_SUPABASE_ANON_KEY</code> 추가
+            </li>
+            <li>저장 후 재배포</li>
+          </ul>
+        </div>
+      )}
     </section>
   );
 }

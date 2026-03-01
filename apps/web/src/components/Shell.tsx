@@ -131,7 +131,7 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
 
         <p className="topbar-help">
           선택 앱: <strong>{appName || 'Unknown App'}</strong> · ID <code>{selection.appId}</code> ·{' '}
-          <code>{selection.country}</code> · 앱스토어 URL의 <code>id숫자</code>가 App ID입니다.
+          <code>{selection.country}</code>
         </p>
       </header>
 

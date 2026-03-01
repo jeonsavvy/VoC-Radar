@@ -379,6 +379,14 @@ th {
   margin-bottom: 0.8rem;
 }
 
+.auth-warning {
+  margin-top: 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--border));
+  border-radius: 0.8rem;
+  padding: 0.7rem 0.8rem;
+  background: color-mix(in srgb, #230b16 65%, transparent);
+}
+
 .inline-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
