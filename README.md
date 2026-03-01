@@ -1,74 +1,54 @@
 # VoC-Radar
 
-VoC-Radar는 App Store 리뷰 VoC 파이프라인을 **n8n 오케스트레이션 유지** 상태로,
-**Supabase 저장소 + Cloudflare Worker BFF + Cloudflare Pages 프론트엔드**로 확장한 프로젝트입니다.
+VoC-Radar는 App Store 리뷰를 수집하고, AI로 분류/요약한 뒤, 공개 리포트와 로그인 기반 상세 화면으로 제공하는 프로젝트입니다.
 
-## 아키텍처
+## 핵심 기능
 
-```mermaid
-graph TD
-    A[Webhook Trigger in n8n] --> B[Claim Job from Worker Queue]
-    Z[Schedule Polling in n8n] --> B
-    B --> C[Authenticated Internal API: /fetch-reviews]
-    C --> D[Authenticated Internal API: /filter-new-reviews]
-    D --> E[Gemini Classification]
-    E --> F[Parse + Normalize]
-    F --> G[Authenticated Internal API: /upsert-reviews]
-    G --> H[Supabase: reviews/review_ai/pipeline_runs]
-    H --> I[Authenticated Internal API: /publish]
-    I --> J[Cloudflare Worker Cache Version Update]
-    J --> K[Cloudflare Pages Frontend]
-    K --> L[Public APIs / Private APIs]
-    F --> M[Parse Error Branch]
-    M --> N[Authenticated Internal API: /parse-error]
-    N --> O[Supabase parse_errors]
-    F --> P[Critical 이벤트 적재]
-    P --> Q[Authenticated Internal API: /alert-events]
-    Q --> R[Supabase alert_events]
-```
+- 리뷰 수집: n8n이 주기적으로 작업 큐를 확인하고 리뷰를 수집
+- 중복 제거: 기존 `review_id`를 먼저 조회해 신규 리뷰만 분석
+- AI 분석: 리뷰를 `priority / category / summary`로 분류
+- 저장/조회: Supabase에 적재하고 Worker API로 조회
+- 권한 분리:
+  - 공개 API: 집계 데이터
+  - 비공개 API: 로그인 사용자 상세 데이터
 
----
+## 시스템 구성
 
-## 구성 요소
+- **n8n**: 파이프라인 실행(큐 claim, 수집, 분석, 적재 호출)
+- **Cloudflare Worker**: API/BFF, 내부 엔드포인트 검증, 캐시 버전 갱신
+- **Supabase**: Auth + DB + RLS + 집계 함수
+- **Cloudflare Pages**: 리포트 프론트엔드
 
-- `n8n/workflow.supabase-only.json`: 단일 운영 워크플로우 (요청 큐 + 최대 500개 리뷰 수집)
-- `apps/worker`: Cloudflare Worker(BFF + internal webhook)
-- `apps/web`: Cloudflare Pages용 React 리포트 사이트
-- `supabase/migrations`: 스키마/RLS/함수 마이그레이션
+## 폴더 구조
+
+- `apps/web`: React 프론트엔드
+- `apps/worker`: Cloudflare Worker API
+- `n8n/workflow.supabase-only.json`: 운영 워크플로우
+- `supabase/migrations`: DB 스키마/함수 SQL
+- `docs`: 배포/아키텍처 문서
 
 ---
 
 ## 빠른 시작
 
-## 1) 의존성 설치
+### 1) 의존성 설치
 
 ```bash
 npm install
 ```
 
-## 2) Supabase 마이그레이션 적용
+### 2) Supabase SQL 실행
 
-> Supabase CLI 또는 SQL Editor에서 `supabase/migrations/202602250001_voc_radar_init.sql` 적용
-> 그리고 `supabase/migrations/202602270001_pipeline_jobs.sql`, `supabase/migrations/202602270002_review_prefilter.sql`, `supabase/migrations/202603010001_pipeline_jobs_function_fix.sql` 순서로 추가 적용
+아래 파일을 순서대로 실행하세요.
 
-핵심 테이블:
+1. `supabase/migrations/202602250001_voc_radar_init.sql`
+2. `supabase/migrations/202602270001_pipeline_jobs.sql`
+3. `supabase/migrations/202602270002_review_prefilter.sql`
+4. `supabase/migrations/202603010001_pipeline_jobs_function_fix.sql`
 
-- `apps`
-- `reviews`
-- `review_ai`
-- `pipeline_runs`
-- `parse_errors`
-- `alert_events`
+### 3) Worker 환경변수
 
-핵심 함수:
-
-- `get_public_overview`
-- `get_public_trends`
-- `get_public_categories`
-
-## 3) Worker 환경변수 설정
-
-`apps/worker/.dev.vars` (로컬) 또는 Cloudflare Dashboard Secrets 설정:
+`apps/worker/.dev.vars` (로컬) 또는 Cloudflare Worker 환경변수:
 
 ```bash
 SUPABASE_URL=https://<your-project>.supabase.co
@@ -83,7 +63,7 @@ N8N_PIPELINE_TRIGGER_URL=https://<your-n8n-domain>/webhook/voc-radar-queue-trigg
 N8N_PIPELINE_TRIGGER_SECRET=<optional-random-secret>
 ```
 
-## 4) Web 환경변수 설정
+### 4) Web 환경변수
 
 `apps/web/.env.local`:
 
@@ -91,13 +71,27 @@ N8N_PIPELINE_TRIGGER_SECRET=<optional-random-secret>
 VITE_API_BASE_URL=http://127.0.0.1:8787
 VITE_SUPABASE_URL=https://<your-project>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-key>
-VITE_DEFAULT_APP_ID=1018769995 # optional fallback
-VITE_DEFAULT_COUNTRY=kr        # optional fallback
+VITE_DEFAULT_APP_ID=1018769995
+VITE_DEFAULT_COUNTRY=kr
 VITE_API_TIMEOUT_MS=10000
 VITE_API_RETRY_COUNT=2
 ```
 
-## 5) 로컬 실행
+### 5) n8n 환경변수
+
+n8n에서 워크플로우 `n8n/workflow.supabase-only.json` import 후 아래 값 설정:
+
+| 변수 | 설명 |
+|---|---|
+| `VOC_BFF_BASE_URL` | Worker URL |
+| `PIPELINE_WEBHOOK_SECRET` | 내부 API 인증 토큰(`x-voc-token`) |
+| `VOC_FETCH_LIMIT` | 요청당 리뷰 수집 수(기본/최대 100) |
+| `VOC_LLM_BATCH_LIMIT` | 1회 LLM 분석 수(기본/최대 50) |
+| `VOC_MODEL_VERSION` | 모델 버전 라벨 |
+| `VOC_ALERT_MAX_RATING` | 알림 기준 평점 상한 |
+| `N8N_PIPELINE_TRIGGER_SECRET` | webhook 추가 검증(선택) |
+
+### 6) 로컬 실행
 
 ```bash
 # 터미널 1
@@ -106,29 +100,6 @@ npm run dev:worker
 # 터미널 2
 npm run dev:web
 ```
-
----
-
-## n8n 설정 (v2)
-
-n8n import 파일 선택:
-
-- `n8n/workflow.supabase-only.json` (단일 운영본)
-
-import 후 아래 환경변수 사용:
-
-| 변수 | 설명 |
-|---|---|
-| `VOC_BFF_BASE_URL` | Worker API base URL (예: `https://voc-radar-api.<subdomain>.workers.dev`) |
-| `PIPELINE_WEBHOOK_SECRET` | 내부 API 인증 토큰(`x-voc-token`) |
-| `VOC_FETCH_LIMIT` | 요청당 수집 최대 개수(기본/최대 100) |
-| `VOC_LLM_BATCH_LIMIT` | 1회 LLM 분석 배치 크기(기본/최대 50) |
-| `VOC_MODEL_VERSION` | 모델 버전 라벨 |
-| `VOC_ALERT_MAX_RATING` | 알림 평점 상한 |
-| `N8N_PIPELINE_TRIGGER_SECRET` | webhook 헤더 검증용(선택, Worker 값과 동일하게) |
-
-> v2.2부터는 Worker가 job 등록 직후 n8n webhook을 즉시 호출합니다.  
-> 로컬 n8n 등으로 webhook이 불가능한 경우를 위해 1분 폴링 트리거도 함께 포함되어 있습니다.
 
 ---
 
@@ -143,18 +114,17 @@ import 후 아래 환경변수 사용:
 - `GET /api/public/trends?appId&country&from&to`
 - `GET /api/public/categories?appId&country&from&to`
 
-### Private (Auth 필수)
+### Private (Auth 필요)
 
 - `GET /api/private/reviews?appId&country&cursor&limit`
 - `GET /api/private/jobs?limit`
 - `POST /api/private/jobs`
-- `POST /api/private/jobs/cancel` (`jobId` 단건 또는 `cancelAll=true` 일괄 취소)
+- `POST /api/private/jobs/cancel`
 
-### Internal (n8n 전용, 인증 헤더 필수)
+### Internal (n8n 전용)
 
 - `POST /api/internal/pipeline/claim-job`
 - `POST /api/internal/pipeline/fetch-reviews`
-- `POST /api/internal/pipeline/job-status`
 - `POST /api/internal/pipeline/filter-new-reviews`
 - `POST /api/internal/pipeline/upsert-reviews`
 - `POST /api/internal/pipeline/parse-error`
@@ -163,37 +133,28 @@ import 후 아래 환경변수 사용:
 
 ---
 
-## 보안/운영 기본값
-
-- 상세뷰 kill-switch: `DETAIL_VIEW_ENABLED=false`
-- 이벤트 트리거: Worker env에 `N8N_PIPELINE_TRIGGER_URL` 설정 시 queue 등록 직후 즉시 실행
-- 내부 API는 `x-voc-token`(필수) 또는 `x-voc-timestamp + x-voc-signature`(레거시 호환) 검증
-- 외부 호출(Supabase/Auth)은 timeout + retry(멱등성 고려) 적용
-- n8n은 LLM 호출 전 `filter-new-reviews`를 통해 이미 처리된 review_id를 제거
-- Telegram 노드는 제거되어 외부 메신저 연동 없이 동작
-
----
-
 ## 검증 명령
 
 ```bash
+npm run lint
 npm run typecheck
 npm run build
-./scripts/smoke-worker.sh
 ```
-
-운영 배포 절차는 `docs/deployment-runbook.md`를 참고하세요.
 
 ---
 
-## IDEAHUB 패턴 반영 (pattern_only)
+## 오픈소스 공개 체크리스트
 
-- `layout-split-hero`
-- `layout-section-storytelling`
-- `typography-kinetic-headline`
+공개 자체는 가능합니다. 다만 아래를 지킨 뒤 공개하세요.
 
-Provenance examples:
+- 저장소에 실제 키/토큰/계정정보가 없는지 재확인
+- Cloudflare/Supabase/n8n 비밀값 전부 재발급(로테이션)
+- `.env*` 파일은 예시만 남기고 실제 값은 제거
+- 개인정보(실제 사용자 리뷰 원문) 공유 범위 점검
+- `LICENSE` 파일 명시
 
-- https://github.com/Animmaster/AidEasy
-- https://github.com/Animmaster/Obys-clone
-- https://github.com/Animmaster/StreamVibe
+배포 절차는 `docs/deployment-runbook.md`, 구조 설명은 `docs/architecture.md`를 참고하세요.
+
+## 라이선스
+
+MIT
