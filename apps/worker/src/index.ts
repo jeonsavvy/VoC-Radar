@@ -233,6 +233,11 @@ async function verifySignedRequest(env: Env, request: Request, rawBody: string):
     return false;
   }
 
+  const token = request.headers.get('x-voc-token')?.trim();
+  if (token) {
+    return timingSafeEqual(token, secret);
+  }
+
   const timestamp = request.headers.get('x-voc-timestamp');
   const signature = request.headers.get('x-voc-signature');
   if (!timestamp || !signature) {

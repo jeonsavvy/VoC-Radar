@@ -31,8 +31,8 @@
               "value": "application/json"
             },
             {
-              "name": "x-voc-signature",
-              "value": "={{ $json.fetchSignature }}"
+              "name": "x-voc-token",
+              "value": "={{ $json.fetchToken }}"
             },
             {
               "name": "x-voc-timestamp",
@@ -210,7 +210,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -234,8 +234,8 @@
               "value": "application/json"
             },
             {
-              "name": "x-voc-signature",
-              "value": "={{ $json.signature }}"
+              "name": "x-voc-token",
+              "value": "={{ $json.token }}"
             },
             {
               "name": "x-voc-timestamp",
@@ -287,7 +287,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -311,8 +311,8 @@
               "value": "application/json"
             },
             {
-              "name": "x-voc-signature",
-              "value": "={{ $json.signature }}"
+              "name": "x-voc-token",
+              "value": "={{ $json.token }}"
             },
             {
               "name": "x-voc-timestamp",
@@ -364,7 +364,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -388,8 +388,8 @@
               "value": "application/json"
             },
             {
-              "name": "x-voc-signature",
-              "value": "={{ $json.signature }}"
+              "name": "x-voc-token",
+              "value": "={{ $json.token }}"
             },
             {
               "name": "x-voc-timestamp",
@@ -437,7 +437,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -461,8 +461,8 @@
               "value": "application/json"
             },
             {
-              "name": "x-voc-signature",
-              "value": "={{ $json.signature }}"
+              "name": "x-voc-token",
+              "value": "={{ $json.token }}"
             },
             {
               "name": "x-voc-timestamp",
@@ -514,7 +514,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -538,8 +538,8 @@
               "value": "application/json"
             },
             {
-              "name": "x-voc-signature",
-              "value": "={{ $json.signature }}"
+              "name": "x-voc-token",
+              "value": "={{ $json.token }}"
             },
             {
               "name": "x-voc-timestamp",
@@ -573,7 +573,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $json.data || {};\nconst status = (data.status || '').toString().trim().toLowerCase();\nconst jobId = (data.jobId || '').toString().trim() || null;\n\nif (!jobId && status !== 'fallback') {\n  console.log('No queued job. Stop this run.');\n  return [];\n}\n\nconst appStoreId = (data.appStoreId || $env.VOC_APP_ID || '').toString().trim();\nif (!appStoreId) {\n  console.log('Missing appStoreId. Stop this run.');\n  return [];\n}\n\nconst country = (data.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst appName = (data.appName || $env.VOC_APP_NAME || '').toString().trim();\nconst runId = `RUN_${Date.now()}`;\n\nconst rawLimit = ($env.VOC_FETCH_LIMIT || '500').toString().trim();\nconst parsedLimit = Number(rawLimit);\nconst fetchLimit = Number.isFinite(parsedLimit) ? Math.min(Math.max(Math.floor(parsedLimit), 1), 500) : 500;\n\nconst fetchPayload = {\n  appStoreId,\n  country,\n  limit: fetchLimit,\n};\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(fetchPayload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    runId,\n    jobId,\n    appStoreId,\n    country,\n    appName,\n    status,\n    fetchPayload,\n    fetchTimestamp: timestamp,\n    fetchSignature: signature,\n  }\n}];"
+        "jsCode": "const data = $json.data || {};\nconst status = (data.status || '').toString().trim().toLowerCase();\nconst jobId = (data.jobId || '').toString().trim() || null;\n\nif (!jobId && status !== 'fallback') {\n  console.log('No queued job. Stop this run.');\n  return [];\n}\n\nconst appStoreId = (data.appStoreId || $env.VOC_APP_ID || '').toString().trim();\nif (!appStoreId) {\n  console.log('Missing appStoreId. Stop this run.');\n  return [];\n}\n\nconst country = (data.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst appName = (data.appName || $env.VOC_APP_NAME || '').toString().trim();\nconst runId = `RUN_${Date.now()}`;\n\nconst rawLimit = ($env.VOC_FETCH_LIMIT || '500').toString().trim();\nconst parsedLimit = Number(rawLimit);\nconst fetchLimit = Number.isFinite(parsedLimit) ? Math.min(Math.max(Math.floor(parsedLimit), 1), 500) : 500;\n\nconst fetchPayload = {\n  appStoreId,\n  country,\n  limit: fetchLimit,\n};\n\nconst fetchToken = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!fetchToken) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst fetchTimestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    runId,\n    jobId,\n    appStoreId,\n    country,\n    appName,\n    status,\n    fetchPayload,\n    fetchTimestamp,\n    fetchToken,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -601,7 +601,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst key = await crypto.subtle.importKey(\n  'raw',\n  new TextEncoder().encode(secret),\n  { name: 'HMAC', hash: 'SHA-256' },\n  false,\n  ['sign']\n);\nconst signed = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${timestamp}.${rawBody}`));\nconst signature = Array.from(new Uint8Array(signed))\n  .map((byte) => byte.toString(16).padStart(2, '0'))\n  .join('');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    signature,\n  }\n}];"
+        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -625,8 +625,8 @@
               "value": "application/json"
             },
             {
-              "name": "x-voc-signature",
-              "value": "={{ $json.signature }}"
+              "name": "x-voc-token",
+              "value": "={{ $json.token }}"
             },
             {
               "name": "x-voc-timestamp",
