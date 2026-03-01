@@ -17,6 +17,7 @@ const REQUEST_RETRY_COUNT = Number(import.meta.env.VITE_API_RETRY_COUNT || '2');
 const CONFIG_HINT =
   'API 응답이 JSON이 아닙니다. VITE_API_BASE_URL이 Worker URL(https://voc-radar-api...workers.dev)인지 확인하세요.';
 
+// GET/HEAD/OPTIONS + 5xx일 때만 재시도한다.
 const shouldRetry = (method: string, status?: number) => {
   const upper = method.toUpperCase();
   const idempotent = upper === 'GET' || upper === 'HEAD' || upper === 'OPTIONS';
@@ -30,6 +31,10 @@ const isHtmlPayload = (contentType: string | null, body: string) => {
   return lowerType.includes('text/html') || trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html');
 };
 
+// 프론트 공통 API 호출기:
+// - timeout
+// - idempotent retry
+// - JSON 응답 검증
 async function fetchJson<T>(
   path: string,
   options: {

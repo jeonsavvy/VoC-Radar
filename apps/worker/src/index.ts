@@ -12,6 +12,7 @@ import type {
   UpsertReviewRequest,
 } from './types';
 
+// 공통 응답/타임아웃 기본값
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
 };
@@ -39,6 +40,7 @@ const boolFromEnv = (value: string | undefined, fallback: boolean) => {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 };
 
+// 모든 응답에 CORS 헤더를 통일해서 붙인다.
 function getCorsHeaders(env: Env) {
   return {
     'access-control-allow-origin': env.CORS_ORIGIN || '*',
@@ -70,6 +72,8 @@ function jsonResponse(env: Env, status: number, payload: JsonValue) {
   );
 }
 
+// 외부 호출용 공통 fetch 래퍼:
+// timeout + retry를 기본 적용한다.
 async function fetchWithRetry(
   env: Env,
   url: string,
@@ -107,6 +111,7 @@ async function fetchWithRetry(
   throw new Error('Fetch retry exceeded');
 }
 
+// 서비스 권한(service_role)으로 Supabase를 호출한다.
 async function supabaseRequest<T>(
   env: Env,
   path: string,
@@ -144,6 +149,7 @@ async function supabaseRequest<T>(
   }
 }
 
+// 사용자 토큰 기반으로 Supabase를 호출한다(RLS 적용).
 async function supabaseUserRequest<T>(
   env: Env,
   path: string,
@@ -182,6 +188,7 @@ async function supabaseUserRequest<T>(
   }
 }
 
+// Bearer 토큰에서 사용자 ID를 확인한다.
 async function getAuthUser(env: Env, authorization: string | null): Promise<{ id: string } | null> {
   if (!authorization || !authorization.startsWith('Bearer ')) {
     return null;
@@ -230,6 +237,7 @@ function unauthorized(env: Env, message = 'unauthorized') {
   return jsonResponse(env, 401, { error: message });
 }
 
+// 내부 API 인증: x-voc-token(기본) + HMAC(레거시 호환)
 async function signMessage(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, [
     'sign',
@@ -404,6 +412,8 @@ function isUuid(value: string | null | undefined) {
   );
 }
 
+// 작업 상태 업데이트 공통 함수.
+// RPC가 실패/0건이어도 직접 PATCH로 한 번 더 보장한다.
 async function completePipelineJob(
   env: Env,
   input: {
@@ -525,6 +535,7 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
   const requestedLimit = clampLimit(String(body?.limit ?? MAX_FETCH_REVIEW_LIMIT), MAX_FETCH_REVIEW_LIMIT, MAX_FETCH_REVIEW_LIMIT);
   const limit = Math.min(MAX_FETCH_REVIEW_LIMIT, requestedLimit);
 
+  // iTunes RSS는 페이지당 50건이므로 페이지를 나눠서 최대 limit까지 수집한다.
   const maxPages = Math.max(1, Math.ceil(limit / ITUNES_REVIEWS_PER_PAGE));
   const reviews: NormalizedReview[] = [];
   const seenIds = new Set<string>();
@@ -956,6 +967,7 @@ async function handlePrivateCreateJob(env: Env, request: Request) {
     });
   }
 
+  // 요청 저장 후 n8n webhook 즉시 호출(실패해도 폴링으로 처리 가능)
   const trigger = await triggerN8nPipeline(env, {
     jobId: String(created.id || '').trim(),
     appStoreId,
@@ -1137,6 +1149,7 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
     });
   }
 
+  // 이미 적재된 review_id를 먼저 제외해서 중복 분석/중복 저장을 막는다.
   const existingRows = await supabaseRequest<Array<{ review_id: string }>>(env, '/rest/v1/rpc/get_existing_review_ids', {
     method: 'POST',
     body: JSON.stringify({
@@ -1592,6 +1605,7 @@ export default {
         });
       }
 
+      // Public API: 로그인 없이 조회 가능한 집계 데이터
       if (request.method === 'GET' && url.pathname === '/api/public/overview') {
         return await handlePublicOverview(env, request);
       }
@@ -1612,6 +1626,7 @@ export default {
         return await handlePublicAppMeta(env, request);
       }
 
+      // Private API: 로그인 사용자 전용 데이터/작업 제어
       if (request.method === 'GET' && url.pathname === '/api/private/jobs') {
         return await handlePrivateJobs(env, request);
       }
@@ -1628,6 +1643,7 @@ export default {
         return await handlePrivateReviews(env, request);
       }
 
+      // Internal API: n8n 전용 파이프라인 엔드포인트
       if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/claim-job') {
         return await handleInternalClaimJob(env, request, await request.text());
       }

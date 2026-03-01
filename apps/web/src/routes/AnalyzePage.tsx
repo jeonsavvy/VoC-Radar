@@ -20,8 +20,10 @@ const statusLabel: Record<PipelineJobItem['status'], string> = {
 };
 
 export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
+  // 사용자가 입력 중인 앱 선택값
   const [appId, setAppId] = useState(selection.appId);
   const [country, setCountry] = useState(selection.country);
+  // 최근 작업 큐 상태
   const [jobs, setJobs] = useState<PipelineJobItem[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -35,6 +37,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     setCountry(selection.country);
   }, [selection.appId, selection.country]);
 
+  // 로그인 사용자 기준으로 본인 작업 목록을 가져온다.
   const loadJobs = async () => {
     if (!loggedIn) {
       setJobs([]);
@@ -64,6 +67,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
   const cancelableStatuses: PipelineJobItem['status'][] = ['queued', 'running'];
   const cancelableJobCount = jobs.filter((job) => cancelableStatuses.includes(job.status)).length;
 
+  // 단건 취소
   const onCancelJob = async (jobId: string) => {
     if (!loggedIn) {
       return;
@@ -90,6 +94,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     }
   };
 
+  // 대기/실행중 전체 취소
   const onCancelAll = async () => {
     if (!loggedIn) {
       return;
@@ -116,6 +121,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     }
   };
 
+  // 분석 요청 등록
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
