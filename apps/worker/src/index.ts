@@ -21,7 +21,11 @@ const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_RETRY_COUNT = 2;
 const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
 const ITUNES_REVIEWS_PER_PAGE = 50;
-const MAX_FETCH_REVIEW_LIMIT = 100;
+const DEFAULT_FETCH_WINDOW_DAYS = 30;
+const MAX_FETCH_WINDOW_DAYS = 90;
+const DEFAULT_FETCH_MAX_PAGES = 120;
+const MAX_FETCH_MAX_PAGES = 200;
+const MAX_FETCH_REVIEW_CAP = 10000;
 
 type JsonValue = Record<string, unknown> | unknown[];
 
@@ -532,16 +536,25 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
   }
 
   const country = normalizeCountry(body?.country);
-  const requestedLimit = clampLimit(String(body?.limit ?? MAX_FETCH_REVIEW_LIMIT), MAX_FETCH_REVIEW_LIMIT, MAX_FETCH_REVIEW_LIMIT);
-  const limit = Math.min(MAX_FETCH_REVIEW_LIMIT, requestedLimit);
+  const windowDays = clampLimit(
+    String(body?.windowDays ?? DEFAULT_FETCH_WINDOW_DAYS),
+    DEFAULT_FETCH_WINDOW_DAYS,
+    MAX_FETCH_WINDOW_DAYS,
+  );
+  const maxPages = clampLimit(
+    String(body?.maxPages ?? DEFAULT_FETCH_MAX_PAGES),
+    DEFAULT_FETCH_MAX_PAGES,
+    MAX_FETCH_MAX_PAGES,
+  );
+  const limitCap = clampLimit(String(body?.limit ?? MAX_FETCH_REVIEW_CAP), MAX_FETCH_REVIEW_CAP, MAX_FETCH_REVIEW_CAP);
+  const cutoff = Date.now() - windowDays * 24 * 60 * 60 * 1000;
 
-  // iTunes RSS는 페이지당 50건이므로 페이지를 나눠서 최대 limit까지 수집한다.
-  const maxPages = Math.max(1, Math.ceil(limit / ITUNES_REVIEWS_PER_PAGE));
   const reviews: NormalizedReview[] = [];
   const seenIds = new Set<string>();
   let pagesFetched = 0;
+  let truncated = false;
 
-  for (let page = 1; page <= maxPages && reviews.length < limit; page += 1) {
+  for (let page = 1; page <= maxPages && reviews.length < limitCap; page += 1) {
     const url = `https://itunes.apple.com/${country}/rss/customerreviews/page=${page}/limit=${ITUNES_REVIEWS_PER_PAGE}/id=${appStoreId}/sortBy=mostRecent/json`;
     const response = await fetchWithRetry(env, url, {
       method: 'GET',
@@ -577,13 +590,21 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
     }
 
     let addedInPage = 0;
+    let reachedOlderReviews = false;
     for (const entry of entries) {
       const reviewId = String((entry.id as { label?: string } | undefined)?.label ?? entry.id ?? '').trim();
       const rating = normalizeRating((entry['im:rating'] as { label?: string } | undefined)?.label ?? entry['im:rating']);
+      const reviewedAt = normalizeReviewedAt((entry.updated as { label?: string } | undefined)?.label ?? entry.updated);
+      const reviewedAtMs = new Date(reviewedAt).getTime();
 
       if (!reviewId || rating <= 0 || seenIds.has(reviewId)) {
         continue;
       }
+      if (!Number.isFinite(reviewedAtMs) || reviewedAtMs < cutoff) {
+        reachedOlderReviews = true;
+        continue;
+      }
+
       seenIds.add(reviewId);
       addedInPage += 1;
 
@@ -601,14 +622,18 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
             ''),
         ).trim(),
         rating,
-        reviewedAt: normalizeReviewedAt((entry.updated as { label?: string } | undefined)?.label ?? entry.updated),
+        reviewedAt,
       });
 
-      if (reviews.length >= limit) {
+      if (reviews.length >= limitCap) {
+        truncated = true;
         break;
       }
     }
 
+    if (reachedOlderReviews) {
+      break;
+    }
     if (addedInPage === 0) {
       break;
     }
@@ -619,10 +644,13 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
     data: {
       appStoreId,
       country,
-      limit,
+      windowDays,
+      maxPages,
+      limitCap,
       pagesFetched,
       reviews,
       totalFetched: reviews.length,
+      truncated,
     },
   });
 }

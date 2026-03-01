@@ -106,6 +106,8 @@ export interface FilterNewReviewsRequest {
 export interface FetchReviewsRequest {
   appStoreId: string;
   country?: string;
+  windowDays?: number;
+  maxPages?: number;
   limit?: number;
 }
 
