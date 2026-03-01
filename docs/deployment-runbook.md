@@ -111,8 +111,6 @@ apps/web/dist
 3. ENV 설정:
    - `VOC_BFF_BASE_URL`
    - `PIPELINE_WEBHOOK_SECRET`
-   - `VOC_APP_ID`, `VOC_APP_COUNTRY`, `VOC_APP_NAME` (fallback 용)
-   - `VOC_ALLOW_FALLBACK` (`false` 권장)
    - `VOC_FETCH_LIMIT` (`500` 권장, 최대 500)
    - `VOC_ALERT_MAX_RATING`
    - `N8N_PIPELINE_TRIGGER_SECRET` (선택, Worker와 동일값 권장)
@@ -123,7 +121,7 @@ apps/web/dist
 
 도메인/터널이 없다면:
 - `N8N_PIPELINE_TRIGGER_URL` 미설정 상태로 운영해도 됩니다.
-- 워크플로우 내 `Schedule Trigger (Local Polling Fallback)`가 1분마다 queue를 처리합니다.
+- 워크플로우 내 `Schedule Trigger (Queue Polling)`가 1분마다 queue를 처리합니다.
 
 ---
 

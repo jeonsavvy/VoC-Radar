@@ -8,22 +8,22 @@ VoC-Radar는 App Store 리뷰 VoC 파이프라인을 **n8n 오케스트레이션
 ```mermaid
 graph TD
     A[Webhook Trigger in n8n] --> B[Claim Job from Worker Queue]
-    Z[Schedule Polling Fallback in n8n] --> B
-    B --> C[Signed Internal Webhook: /fetch-reviews]
-    C --> D[Signed Internal Webhook: /filter-new-reviews]
+    Z[Schedule Polling in n8n] --> B
+    B --> C[Authenticated Internal API: /fetch-reviews]
+    C --> D[Authenticated Internal API: /filter-new-reviews]
     D --> E[Gemini Classification]
     E --> F[Parse + Normalize]
-    F --> G[Signed Internal Webhook: /upsert-reviews]
+    F --> G[Authenticated Internal API: /upsert-reviews]
     G --> H[Supabase: reviews/review_ai/pipeline_runs]
-    H --> I[Signed Internal Webhook: /publish]
+    H --> I[Authenticated Internal API: /publish]
     I --> J[Cloudflare Worker Cache Version Update]
     J --> K[Cloudflare Pages Frontend]
     K --> L[Public APIs / Private APIs]
     F --> M[Parse Error Branch]
-    M --> N[Signed Internal Webhook: /parse-error]
+    M --> N[Authenticated Internal API: /parse-error]
     N --> O[Supabase parse_errors]
     F --> P[Critical 이벤트 적재]
-    P --> Q[Signed Internal Webhook: /alert-events]
+    P --> Q[Authenticated Internal API: /alert-events]
     Q --> R[Supabase alert_events]
 ```
 
@@ -120,19 +120,14 @@ import 후 아래 환경변수 사용:
 | 변수 | 설명 |
 |---|---|
 | `VOC_BFF_BASE_URL` | Worker API base URL (예: `https://voc-radar-api.<subdomain>.workers.dev`) |
-| `PIPELINE_WEBHOOK_SECRET` | 내부 webhook HMAC secret |
-| `VOC_APP_ID` | App Store 앱 ID |
-| `VOC_APP_COUNTRY` | 국가 코드 (`kr` 등) |
-| `VOC_APP_NAME` | 앱 표시명 |
-| `VOC_ALLOW_FALLBACK` | `true`면 큐 비어도 fallback 앱 수집, 기본 `false` |
+| `PIPELINE_WEBHOOK_SECRET` | 내부 API 인증 토큰(`x-voc-token`) |
 | `VOC_FETCH_LIMIT` | 요청당 수집 최대 개수(기본/최대 500) |
 | `VOC_MODEL_VERSION` | 모델 버전 라벨 |
 | `VOC_ALERT_MAX_RATING` | 알림 평점 상한 |
 | `N8N_PIPELINE_TRIGGER_SECRET` | webhook 헤더 검증용(선택, Worker 값과 동일하게) |
 
 > v2.2부터는 Worker가 job 등록 직후 n8n webhook을 즉시 호출합니다.  
-> 로컬 n8n 등으로 webhook이 불가능한 경우를 위해 1분 폴링 fallback 트리거도 함께 포함되어 있습니다.
-> v2.1부터의 `VOC_APP_*` 값은 fallback 용도입니다.
+> 로컬 n8n 등으로 webhook이 불가능한 경우를 위해 1분 폴링 트리거도 함께 포함되어 있습니다.
 
 ---
 
@@ -153,7 +148,7 @@ import 후 아래 환경변수 사용:
 - `GET /api/private/jobs?limit`
 - `POST /api/private/jobs`
 
-### Internal (n8n 전용, HMAC 서명 필수)
+### Internal (n8n 전용, 인증 헤더 필수)
 
 - `POST /api/internal/pipeline/claim-job`
 - `POST /api/internal/pipeline/fetch-reviews`
@@ -170,7 +165,7 @@ import 후 아래 환경변수 사용:
 
 - 상세뷰 kill-switch: `DETAIL_VIEW_ENABLED=false`
 - 이벤트 트리거: Worker env에 `N8N_PIPELINE_TRIGGER_URL` 설정 시 queue 등록 직후 즉시 실행
-- 내부 API는 `x-voc-timestamp` + `x-voc-signature`(HMAC SHA-256) 검증
+- 내부 API는 `x-voc-token`(필수) 또는 `x-voc-timestamp + x-voc-signature`(레거시 호환) 검증
 - 외부 호출(Supabase/Auth)은 timeout + retry(멱등성 고려) 적용
 - n8n은 LLM 호출 전 `filter-new-reviews`를 통해 이미 처리된 review_id를 제거
 - Telegram 노드는 제거되어 외부 메신저 연동 없이 동작
