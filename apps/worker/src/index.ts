@@ -1021,11 +1021,31 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
   }
 
   const country = normalizeCountry(body?.country);
+  const jobId = (body?.jobId || '').toString().trim();
+  const runId = normalizeOptionalText(body?.runId, 120);
+
+  const completeJobIfNoNewReviews = async () => {
+    if (!isUuid(jobId)) {
+      return;
+    }
+
+    await supabaseRequest(env, '/rest/v1/rpc/complete_pipeline_job', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_job_id: jobId,
+        p_status: 'completed',
+        p_run_id: runId,
+      }),
+      idempotent: true,
+    });
+  };
+
   const inputReviews = Array.isArray(body?.reviews) ? body.reviews : [];
   if (inputReviews.length === 0) {
+    await completeJobIfNoNewReviews();
     return jsonResponse(env, 200, {
       ok: true,
-      data: { total: 0, existingCount: 0, newCount: 0, reviews: [] },
+      data: { total: 0, existingCount: 0, newCount: 0, reviews: [], autoCompleted: isUuid(jobId) },
     });
   }
 
@@ -1050,9 +1070,10 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
     });
 
   if (normalizedReviews.length === 0) {
+    await completeJobIfNoNewReviews();
     return jsonResponse(env, 200, {
       ok: true,
-      data: { total: 0, existingCount: 0, newCount: 0, reviews: [] },
+      data: { total: 0, existingCount: 0, newCount: 0, reviews: [], autoCompleted: isUuid(jobId) },
     });
   }
 
@@ -1069,6 +1090,10 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
   const existingIds = new Set(existingRows.map((row) => row.review_id));
   const freshReviews = normalizedReviews.filter((review) => !existingIds.has(review.reviewId));
 
+  if (freshReviews.length === 0) {
+    await completeJobIfNoNewReviews();
+  }
+
   return jsonResponse(env, 200, {
     ok: true,
     data: {
@@ -1076,6 +1101,7 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
       existingCount: existingIds.size,
       newCount: freshReviews.length,
       reviews: freshReviews,
+      autoCompleted: freshReviews.length === 0 && isUuid(jobId),
     },
   });
 }

@@ -92,6 +92,8 @@ export interface JobStatusRequest {
 export interface FilterNewReviewsRequest {
   appStoreId: string;
   country?: string;
+  runId?: string;
+  jobId?: string | null;
   reviews: Array<{
     reviewId: string;
     author?: string;
