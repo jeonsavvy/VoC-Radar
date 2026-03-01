@@ -28,6 +28,8 @@ a {
 
 .app-shell {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .topbar {
@@ -127,6 +129,15 @@ a {
 .content {
   width: min(1200px, 92vw);
   margin: 1.2rem auto 3rem;
+  flex: 1;
+}
+
+.site-footer {
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+  padding: 1rem 0 1.2rem;
 }
 
 .story-grid {
@@ -368,18 +379,6 @@ th {
   margin-bottom: 0.8rem;
 }
 
-.helper-panel {
-  border: 1px solid var(--border);
-  background: #0d152a;
-  border-radius: 0.8rem;
-  padding: 0.8rem;
-  margin: 0.8rem 0;
-}
-
-.helper-panel h3 {
-  margin: 0 0 0.55rem;
-}
-
 .inline-form {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -388,8 +387,9 @@ th {
   margin-bottom: 0.7rem;
 }
 
-.compact-form {
-  margin-top: 0.5rem;
+.simple-request-form {
+  grid-template-columns: minmax(200px, 320px) minmax(120px, 160px) auto;
+  align-items: end;
 }
 
 .inline-form button {
@@ -400,22 +400,6 @@ th {
   border: 0;
   border-top: 1px solid var(--border);
   margin: 1.1rem 0;
-}
-
-.chip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 0.5rem 0 1rem;
-}
-
-.chip-button {
-  border: 1px solid var(--border);
-  background: #0a1226;
-  color: var(--text);
-  border-radius: 999px;
-  padding: 0.38rem 0.7rem;
-  cursor: pointer;
 }
 
 input {
@@ -471,5 +455,9 @@ input {
 
   .nav-list {
     justify-content: flex-start;
+  }
+
+  .simple-request-form {
+    grid-template-columns: 1fr;
   }
 }

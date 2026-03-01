@@ -136,6 +136,7 @@ import 후 아래 환경변수 사용:
 
 - `GET /api/health`
 - `GET /api/public/apps?limit`
+- `GET /api/public/app-meta?appId&country`
 - `GET /api/public/overview?appId&country&from&to`
 - `GET /api/public/trends?appId&country&from&to`
 - `GET /api/public/categories?appId&country&from&to`

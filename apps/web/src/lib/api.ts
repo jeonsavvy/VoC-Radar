@@ -1,6 +1,7 @@
 import type {
   PipelineJobItem,
   PublicAppItem,
+  PublicAppMeta,
   PrivateReviewItem,
   PublicCategoryPoint,
   PublicOverview,
@@ -145,6 +146,11 @@ export async function getPrivateReviews(
 export async function getPublicApps(limit = 20) {
   const params = new URLSearchParams({ limit: String(limit) });
   return fetchJson<{ data: PublicAppItem[] }>(`/api/public/apps?${params.toString()}`);
+}
+
+export async function getPublicAppMeta(appId: string, country = 'kr') {
+  const params = new URLSearchParams({ appId, country });
+  return fetchJson<{ data: PublicAppMeta }>(`/api/public/app-meta?${params.toString()}`);
 }
 
 export async function createPipelineJob(

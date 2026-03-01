@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getCategories, getOverview, getPublicApps, getTrends } from '../lib/api';
+import { getCategories, getOverview, getTrends } from '../lib/api';
 import type { AppSelection } from '../lib/appSelection';
 import type { PublicCategoryPoint, PublicOverview, PublicTrendPoint } from '../types';
 
@@ -22,7 +22,6 @@ export function HomePage({ selection }: Props) {
   const [overview, setOverview] = useState<PublicOverview | null>(null);
   const [trends, setTrends] = useState<PublicTrendPoint[]>([]);
   const [categories, setCategories] = useState<PublicCategoryPoint[]>([]);
-  const [appName, setAppName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -62,30 +61,6 @@ export function HomePage({ selection }: Props) {
     };
   }, [selection.appId, selection.country]);
 
-  useEffect(() => {
-    let active = true;
-
-    getPublicApps(100)
-      .then((response) => {
-        if (!active) {
-          return;
-        }
-        const found = response.data.find(
-          (item) => item.app_store_id === selection.appId && item.country.toLowerCase() === selection.country.toLowerCase(),
-        );
-        setAppName(found?.app_name?.trim() || null);
-      })
-      .catch(() => {
-        if (active) {
-          setAppName(null);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [selection.appId, selection.country]);
-
   const topCategories = categories.slice(0, 3);
   const recent7Days = trends.slice(-7);
   const recentReviewCount = useMemo(
@@ -108,10 +83,7 @@ export function HomePage({ selection }: Props) {
             <br />
             제품 우선순위를 <span>정렬</span>합니다.
           </h2>
-          <p className="lead-copy">
-            선택 앱: <strong>{appName || 'Unknown App'}</strong> (
-            <code>{selection.appId}</code> / <code>{selection.country}</code>) 기준으로 누적 지표와 최근 분석 결과를 확인하세요.
-          </p>
+          <p className="lead-copy">누적 지표와 최근 분석 결과를 한 화면에서 확인하세요.</p>
 
           <div className="hero-actions">
             <Link to={`/apps/${selection.appId}`} className="primary-button">

@@ -45,6 +45,13 @@ export interface PublicAppItem {
   updated_at: string;
 }
 
+export interface PublicAppMeta {
+  app_store_id: string;
+  country: string;
+  app_name: string | null;
+  source: 'supabase' | 'itunes' | 'unknown';
+}
+
 export interface PipelineJobItem {
   id: string;
   app_store_id: string;

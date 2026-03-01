@@ -609,6 +609,100 @@ async function handlePublicApps(env: Env, request: Request) {
   return jsonResponse(env, 200, { data });
 }
 
+async function handlePublicAppMeta(env: Env, request: Request) {
+  const { searchParams } = new URL(request.url);
+  const appId = normalizeAppStoreId(searchParams.get('appId'));
+  const country = normalizeCountry(searchParams.get('country'));
+
+  if (!appId) {
+    return badRequest(env, 'appId is required');
+  }
+
+  const version = await getCacheVersion(env);
+  const cacheKey = getPublicCacheKey(request, version);
+  const cache = await getEdgeCache();
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return withCors(env, cached);
+  }
+
+  const apps = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/apps?select=app_store_id,country,app_name&app_store_id=eq.${encodeURIComponent(appId)}&country=eq.${encodeURIComponent(country)}&limit=1`,
+    {
+      method: 'GET',
+      idempotent: true,
+    },
+  );
+
+  const appNameFromDb = String(apps[0]?.app_name || '').trim();
+  if (appNameFromDb) {
+    const response = withCors(
+      env,
+      new Response(
+        JSON.stringify({
+          data: {
+            app_store_id: appId,
+            country,
+            app_name: appNameFromDb,
+            source: 'supabase',
+          },
+        }),
+        {
+          headers: {
+            ...JSON_HEADERS,
+            'cache-control': 'public, max-age=1800, s-maxage=1800',
+          },
+        },
+      ),
+    );
+    await cache.put(cacheKey, response.clone());
+    return response;
+  }
+
+  let appNameFromItunes: string | null = null;
+  const lookupUrl = `https://itunes.apple.com/lookup?id=${encodeURIComponent(appId)}&country=${country.toUpperCase()}`;
+  const lookupResponse = await fetchWithRetry(env, lookupUrl, {
+    method: 'GET',
+    timeoutMs: 15000,
+    retries: 2,
+    idempotent: true,
+  });
+
+  if (lookupResponse.ok) {
+    const payload = (await lookupResponse.json()) as {
+      results?: Array<{ trackName?: string }>;
+    };
+    const rawName = payload.results?.[0]?.trackName;
+    if (typeof rawName === 'string' && rawName.trim()) {
+      appNameFromItunes = rawName.trim();
+    }
+  }
+
+  const response = withCors(
+    env,
+    new Response(
+      JSON.stringify({
+        data: {
+          app_store_id: appId,
+          country,
+          app_name: appNameFromItunes,
+          source: appNameFromItunes ? 'itunes' : 'unknown',
+        },
+      }),
+      {
+        headers: {
+          ...JSON_HEADERS,
+          'cache-control': 'public, max-age=1800, s-maxage=1800',
+        },
+      },
+    ),
+  );
+
+  await cache.put(cacheKey, response.clone());
+  return response;
+}
+
 async function handlePrivateCreateJob(env: Env, request: Request) {
   const authorization = request.headers.get('authorization');
   if (!authorization || !authorization.startsWith('Bearer ')) {
@@ -1237,6 +1331,10 @@ export default {
 
       if (request.method === 'GET' && url.pathname === '/api/public/apps') {
         return await handlePublicApps(env, request);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/public/app-meta') {
+        return await handlePublicAppMeta(env, request);
       }
 
       if (request.method === 'GET' && url.pathname === '/api/private/jobs') {

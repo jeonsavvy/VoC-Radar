@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { getOverview } from '../lib/api';
+import { getOverview, getPublicAppMeta } from '../lib/api';
 import type { AppSelection } from '../lib/appSelection';
 import type { PublicOverview } from '../types';
 
@@ -14,6 +14,7 @@ export function AppOverviewPage({ selection }: Props) {
   const country = selection.country;
 
   const [overview, setOverview] = useState<PublicOverview | null>(null);
+  const [appName, setAppName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -23,12 +24,13 @@ export function AppOverviewPage({ selection }: Props) {
     setLoading(true);
     setError(null);
 
-    getOverview(appId, country)
-      .then((response) => {
+    Promise.all([getOverview(appId, country), getPublicAppMeta(appId, country)])
+      .then(([overviewResponse, appMetaResponse]) => {
         if (!mounted) {
           return;
         }
-        setOverview(response.data);
+        setOverview(overviewResponse.data);
+        setAppName(appMetaResponse.data.app_name?.trim() || null);
       })
       .catch((err) => {
         if (!mounted) {
@@ -51,7 +53,8 @@ export function AppOverviewPage({ selection }: Props) {
     <section className="panel" aria-labelledby="app-summary-heading">
       <h2 id="app-summary-heading">앱 요약 리포트</h2>
       <p className="muted">
-        App ID: <code>{appId}</code> · Country: <code>{country}</code>
+        앱 이름: <strong>{appName || 'Unknown App'}</strong> · App ID: <code>{appId}</code> · Country:{' '}
+        <code>{country}</code>
       </p>
 
       {loading && <p>불러오는 중...</p>}

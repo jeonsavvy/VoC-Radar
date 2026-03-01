@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { isValidAppId, normalizeCountry, type AppSelection } from '../lib/appSelection';
-import { getPublicApps } from '../lib/api';
+import { getPublicAppMeta } from '../lib/api';
 
 type Props = {
   loggedIn: boolean;
@@ -23,15 +23,12 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
   useEffect(() => {
     let mounted = true;
 
-    getPublicApps(100)
+    getPublicAppMeta(selection.appId, selection.country)
       .then((response) => {
         if (!mounted) {
           return;
         }
-        const found = response.data.find(
-          (item) => item.app_store_id === selection.appId && item.country.toLowerCase() === selection.country.toLowerCase(),
-        );
-        setAppName(found?.app_name?.trim() || null);
+        setAppName(response.data.app_name?.trim() || null);
       })
       .catch(() => {
         if (mounted) {
@@ -141,6 +138,8 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
       <main className="content" role="main">
         <Outlet />
       </main>
+
+      <footer className="site-footer">© VoC Radar</footer>
     </div>
   );
 }
