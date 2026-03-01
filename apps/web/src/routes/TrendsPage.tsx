@@ -60,7 +60,7 @@ export function TrendsPage({ selection }: Props) {
 
   return (
     <section className="panel" aria-labelledby="trends-heading">
-      <h2 id="trends-heading">일자별 트렌드</h2>
+      <h2 id="trends-heading">최근 수집 일자별 추이</h2>
       {trendSummary && <p className="muted">{trendSummary.message}</p>}
       {error && <p className="error">{error}</p>}
 

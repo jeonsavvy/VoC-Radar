@@ -63,7 +63,7 @@ export function AppOverviewPage({ selection }: Props) {
       {overview && !loading && !error && (
         <dl className="metric-grid">
           <div>
-            <dt>전체 리뷰</dt>
+            <dt>최근 수집 리뷰</dt>
             <dd>{overview.total_reviews.toLocaleString()}</dd>
           </div>
           <div>
