@@ -105,7 +105,7 @@ apps/web/dist
 ## 4) n8n 전환
 
 1. 워크플로우 선택 후 import
-   - 운영본: `n8n/workflow.supabase-only.json` (job queue claim + 최대 500개 리뷰 수집 + webhook 트리거)
+   - 운영본: `n8n/workflow.supabase-only.json` (job queue claim + 최대 500개 리뷰 수집 + webhook/폴링 듀얼 트리거)
 2. Credential 연결
    - Gemini
 3. ENV 설정:
@@ -120,6 +120,10 @@ apps/web/dist
 5. n8n Webhook URL 확인:
    - `POST https://<n8n-domain>/webhook/voc-radar-queue-trigger`
 6. 이 URL을 Worker env `N8N_PIPELINE_TRIGGER_URL`에 입력 후 Worker 재배포
+
+도메인/터널이 없다면:
+- `N8N_PIPELINE_TRIGGER_URL` 미설정 상태로 운영해도 됩니다.
+- 워크플로우 내 `Schedule Trigger (Local Polling Fallback)`가 1분마다 queue를 처리합니다.
 
 ---
 

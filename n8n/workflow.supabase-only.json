@@ -685,6 +685,35 @@
       "id": "validate-trigger-secret",
       "name": "Validate Trigger Secret",
       "notes": "N8N_PIPELINE_TRIGGER_SECRET이 설정된 경우 webhook 호출 헤더를 검증함"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        },
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "timezone": "Asia/Seoul"
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -128,
+        -56
+      ],
+      "id": "schedule-trigger-local-fallback",
+      "name": "Schedule Trigger (Local Polling Fallback)",
+      "notes": "도메인/터널이 없을 때 queue를 1분 폴링으로 처리하는 무료 fallback 트리거"
     }
   ],
   "pinData": {},
@@ -978,6 +1007,17 @@
       ]
     },
     "Validate Trigger Secret": {
+      "main": [
+        [
+          {
+            "node": "Prepare Claim Job Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger (Local Polling Fallback)": {
       "main": [
         [
           {

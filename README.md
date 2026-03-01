@@ -8,6 +8,7 @@ VoC-Radar는 App Store 리뷰 VoC 파이프라인을 **n8n 오케스트레이션
 ```mermaid
 graph TD
     A[Webhook Trigger in n8n] --> B[Claim Job from Worker Queue]
+    Z[Schedule Polling Fallback in n8n] --> B
     B --> C[Signed Internal Webhook: /fetch-reviews]
     C --> D[Signed Internal Webhook: /filter-new-reviews]
     D --> E[Gemini Classification]
@@ -130,7 +131,7 @@ import 후 아래 환경변수 사용:
 | `N8N_PIPELINE_TRIGGER_SECRET` | webhook 헤더 검증용(선택, Worker 값과 동일하게) |
 
 > v2.2부터는 Worker가 job 등록 직후 n8n webhook을 즉시 호출합니다.  
-> n8n workflow는 **Active 상태**여야 webhook이 수신됩니다.
+> 로컬 n8n 등으로 webhook이 불가능한 경우를 위해 1분 폴링 fallback 트리거도 함께 포함되어 있습니다.
 > v2.1부터의 `VOC_APP_*` 값은 fallback 용도입니다.
 
 ---

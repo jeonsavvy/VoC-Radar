@@ -110,8 +110,9 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     <section className="panel" aria-labelledby="analyze-heading">
       <h2 id="analyze-heading">수집/분석 실행 요청</h2>
       <p className="muted">
-        여기서 요청을 등록하면 queue에 저장되고, Worker가 n8n webhook을 즉시 호출해 처리를 시작합니다. n8n 워크플로우가
-        <strong>켜져 있고 Active 상태</strong>가 아니면 요청은 대기 상태로 남습니다.
+        여기서 요청을 등록하면 queue에 저장됩니다. Worker webhook 트리거가 설정되어 있으면 즉시 실행되고, 미설정이어도
+        n8n의 1분 폴링 fallback으로 자동 처리됩니다. workflow가 <strong>켜져 있고 Active 상태</strong>가 아니면 요청은
+        대기 상태로 남습니다.
       </p>
 
       <form onSubmit={onSubmit} className="inline-form simple-request-form">
