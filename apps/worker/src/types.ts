@@ -106,3 +106,10 @@ export interface FetchReviewsRequest {
   country?: string;
   limit?: number;
 }
+
+export interface CancelPipelineJobsRequest {
+  jobId?: string;
+  cancelAll?: boolean;
+  appStoreId?: string;
+  country?: string;
+}

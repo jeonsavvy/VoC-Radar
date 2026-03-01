@@ -81,3 +81,9 @@ export interface CreatePipelineJobResponse {
   data: PipelineJobItem;
   trigger?: PipelineTriggerResult;
 }
+
+export interface CancelPipelineJobsResponse {
+  ok: true;
+  canceledCount: number;
+  data: PipelineJobItem[];
+}

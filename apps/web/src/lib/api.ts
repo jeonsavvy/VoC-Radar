@@ -1,4 +1,5 @@
 import type {
+  CancelPipelineJobsResponse,
   CreatePipelineJobResponse,
   PipelineJobItem,
   PublicAppItem,
@@ -174,5 +175,18 @@ export async function getMyPipelineJobs(accessToken: string, limit = 20) {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
+  });
+}
+
+export async function cancelPipelineJobs(
+  accessToken: string,
+  payload: { jobId?: string; cancelAll?: boolean; appStoreId?: string; country?: string },
+) {
+  return fetchJson<CancelPipelineJobsResponse>(`/api/private/jobs/cancel`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
   });
 }

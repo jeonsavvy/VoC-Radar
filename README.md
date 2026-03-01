@@ -147,6 +147,7 @@ import 후 아래 환경변수 사용:
 - `GET /api/private/reviews?appId&country&cursor&limit`
 - `GET /api/private/jobs?limit`
 - `POST /api/private/jobs`
+- `POST /api/private/jobs/cancel` (`jobId` 단건 또는 `cancelAll=true` 일괄 취소)
 
 ### Internal (n8n 전용, 인증 헤더 필수)
 

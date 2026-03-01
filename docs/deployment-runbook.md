@@ -133,6 +133,7 @@ apps/web/dist
 - [ ] 비로그인 `GET /api/private/reviews` = 401
 - [ ] 로그인 `GET /api/private/reviews` = 200
 - [ ] 로그인 `POST /api/private/jobs` = 201
+- [ ] 로그인 `POST /api/private/jobs/cancel` = 200 (`canceledCount` 확인)
 - [ ] n8n 실행 시 `pipeline_jobs`가 `queued -> running/completed` 전이
 - [ ] 동일 리뷰가 재수집돼도 LLM 호출 건수/이벤트 적재 중복이 발생하지 않음
 - [ ] n8n 실행 후 `pipeline_runs.status='published'`

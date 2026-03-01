@@ -1,5 +1,6 @@
 import type {
   AlertEventsRequest,
+  CancelPipelineJobsRequest,
   ClaimJobRequest,
   CreatePipelineJobRequest,
   Env,
@@ -181,9 +182,9 @@ async function supabaseUserRequest<T>(
   }
 }
 
-async function verifyAccessToken(env: Env, authorization: string | null): Promise<boolean> {
+async function getAuthUser(env: Env, authorization: string | null): Promise<{ id: string } | null> {
   if (!authorization || !authorization.startsWith('Bearer ')) {
-    return false;
+    return null;
   }
 
   const response = await fetchWithRetry(env, `${env.SUPABASE_URL}/auth/v1/user`, {
@@ -195,7 +196,30 @@ async function verifyAccessToken(env: Env, authorization: string | null): Promis
     idempotent: true,
   });
 
-  return response.ok;
+  if (!response.ok) {
+    return null;
+  }
+
+  const text = await response.text();
+  if (!text.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(text) as { id?: string };
+    const userId = (parsed.id || '').trim();
+    if (!isUuid(userId)) {
+      return null;
+    }
+    return { id: userId };
+  } catch {
+    return null;
+  }
+}
+
+async function verifyAccessToken(env: Env, authorization: string | null): Promise<boolean> {
+  const user = await getAuthUser(env, authorization);
+  return Boolean(user);
 }
 
 function badRequest(env: Env, message: string) {
@@ -912,6 +936,72 @@ async function handlePrivateJobs(env: Env, request: Request) {
   return jsonResponse(env, 200, { data });
 }
 
+async function handlePrivateCancelJobs(env: Env, request: Request) {
+  const authorization = request.headers.get('authorization');
+  const user = await getAuthUser(env, authorization);
+  if (!user) {
+    return unauthorized(env, 'invalid access token');
+  }
+
+  let body: CancelPipelineJobsRequest;
+  try {
+    body = (await request.json()) as CancelPipelineJobsRequest;
+  } catch {
+    return badRequest(env, 'invalid json body');
+  }
+
+  const cancelAll = body?.cancelAll === true;
+  const jobId = (body?.jobId || '').trim();
+  if (!cancelAll && !jobId) {
+    return badRequest(env, 'jobId is required when cancelAll is false');
+  }
+
+  if (jobId && !isUuid(jobId)) {
+    return badRequest(env, 'jobId must be uuid');
+  }
+
+  const appStoreId = body?.appStoreId ? normalizeAppStoreId(body.appStoreId) : null;
+  const country = body?.country ? normalizeCountry(body.country) : null;
+
+  const query = new URLSearchParams();
+  query.set('requested_by', `eq.${user.id}`);
+  query.set('status', 'in.(queued,running)');
+  if (jobId) {
+    query.set('id', `eq.${jobId}`);
+  }
+  if (cancelAll && appStoreId) {
+    query.set('app_store_id', `eq.${appStoreId}`);
+  }
+  if (cancelAll && country) {
+    query.set('country', `eq.${country}`);
+  }
+
+  const now = new Date().toISOString();
+  const updatedRows = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/pipeline_jobs?${query.toString()}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify({
+        status: 'canceled',
+        error_message: 'Canceled by user',
+        finished_at: now,
+        updated_at: now,
+      }),
+      idempotent: true,
+    },
+  );
+
+  return jsonResponse(env, 200, {
+    ok: true,
+    canceledCount: updatedRows.length,
+    data: updatedRows,
+  });
+}
+
 async function handleInternalFilterNewReviews(env: Env, request: Request, rawBody: string) {
   const verified = await verifySignedRequest(env, request, rawBody);
   if (!verified) {
@@ -1454,6 +1544,10 @@ export default {
 
       if (request.method === 'GET' && url.pathname === '/api/private/jobs') {
         return await handlePrivateJobs(env, request);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/private/jobs/cancel') {
+        return await handlePrivateCancelJobs(env, request);
       }
 
       if (request.method === 'POST' && url.pathname === '/api/private/jobs') {

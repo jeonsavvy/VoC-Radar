@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { createPipelineJob, getMyPipelineJobs } from '../lib/api';
+import { cancelPipelineJobs, createPipelineJob, getMyPipelineJobs } from '../lib/api';
 import { getAccessToken } from '../lib/auth';
 import { isValidAppId, normalizeCountry, type AppSelection } from '../lib/appSelection';
 import type { PipelineJobItem } from '../types';
@@ -25,6 +25,8 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
   const [jobs, setJobs] = useState<PipelineJobItem[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [cancelingJobId, setCancelingJobId] = useState<string | null>(null);
+  const [cancelingAll, setCancelingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -58,6 +60,61 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     loadJobs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loggedIn]);
+
+  const cancelableStatuses: PipelineJobItem['status'][] = ['queued', 'running'];
+  const cancelableJobCount = jobs.filter((job) => cancelableStatuses.includes(job.status)).length;
+
+  const onCancelJob = async (jobId: string) => {
+    if (!loggedIn) {
+      return;
+    }
+    if (!window.confirm('이 요청을 취소할까요?')) {
+      return;
+    }
+
+    setError(null);
+    setMessage(null);
+    setCancelingJobId(jobId);
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        throw new Error('로그인 세션이 만료되었습니다. 다시 로그인하세요.');
+      }
+      const response = await cancelPipelineJobs(token, { jobId });
+      setMessage(`요청 취소 완료: ${response.canceledCount}건`);
+      await loadJobs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '요청 취소에 실패했습니다.');
+    } finally {
+      setCancelingJobId(null);
+    }
+  };
+
+  const onCancelAll = async () => {
+    if (!loggedIn) {
+      return;
+    }
+    if (!window.confirm('대기/실행중 요청을 모두 취소할까요?')) {
+      return;
+    }
+
+    setError(null);
+    setMessage(null);
+    setCancelingAll(true);
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        throw new Error('로그인 세션이 만료되었습니다. 다시 로그인하세요.');
+      }
+      const response = await cancelPipelineJobs(token, { cancelAll: true });
+      setMessage(`요청 일괄 취소 완료: ${response.canceledCount}건`);
+      await loadJobs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '일괄 취소에 실패했습니다.');
+    } finally {
+      setCancelingAll(false);
+    }
+  };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -152,6 +209,16 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
       <hr className="divider" />
 
       <h3>최근 요청 상태</h3>
+      {loggedIn && (
+        <button
+          type="button"
+          className="ghost-button"
+          onClick={onCancelAll}
+          disabled={cancelingAll || cancelableJobCount === 0}
+        >
+          {cancelingAll ? '취소 중...' : `대기/실행중 전체 취소 (${cancelableJobCount})`}
+        </button>
+      )}
       {loadingJobs && <p>불러오는 중...</p>}
       {!loadingJobs && jobs.length === 0 && <p className="muted">요청 이력이 없습니다.</p>}
       {jobs.length > 0 && (
@@ -163,6 +230,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
                 <th scope="col">앱 ID</th>
                 <th scope="col">상태</th>
                 <th scope="col">runId</th>
+                <th scope="col">작업</th>
               </tr>
             </thead>
             <tbody>
@@ -174,6 +242,20 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
                   </td>
                   <td>{statusLabel[job.status]}</td>
                   <td>{job.run_id || '-'}</td>
+                  <td>
+                    {cancelableStatuses.includes(job.status) ? (
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => onCancelJob(job.id)}
+                        disabled={cancelingJobId === job.id}
+                      >
+                        {cancelingJobId === job.id ? '취소 중...' : '취소'}
+                      </button>
+                    ) : (
+                      '-'
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
