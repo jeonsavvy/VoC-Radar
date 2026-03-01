@@ -22,6 +22,7 @@
 4. `supabase/migrations/202602270002_review_prefilter.sql` 실행
 5. `supabase/migrations/202603010001_pipeline_jobs_function_fix.sql` 실행
 6. Auth > Users에서 테스트 계정 1개 생성
+7. Authentication > Email 설정에서 **Confirm email 활성화** 확인
 
 검증 SQL:
 

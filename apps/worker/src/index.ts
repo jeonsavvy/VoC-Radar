@@ -1052,7 +1052,12 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
     return unauthorized(env, 'invalid signature');
   }
 
-  const body = JSON.parse(rawBody) as UpsertReviewRequest;
+  let body: UpsertReviewRequest;
+  try {
+    body = JSON.parse(rawBody) as UpsertReviewRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
 
   if (!body?.runId || !body?.app?.appStoreId || !body?.app?.country || !Array.isArray(body.reviews)) {
     return badRequest(env, 'invalid payload');
@@ -1163,7 +1168,13 @@ async function handleInternalParseError(env: Env, request: Request, rawBody: str
     return unauthorized(env, 'invalid signature');
   }
 
-  const body = JSON.parse(rawBody) as ParseErrorRequest;
+  let body: ParseErrorRequest;
+  try {
+    body = JSON.parse(rawBody) as ParseErrorRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+
   if (!body?.parseErrorId || !body?.message) {
     return badRequest(env, 'invalid payload');
   }
@@ -1214,7 +1225,13 @@ async function handleInternalPublish(env: Env, request: Request, rawBody: string
     return unauthorized(env, 'invalid signature');
   }
 
-  const body = JSON.parse(rawBody) as PublishRequest;
+  let body: PublishRequest;
+  try {
+    body = JSON.parse(rawBody) as PublishRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+
   if (!body?.runId || !body?.appStoreId || !body?.country) {
     return badRequest(env, 'invalid payload');
   }
@@ -1258,7 +1275,13 @@ async function handleInternalAlertEvents(env: Env, request: Request, rawBody: st
     return unauthorized(env, 'invalid signature');
   }
 
-  const body = JSON.parse(rawBody) as AlertEventsRequest;
+  let body: AlertEventsRequest;
+  try {
+    body = JSON.parse(rawBody) as AlertEventsRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+
   if (!body?.runId || !body?.appStoreId || !body?.country || !Array.isArray(body.alerts)) {
     return badRequest(env, 'invalid payload');
   }

@@ -13,6 +13,20 @@ export async function signInWithPassword(email: string, password: string) {
   if (error) {
     throw error;
   }
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError) {
+    throw userError;
+  }
+
+  if (!user?.email_confirmed_at) {
+    await supabase.auth.signOut();
+    throw new Error('이메일 인증 완료 후 로그인 가능합니다. 메일함의 인증 링크를 먼저 눌러주세요.');
+  }
 }
 
 export async function signUpWithPassword(email: string, password: string) {
@@ -29,8 +43,15 @@ export async function signUpWithPassword(email: string, password: string) {
     throw error;
   }
 
+  if (data.session?.access_token) {
+    await supabase.auth.signOut();
+    throw new Error(
+      '현재 Supabase Email 인증이 비활성화되어 있습니다. Supabase Dashboard > Authentication > Email 설정에서 Confirm email을 활성화하세요.',
+    );
+  }
+
   return {
-    hasSession: Boolean(data.session?.access_token),
+    requiresEmailVerification: true,
   };
 }
 

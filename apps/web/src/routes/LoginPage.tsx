@@ -32,12 +32,7 @@ export function LoginPage({ onSignedIn }: Props) {
       }
 
       if (mode === 'signup') {
-        const result = await signUpWithPassword(email, password);
-        if (result.hasSession) {
-          await onSignedIn();
-          navigate('/analyze');
-          return;
-        }
+        await signUpWithPassword(email, password);
         setMessage('회원가입이 완료되었습니다. 이메일 인증 링크를 확인한 뒤 로그인하세요.');
         setSearchParams({});
         return;
