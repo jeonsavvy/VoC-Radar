@@ -13,6 +13,7 @@ export interface Env {
 export interface UpsertReviewRequest {
   runId: string;
   source: string;
+  jobId?: string | null;
   app: {
     appStoreId: string;
     country: string;
@@ -35,6 +36,7 @@ export interface UpsertReviewRequest {
 
 export interface ParseErrorRequest {
   parseErrorId: string;
+  jobId?: string;
   runId?: string;
   appStoreId?: string;
   country?: string;
@@ -46,6 +48,7 @@ export interface PublishRequest {
   runId: string;
   appStoreId: string;
   country: string;
+  jobId?: string | null;
   publishedAt?: string;
 }
 
@@ -60,5 +63,38 @@ export interface AlertEventsRequest {
     category: string;
     summary: string;
     sentAt?: string;
+  }>;
+}
+
+export interface CreatePipelineJobRequest {
+  appStoreId: string;
+  country?: string;
+  appName?: string;
+  note?: string;
+}
+
+export interface ClaimJobRequest {
+  allowFallback?: boolean;
+  fallbackAppStoreId?: string;
+  fallbackCountry?: string;
+  fallbackAppName?: string;
+}
+
+export interface JobStatusRequest {
+  jobId: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
+  runId?: string;
+  errorMessage?: string;
+}
+
+export interface FilterNewReviewsRequest {
+  appStoreId: string;
+  country?: string;
+  reviews: Array<{
+    reviewId: string;
+    author?: string;
+    content?: string;
+    rating?: number | string;
+    reviewedAt?: string;
   }>;
 }

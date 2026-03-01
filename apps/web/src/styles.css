@@ -39,9 +39,25 @@ a {
   border-bottom: 1px solid var(--border);
   padding: 1rem 1.5rem;
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: 1rem;
   align-items: center;
+}
+
+.topbar-form {
+  display: inline-grid;
+  grid-template-columns: auto minmax(120px, 160px) auto 64px auto;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.topbar-form label {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.topbar-form input {
+  padding: 0.4rem 0.5rem;
 }
 
 .brand {
@@ -210,6 +226,24 @@ a {
   padding: 1.1rem;
 }
 
+.dashboard-grid {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.bullet-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.panel h4 {
+  margin: 0 0 0.5rem;
+}
+
 .story-section ol {
   margin: 0;
   padding-left: 1.1rem;
@@ -312,6 +346,40 @@ th {
   max-width: 360px;
 }
 
+.inline-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+  margin-bottom: 0.7rem;
+}
+
+.inline-form button {
+  justify-self: start;
+}
+
+.divider {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.1rem 0;
+}
+
+.chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.chip-button {
+  border: 1px solid var(--border);
+  background: #0a1226;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.38rem 0.7rem;
+  cursor: pointer;
+}
+
 input {
   border-radius: 0.7rem;
   border: 1px solid var(--border);
@@ -353,6 +421,10 @@ input {
 @media (max-width: 900px) {
   .topbar {
     grid-template-columns: 1fr;
+  }
+
+  .topbar-form {
+    grid-template-columns: auto 1fr auto 80px auto;
   }
 
   .split-hero {

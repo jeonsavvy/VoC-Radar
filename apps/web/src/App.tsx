@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { Shell } from './components/Shell';
+import { defaultSelection, persistSelection, readSelection } from './lib/appSelection';
 import { signOut } from './lib/auth';
 import { supabase } from './lib/supabase';
+import { AnalyzePage } from './routes/AnalyzePage';
 import { AppOverviewPage } from './routes/AppOverviewPage';
 import { CategoriesPage } from './routes/CategoriesPage';
 import { HomePage } from './routes/HomePage';
@@ -12,6 +14,7 @@ import { TrendsPage } from './routes/TrendsPage';
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
+  const [selection, setSelection] = useState(readSelection);
 
   const refreshSession = async () => {
     if (!supabase) {
@@ -44,6 +47,10 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    persistSelection(selection);
+  }, [selection]);
+
   return (
     <BrowserRouter>
       <Routes>
@@ -52,18 +59,32 @@ export default function App() {
           element={
             <Shell
               loggedIn={loggedIn}
+              selection={selection}
+              onSelectionChange={setSelection}
               onSignOut={() => {
                 signOut().finally(() => refreshSession());
               }}
             />
           }
         >
-          <Route index element={<HomePage />} />
-          <Route path="apps/:appId" element={<AppOverviewPage />} />
-          <Route path="trends" element={<TrendsPage />} />
-          <Route path="categories" element={<CategoriesPage />} />
+          <Route index element={<HomePage selection={selection} />} />
+          <Route path="apps/:appId?" element={<AppOverviewPage selection={selection} />} />
+          <Route path="trends" element={<TrendsPage selection={selection} />} />
+          <Route path="categories" element={<CategoriesPage selection={selection} />} />
+          <Route
+            path="analyze"
+            element={
+              <AnalyzePage
+                loggedIn={loggedIn}
+                selection={selection}
+                onSelectionChange={(next) => {
+                  setSelection(next || defaultSelection);
+                }}
+              />
+            }
+          />
           <Route path="login" element={<LoginPage onSignedIn={refreshSession} />} />
-          <Route path="reviews" element={<ReviewsPage loggedIn={loggedIn} />} />
+          <Route path="reviews" element={<ReviewsPage loggedIn={loggedIn} selection={selection} />} />
         </Route>
       </Routes>
     </BrowserRouter>

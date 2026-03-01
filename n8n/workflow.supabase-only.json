@@ -1,0 +1,1060 @@
+{
+  "name": "앱스토어 리뷰 모니터링 시스템 v2 (Supabase + Cloudflare BFF) (Supabase-only)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 60
+            }
+          ]
+        },
+        "triggerTimes": {
+          "item": [
+            {
+              "mode": "interval",
+              "hour": 9,
+              "minute": 0
+            }
+          ]
+        },
+        "timezone": "Asia/Seoul"
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -128,
+        112
+      ],
+      "id": "schedule-trigger-daily",
+      "name": "Schedule Trigger (Hourly Strategy)",
+      "notes": "RSS 50개 제한 대응을 위해 1시간 주기로 변경함"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://itunes.apple.com/' + (($json.country || 'kr').toString().toLowerCase()) + '/rss/customerreviews/limit=50/id=' + ($json.appStoreId || '1018769995').toString().trim() + '/sortBy=mostRecent/json' }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000,
+          "retryOnFail": true,
+          "maxTries": 3
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        896,
+        -16
+      ],
+      "id": "638e245b-1e11-4e26-92d5-36de6e727396",
+      "name": "HTTP Request",
+      "notes": "앱스토어 리뷰 API 호출\n\nURL 형식: https://itunes.apple.com/{국가코드}/rss/customerreviews/limit={개수}/id={앱ID}/sortBy=mostRecent/json\n\n다른 앱으로 변경: URL에서 앱 ID와 국가코드 수정\nlimit: 최대 50개 (파라미터 지정해도 최대 50개 반환 가능)"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ '# Input Data (JSON List)\\n' + JSON.stringify($json.reviews || []) + '\\n\\n# Task\\n위 JSON 데이터(리뷰 리스트)를 하나씩 분석해서, 아래 정보를 포함한 **새로운 JSON List**를 만들어.\\n(순서를 절대 바꾸지 말고 입력된 개수 그대로 출력해.)\\n\\n# Output Format (Array of Objects)\\n[\\n  {\\n    \"author\": \"원문 작성자 이름 그대로\",\\n    \"date\": \"원문 reviewedAt 날짜 그대로\",\\n    \"rating\": \"원문 rating 그대로\",\\n    \"content\": \"원문 내용 그대로\",\\n    \"priority\": \"🚨 Critical / ⚠️ High / ✅ Normal 중 택1\",\\n    \"category\": \"버그 / 사용성 / 칭찬 / 기타 중 택1\",\\n    \"summary\": \"내용 1줄 요약\"\\n  },\\n  ... (반복)\\n]\\n\\n(오직 JSON 데이터만 출력해. 마크다운 코드블록 쓰지 마.)\\n\\nIMPORTANT: Return ONLY the JSON array. Do not include markdown formatting like ```json. If content is empty, set summary to \"내용 없음\".' }}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [
+        464,
+        256
+      ],
+      "id": "0ed4ad28-e5bc-46db-aa46-25b1b2cef11b",
+      "name": "Basic LLM Chain",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "maxTries": 3,
+      "executeOnce": true,
+      "notes": "AI 리뷰 분석 (Google Gemini)\n\n추출 정보: 긴급도(Critical/High/Normal), 유형(버그/사용성/칭찬/기타), 요약\n\n운영 팁: 모델/API 요금제 한도는 수시로 바뀔 수 있으니 실제 한도에 맞춰 스케줄 주기를 조정하세요."
+    },
+    {
+      "parameters": {
+        "jsCode": "const aiResponse = $input.item.json.text || $input.item.json.output || '';\nconst context = $('Ensure New Reviews').item.json || {};\nconst sourceReviews = Array.isArray(context.reviews) ? context.reviews : [];\n\nif (sourceReviews.length === 0) {\n  return [];\n}\n\nconst normalizeJsonString = (rawValue) => {\n  const sanitized = (rawValue || '')\n    .toString()\n    .trim()\n    .replace(/```json\\s*/gi, '')\n    .replace(/```\\s*/g, '')\n    .trim();\n\n  if (!sanitized) {\n    return '';\n  }\n\n  const arrayStart = sanitized.indexOf('[');\n  const arrayEnd = sanitized.lastIndexOf(']');\n  if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {\n    return sanitized.slice(arrayStart, arrayEnd + 1);\n  }\n\n  return sanitized;\n};\n\nlet parsedData = [];\ntry {\n  const jsonString = normalizeJsonString(aiResponse);\n  parsedData = JSON.parse(jsonString);\n\n  if (!Array.isArray(parsedData)) {\n    parsedData = [parsedData];\n  }\n} catch (error) {\n  console.error('JSON 파싱 실패:', error);\n  parsedData = [];\n}\n\nif (!parsedData.length) {\n  return [{\n    json: {\n      ID: `PARSE_ERROR_${Date.now()}`,\n      긴급도: 'ERROR',\n      유형: '파싱실패',\n      요약: 'No valid data parsed',\n      원본: aiResponse.toString().slice(0, 1500),\n      별점: '',\n      작성자: 'system',\n      작성일시: new Date().toISOString(),\n      runId: context.runId || `RUN_${Date.now()}`,\n      jobId: context.jobId || null,\n      appStoreId: context.appStoreId || ($env.VOC_APP_ID || '1018769995').toString(),\n      country: context.country || ($env.VOC_APP_COUNTRY || 'kr').toString(),\n      appName: context.appName || ($env.VOC_APP_NAME || '').toString(),\n    }\n  }];\n}\n\nreturn sourceReviews.map((review, index) => {\n  const item = parsedData[index] || {};\n\n  const originalAuthor = (review.author || '').toString();\n  const originalDate = (review.reviewedAt || new Date().toISOString()).toString();\n  const originalRating = (review.rating ?? '').toString();\n  const originalContent = (review.content || '').toString();\n  const originalId = (review.reviewId || '').toString();\n\n  return {\n    json: {\n      priority: item.priority || '✅ Normal',\n      category: item.category || '기타',\n      summary: item.summary || '분류 결과 없음',\n      author: originalAuthor,\n      date: originalDate,\n      rating: originalRating,\n      content: originalContent,\n      id: originalId,\n      ID: originalId,\n      긴급도: item.priority || '✅ Normal',\n      유형: item.category || '기타',\n      요약: item.summary || '분류 결과 없음',\n      작성자: originalAuthor,\n      작성일시: originalDate,\n      별점: originalRating,\n      원본: originalContent,\n      runId: context.runId || `RUN_${Date.now()}`,\n      jobId: context.jobId || null,\n      appStoreId: context.appStoreId || ($env.VOC_APP_ID || '1018769995').toString(),\n      country: context.country || ($env.VOC_APP_COUNTRY || 'kr').toString(),\n      appName: context.appName || ($env.VOC_APP_NAME || '').toString(),\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        664,
+        256
+      ],
+      "id": "parse-json-response",
+      "name": "Parse JSON Response"
+    },
+    {
+      "parameters": {
+        "options": {},
+        "modelName": "models/gemini-3-flash-preview"
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        464,
+        112
+      ],
+      "id": "848e3076-2ed7-44d1-a766-76479b6aaed9",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "hFK58SlSvL4vLAvu",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const normalizeValue = (value) => (value ?? '').toString().trim();\n\nconst context = (() => {\n  try {\n    return $('Prepare Run Context').item.json || {};\n  } catch {\n    return {};\n  }\n})();\n\nconst currentItems = $input.all();\nif (!Array.isArray(currentItems) || currentItems.length === 0) {\n  return [];\n}\n\nconst seenCurrentIds = new Set();\nconst output = [];\n\nfor (const item of currentItems) {\n  const row = item.json || {};\n  const id = normalizeValue(row.id || row.ID);\n\n  if (!id || seenCurrentIds.has(id)) {\n    continue;\n  }\n\n  seenCurrentIds.add(id);\n\n  const priority = row.priority || row.긴급도 || '';\n  const category = row.category || row.유형 || '';\n  const summary = row.summary || row.요약 || '';\n  const content = row.content || row.원본 || '';\n  const rating = row.rating || row.별점 || '';\n  const author = row.author || row.작성자 || '';\n  const date = row.date || row.작성일시 || '';\n\n  output.push({\n    json: {\n      ID: id,\n      긴급도: priority,\n      유형: category,\n      요약: summary,\n      원본: content,\n      별점: rating,\n      작성자: author,\n      작성일시: date,\n      priority,\n      category,\n      summary,\n      content,\n      rating,\n      author,\n      date,\n      runId: row.runId || context.runId || null,\n      jobId: row.jobId || context.jobId || null,\n      appStoreId: row.appStoreId || context.appStoreId || null,\n      country: row.country || context.country || null,\n      appName: row.appName || context.appName || null,\n    }\n  });\n}\n\nreturn output;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1088,
+        256
+      ],
+      "id": "check-duplicate-filter",
+      "name": "Filter Duplicates"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-critical-rating",
+              "leftValue": "={{ (() => { const p = (($json.priority || $json.긴급도 || '').toString().replace(/[🚨⚠️✅]/g, '').trim().toLowerCase()); const r = Number(($json.rating || $json.별점 || '0').toString().trim()); const rawMax = ($env.VOC_ALERT_MAX_RATING || '2').toString().trim(); const parsedMax = Number(rawMax); const maxRating = Number.isFinite(parsedMax) ? Math.min(Math.max(parsedMax, 1), 5) : 2; return (p.includes('critical') && r <= maxRating) ? 'yes' : 'no'; })() }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        256
+      ],
+      "id": "check-critical-priority",
+      "name": "Check Critical Priority"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItems = $input.all();\nif (!Array.isArray(inputItems) || inputItems.length === 0) {\n  return [];\n}\n\nconst asText = (value, fallback = 'N/A') => {\n  const normalized = (value ?? '').toString().trim();\n  return normalized.length > 0 ? normalized : fallback;\n};\n\nconst first = inputItems[0]?.json || {};\nconst appStoreId = (first.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (first.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst runId = (first.runId || `RUN_${Date.now()}`).toString();\n\nreturn inputItems.map(({ json = {} }) => ({\n  json: {\n    reviewId: asText(json.ID || json.id, `MISSING_ID_${Date.now()}`),\n    runId,\n    appStoreId,\n    country,\n    author: asText(json.author || json.작성자, '알 수 없음'),\n    rating: asText(json.rating || json.별점),\n    date: asText(json.date || json.작성일시),\n    content: asText(json.content || json.원본),\n    priority: asText(json.priority || json.긴급도),\n    category: asText(json.category || json.유형),\n    summary: asText(json.summary || json.요약),\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        144
+      ],
+      "id": "prepare-telegram-data",
+      "name": "Prepare Telegram Data"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID || '' }}",
+        "text": "=🚨 긴급 리뷰 알림\n작성자: {{ $json.author || '알 수 없음' }}\n별점: {{ $json.rating || 'N/A' }}\n긴급도: {{ $json.priority || 'N/A' }}\n유형: {{ $json.category || 'N/A' }}\n요약: {{ $json.summary || 'N/A' }}\n\n원본 리뷰:\n{{ $json.content || 'N/A' }}\n\n작성일시: {{ $json.date || 'N/A' }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2144,
+        144
+      ],
+      "id": "telegram-notification",
+      "name": "Send Telegram Alert",
+      "notes": "텔레그램 알림 전송\n\nCritical 리뷰 발견 시 텔레그램으로 알림 전송\n설정: TELEGRAM_CHAT_ID 환경변수와 Telegram Bot Credential을 연결하세요."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-parse-error",
+              "leftValue": "={{ (($json.ID || '').toString().startsWith('PARSE_ERROR_')) ? \"yes\" : \"no\" }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        864,
+        256
+      ],
+      "id": "cdcd9089-0930-40f0-8be9-7876aa998a88",
+      "name": "Has Parse Error?"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-telegram-chat-id",
+              "leftValue": "={{ ($env.TELEGRAM_CHAT_ID || '').toString().trim() }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1936,
+        144
+      ],
+      "id": "check-telegram-chat-id",
+      "name": "Has Telegram Chat ID?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItems = $input.all();\nif (!Array.isArray(inputItems) || inputItems.length === 0) {\n  return [];\n}\n\nconst context = inputItems[0]?.json || {};\nconst appStoreId = (context.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (context.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst appName = (context.appName || $env.VOC_APP_NAME || '').toString().trim();\nconst runId = (context.runId || `RUN_${Date.now()}`).toString();\nconst jobId = (context.jobId || '').toString().trim() || null;\n\nconst normalizePriority = (value) => {\n  const normalized = (value ?? '')\n    .toString()\n    .replace(/[🚨⚠️✅]/g, '')\n    .trim()\n    .toLowerCase();\n\n  if (normalized.includes('critical')) {\n    return 'Critical';\n  }\n  if (normalized.includes('high')) {\n    return 'High';\n  }\n  return 'Normal';\n};\n\nconst reviews = inputItems.map(({ json = {} }) => ({\n  reviewId: (json.ID || json.id || '').toString().trim(),\n  rating: Number((json.rating || json.별점 || '0').toString().trim()) || 0,\n  author: (json.author || json.작성자 || '').toString().trim(),\n  content: (json.content || json.원본 || '').toString().trim(),\n  reviewedAt: (json.date || json.작성일시 || new Date().toISOString()).toString(),\n  priority: normalizePriority(json.priority || json.긴급도),\n  category: (json.category || json.유형 || '기타').toString().trim(),\n  summary: (json.summary || json.요약 || '분류 결과 없음').toString().trim(),\n  modelVersion: ($env.VOC_MODEL_VERSION || 'gemini').toString(),\n  rawSource: {\n    id: json.ID || json.id,\n    content: json.content || json.원본,\n    author: json.author || json.작성자,\n    rating: json.rating || json.별점,\n    date: json.date || json.작성일시,\n  },\n})).filter((review) => review.reviewId && review.rating > 0);\n\nif (reviews.length === 0) {\n  return [];\n}\n\nreturn [{\n  json: {\n    runId,\n    jobId,\n    payload: {\n      runId,\n      jobId,\n      source: 'n8n',\n      app: {\n        appStoreId,\n        country,\n        appName,\n      },\n      reviews,\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1360,
+        96
+      ],
+      "id": "prepare-upsert-payload-v2",
+      "name": "Prepare Upsert Payload",
+      "notes": "Supabase upsert용 payload 생성"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    runId: $json.runId || payload.runId,\n    payload,\n    timestamp,\n    signature,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        96
+      ],
+      "id": "sign-upsert-payload-v2",
+      "name": "Sign Upsert Payload",
+      "notes": "BFF 내부 엔드포인트 HMAC 서명 생성"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/upsert-reviews' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "x-voc-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000,
+          "retryOnFail": true,
+          "maxTries": 3,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1776,
+        96
+      ],
+      "id": "upsert-reviews-to-bff-v2",
+      "name": "Upsert Reviews to BFF",
+      "notes": "Supabase upsert (BFF internal endpoint)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const upsertContext = $('Prepare Upsert Payload').item.json || {};\nconst payload = upsertContext.payload || {};\n\nconst runId = ($json.runId || upsertContext.runId || `RUN_${Date.now()}`).toString();\nconst appStoreId = (payload.app?.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (payload.app?.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst jobId = (upsertContext.jobId || payload.jobId || '').toString().trim() || null;\n\nreturn [{\n  json: {\n    runId,\n    payload: {\n      runId,\n      appStoreId,\n      country,\n      jobId,\n      publishedAt: new Date().toISOString(),\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        96
+      ],
+      "id": "prepare-publish-payload-v2",
+      "name": "Prepare Publish Payload",
+      "notes": "캐시 무효화 payload 생성"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId,\n    timestamp,\n    signature,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2192,
+        96
+      ],
+      "id": "sign-publish-payload-v2",
+      "name": "Sign Publish Payload",
+      "notes": "캐시 무효화 요청 HMAC 서명"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/publish' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "x-voc-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000,
+          "retryOnFail": true,
+          "maxTries": 3,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2400,
+        96
+      ],
+      "id": "notify-publish-bff-v2",
+      "name": "Notify Publish to BFF",
+      "notes": "리포트 반영 직후 캐시 버전 갱신"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.item.json || {};\nconst appStoreId = (item.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (item.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst runId = (item.runId || '').toString().trim() || undefined;\nconst jobId = (item.jobId || '').toString().trim() || undefined;\n\nconst parseErrorId = (item.ID || `PARSE_ERROR_${Date.now()}`).toString();\n\nconst payload = {\n  parseErrorId,\n  jobId,\n  runId,\n  appStoreId,\n  country,\n  message: (item.요약 || item.message || 'No valid data parsed').toString(),\n  rawResponse: (item.원본 || '').toString(),\n};\n\nreturn [{ json: { payload } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1168,
+        336
+      ],
+      "id": "prepare-parse-error-payload-v2",
+      "name": "Prepare Parse Error Payload",
+      "notes": "parse error dead-letter 적재 payload 생성"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    timestamp,\n    signature,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1376,
+        336
+      ],
+      "id": "sign-parse-error-payload-v2",
+      "name": "Sign Parse Error Payload",
+      "notes": "parse error 요청 HMAC 서명"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/parse-error' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "x-voc-timestamp",
+              "value": "={{ $json.timestamp }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000,
+          "retryOnFail": true,
+          "maxTries": 3,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1584,
+        336
+      ],
+      "id": "send-parse-error-to-bff-v2",
+      "name": "Send Parse Error to BFF",
+      "notes": "Supabase parse_errors 저장"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputItems = $input.all();\nif (!Array.isArray(inputItems) || inputItems.length === 0) {\n  return [];\n}\n\nconst first = inputItems[0].json || {};\nconst appStoreId = (first.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (first.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst runId = (first.runId || `RUN_${Date.now()}`).toString();\n\nconst alerts = inputItems.map(({ json = {} }) => ({\n  reviewId: (json.reviewId || '').toString().trim(),\n  rating: Number((json.rating || '0').toString().trim()) || 0,\n  priority: (json.priority || '').toString().trim(),\n  category: (json.category || '').toString().trim(),\n  summary: (json.summary || '').toString().trim(),\n  sentAt: new Date().toISOString(),\n})).filter((alert) => alert.reviewId && alert.rating > 0);\n\nif (alerts.length === 0) {\n  return [];\n}\n\nreturn [{\n  json: {\n    runId,\n    payload: {\n      runId,\n      appStoreId,\n      country,\n      alerts,\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1984,
+        416
+      ],
+      "id": "prepare-alert-events-payload-v2",
+      "name": "Prepare Alert Events Payload",
+      "notes": "텔레그램 전송 이벤트를 Supabase에 기록"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId,\n    timestamp,\n    signature,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2192,
+        416
+      ],
+      "id": "sign-alert-events-payload-v2",
+      "name": "Sign Alert Events Payload",
+      "notes": "alert_events 요청 HMAC 서명"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/alert-events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "x-voc-timestamp",
+              "value": "={{ $json.timestamp }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000,
+          "retryOnFail": true,
+          "maxTries": 3,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2400,
+        416
+      ],
+      "id": "send-alert-events-to-bff-v2",
+      "name": "Send Alert Events to BFF",
+      "notes": "alert_events upsert"
+    },
+    {
+      "parameters": {
+        "jsCode": "const allowFallback = (($env.VOC_ALLOW_FALLBACK || 'false').toString().trim().toLowerCase() === 'true');\n\nconst payload = {\n  allowFallback,\n};\n\nif (allowFallback) {\n  payload.fallbackAppStoreId = ($env.VOC_APP_ID || '').toString().trim() || undefined;\n  payload.fallbackCountry = ($env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\n  payload.fallbackAppName = ($env.VOC_APP_NAME || '').toString().trim() || undefined;\n}\n\nreturn [{\n  json: {\n    payload,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        112
+      ],
+      "id": "prepare-claim-job-payload-v2",
+      "name": "Prepare Claim Job Payload",
+      "notes": "큐에서 다음 처리 대상 앱을 가져오기 위한 fallback payload 준비"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    timestamp,\n    signature,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        272,
+        112
+      ],
+      "id": "sign-claim-job-payload-v2",
+      "name": "Sign Claim Job Payload",
+      "notes": "claim-job 내부 엔드포인트 HMAC 서명 생성"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/claim-job' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "x-voc-timestamp",
+              "value": "={{ $json.timestamp }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000,
+          "retryOnFail": true,
+          "maxTries": 3,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        480,
+        112
+      ],
+      "id": "claim-job-from-bff-v2",
+      "name": "Claim Job from BFF",
+      "notes": "queue 우선 + fallback 앱 반환"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json.data || {};\nconst status = (data.status || '').toString().trim().toLowerCase();\nconst jobId = (data.jobId || '').toString().trim() || null;\n\nif (!jobId && status !== 'fallback') {\n  console.log('No queued job. Stop this run.');\n  return [];\n}\n\nconst appStoreId = (data.appStoreId || $env.VOC_APP_ID || '').toString().trim();\nif (!appStoreId) {\n  console.log('Missing appStoreId. Stop this run.');\n  return [];\n}\n\nconst country = (data.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\nconst appName = (data.appName || $env.VOC_APP_NAME || '').toString().trim();\nconst runId = `RUN_${Date.now()}`;\n\nreturn [{\n  json: {\n    runId,\n    jobId,\n    appStoreId,\n    country,\n    appName,\n    status,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        112
+      ],
+      "id": "prepare-run-context-v2",
+      "name": "Prepare Run Context",
+      "notes": "runId/jobId/app context 일원화"
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Prepare Run Context').item.json || {};\nconst appStoreId = (context.appStoreId || $env.VOC_APP_ID || '1018769995').toString().trim();\nconst country = (context.country || $env.VOC_APP_COUNTRY || 'kr').toString().trim().toLowerCase();\n\nconst feed = $input.item.json?.feed?.entry;\nconst entries = Array.isArray(feed) ? feed : [];\n\nconst seen = new Set();\nconst reviews = entries.map((entry) => {\n  const reviewId = (entry?.id?.label || entry?.id || '').toString().trim();\n  const ratingRaw = entry?.['im:rating']?.label || entry?.['im:rating'] || '';\n  const rating = Number((ratingRaw || '').toString().trim()) || 0;\n\n  return {\n    reviewId,\n    author: (entry?.author?.name?.label || entry?.author?.name || '').toString().trim(),\n    reviewedAt: (entry?.updated?.label || entry?.updated || new Date().toISOString()).toString(),\n    rating,\n    content: (entry?.content?.label || entry?.content || entry?.content?.['#text'] || '').toString().trim(),\n  };\n}).filter((review) => {\n  if (!review.reviewId || review.rating <= 0) {\n    return false;\n  }\n  if (seen.has(review.reviewId)) {\n    return false;\n  }\n  seen.add(review.reviewId);\n  return true;\n});\n\nif (reviews.length === 0) {\n  return [];\n}\n\nreturn [{\n  json: {\n    payload: {\n      appStoreId,\n      country,\n      reviews,\n    }\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        -16
+      ],
+      "id": "prepare-preflight-reviews-payload-v2",
+      "name": "Prepare Preflight Reviews Payload",
+      "notes": "리뷰 ID 기준으로 prefilter payload 준비"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\n\nconst payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst secret = ($env.PIPELINE_WEBHOOK_SECRET || '').toString();\nif (!secret) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\nconst rawBody = JSON.stringify(payload);\nconst signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${rawBody}`).digest('hex');\n\nreturn [{\n  json: {\n    payload,\n    timestamp,\n    signature,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        -16
+      ],
+      "id": "sign-preflight-reviews-payload-v2",
+      "name": "Sign Preflight Reviews Payload",
+      "notes": "prefilter 내부 엔드포인트 HMAC 서명"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/filter-new-reviews' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-signature",
+              "value": "={{ $json.signature }}"
+            },
+            {
+              "name": "x-voc-timestamp",
+              "value": "={{ $json.timestamp }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000,
+          "retryOnFail": true,
+          "maxTries": 3,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1520,
+        -16
+      ],
+      "id": "filter-new-reviews-via-bff-v2",
+      "name": "Filter New Reviews via BFF",
+      "notes": "이미 저장된 review_id 제거 (LLM 비용/중복알림 절감)"
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Prepare Run Context').item.json || {};\nconst data = $json.data || {};\nconst reviews = Array.isArray(data.reviews) ? data.reviews : [];\n\nif (reviews.length === 0) {\n  console.log('No new reviews. Skip LLM + alerts + upsert.');\n  return [];\n}\n\nreturn [{\n  json: {\n    ...context,\n    totalFetched: Number(data.total || 0),\n    existingCount: Number(data.existingCount || 0),\n    newCount: Number(data.newCount || reviews.length),\n    reviews,\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        -16
+      ],
+      "id": "ensure-new-reviews-v2",
+      "name": "Ensure New Reviews",
+      "notes": "신규 리뷰 0건이면 이후 노드 스킵"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger (Hourly Strategy)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Claim Job Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Preflight Reviews Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON Response": {
+      "main": [
+        [
+          {
+            "node": "Has Parse Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Parse Error?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Parse Error Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Filter Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Prepare Upsert Payload",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check Critical Priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Critical Priority": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Telegram Data": {
+      "main": [
+        [
+          {
+            "node": "Has Telegram Chat ID?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Prepare Alert Events Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Telegram Chat ID?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Prepare Upsert Payload": {
+      "main": [
+        [
+          {
+            "node": "Sign Upsert Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Upsert Payload": {
+      "main": [
+        [
+          {
+            "node": "Upsert Reviews to BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Reviews to BFF": {
+      "main": [
+        [
+          {
+            "node": "Prepare Publish Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Publish Payload": {
+      "main": [
+        [
+          {
+            "node": "Sign Publish Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Publish Payload": {
+      "main": [
+        [
+          {
+            "node": "Notify Publish to BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Parse Error Payload": {
+      "main": [
+        [
+          {
+            "node": "Sign Parse Error Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Parse Error Payload": {
+      "main": [
+        [
+          {
+            "node": "Send Parse Error to BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Alert Events Payload": {
+      "main": [
+        [
+          {
+            "node": "Sign Alert Events Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Alert Events Payload": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Events to BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Claim Job Payload": {
+      "main": [
+        [
+          {
+            "node": "Sign Claim Job Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Claim Job Payload": {
+      "main": [
+        [
+          {
+            "node": "Claim Job from BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Job from BFF": {
+      "main": [
+        [
+          {
+            "node": "Prepare Run Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Run Context": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Preflight Reviews Payload": {
+      "main": [
+        [
+          {
+            "node": "Sign Preflight Reviews Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Preflight Reviews Payload": {
+      "main": [
+        [
+          {
+            "node": "Filter New Reviews via BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Reviews via BFF": {
+      "main": [
+        [
+          {
+            "node": "Ensure New Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure New Reviews": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "564907cd-e480-4dd7-b4a9-ac110f8753d8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c27d064a6e15cfa5f1c76c2310a89e8ca09bd449035a086d7f89cbec45e88dc6"
+  },
+  "id": "lNqHbXsn5v1DUqfq",
+  "tags": []
+}

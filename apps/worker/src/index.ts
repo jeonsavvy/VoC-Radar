@@ -1,6 +1,10 @@
 import type {
   AlertEventsRequest,
+  ClaimJobRequest,
+  CreatePipelineJobRequest,
   Env,
+  FilterNewReviewsRequest,
+  JobStatusRequest,
   ParseErrorRequest,
   PublishRequest,
   UpsertReviewRequest,
@@ -264,6 +268,60 @@ function clampLimit(rawValue: string | null, fallback = 25, max = 100) {
   return Math.max(1, Math.min(max, Math.floor(parsed)));
 }
 
+function normalizeCountry(rawCountry: string | null | undefined, fallback = 'kr') {
+  const normalized = (rawCountry || '').trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (!/^[a-z]{2}$/.test(normalized)) {
+    return fallback;
+  }
+  return normalized;
+}
+
+function normalizeAppStoreId(rawAppStoreId: string | null | undefined) {
+  const normalized = (rawAppStoreId || '').trim();
+  if (!normalized || !/^\d{5,20}$/.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function normalizeOptionalText(rawValue: unknown, maxLength = 120) {
+  const normalized = String(rawValue ?? '').trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized.slice(0, maxLength);
+}
+
+function isUuid(value: string | null | undefined) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    (value || '').trim(),
+  );
+}
+
+function normalizeReviewedAt(rawValue: unknown) {
+  const normalized = String(rawValue ?? '').trim();
+  if (!normalized) {
+    return new Date().toISOString();
+  }
+
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) {
+    return new Date().toISOString();
+  }
+  return date.toISOString();
+}
+
+function normalizeRating(rawValue: unknown) {
+  const numeric = Number(String(rawValue ?? '').trim() || 0);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(5, Math.round(numeric)));
+}
+
 async function handlePublicOverview(env: Env, request: Request) {
   const { searchParams } = new URL(request.url);
   const appId = searchParams.get('appId');
@@ -409,6 +467,304 @@ async function handlePublicCategories(env: Env, request: Request) {
 
   await cache.put(cacheKey, finalResponse.clone());
   return finalResponse;
+}
+
+async function handlePublicApps(env: Env, request: Request) {
+  const { searchParams } = new URL(request.url);
+  const limit = clampLimit(searchParams.get('limit'), 20, 100);
+
+  const data = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/apps?select=app_store_id,country,app_name,updated_at&order=updated_at.desc&limit=${limit}`,
+    {
+      method: 'GET',
+      idempotent: true,
+    },
+  );
+
+  return jsonResponse(env, 200, { data });
+}
+
+async function handlePrivateCreateJob(env: Env, request: Request) {
+  const authorization = request.headers.get('authorization');
+  if (!authorization || !authorization.startsWith('Bearer ')) {
+    return unauthorized(env, 'missing access token');
+  }
+
+  const authorized = await verifyAccessToken(env, authorization);
+  if (!authorized) {
+    return unauthorized(env, 'invalid access token');
+  }
+
+  let body: CreatePipelineJobRequest;
+  try {
+    body = (await request.json()) as CreatePipelineJobRequest;
+  } catch {
+    return badRequest(env, 'invalid json body');
+  }
+
+  const appStoreId = normalizeAppStoreId(body?.appStoreId);
+  if (!appStoreId) {
+    return badRequest(env, 'appStoreId must be numeric');
+  }
+
+  const country = normalizeCountry(body?.country);
+  const appName = normalizeOptionalText(body?.appName, 120);
+  const note = normalizeOptionalText(body?.note, 300);
+  const now = new Date().toISOString();
+
+  await supabaseRequest(env, '/rest/v1/apps?on_conflict=app_store_id,country', {
+    method: 'POST',
+    headers: {
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
+    body: JSON.stringify([
+      {
+        app_store_id: appStoreId,
+        country,
+        app_name: appName,
+        updated_at: now,
+      },
+    ]),
+    idempotent: true,
+  });
+
+  let data: Array<Record<string, unknown>> = [];
+  try {
+    data = await supabaseUserRequest<Array<Record<string, unknown>>>(
+      env,
+      '/rest/v1/pipeline_jobs',
+      authorization,
+      {
+        method: 'POST',
+        headers: {
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify({
+          app_store_id: appStoreId,
+          country,
+          app_name: appName,
+          note,
+          source: 'web',
+          status: 'queued',
+          requested_at: now,
+          updated_at: now,
+        }),
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'job create failed';
+    if (message.includes('(401)') || message.includes('(403)')) {
+      return unauthorized(env, 'insufficient access');
+    }
+    throw error;
+  }
+
+  return jsonResponse(env, 201, {
+    ok: true,
+    data: data[0] || null,
+  });
+}
+
+async function handlePrivateJobs(env: Env, request: Request) {
+  const authorization = request.headers.get('authorization');
+  if (!authorization || !authorization.startsWith('Bearer ')) {
+    return unauthorized(env, 'missing access token');
+  }
+
+  const authorized = await verifyAccessToken(env, authorization);
+  if (!authorized) {
+    return unauthorized(env, 'invalid access token');
+  }
+
+  const { searchParams } = new URL(request.url);
+  const limit = clampLimit(searchParams.get('limit'), 20, 50);
+
+  let data: Array<Record<string, unknown>> = [];
+  try {
+    data = await supabaseUserRequest<Array<Record<string, unknown>>>(
+      env,
+      `/rest/v1/pipeline_jobs?select=id,app_store_id,country,app_name,source,status,run_id,note,error_message,requested_at,started_at,finished_at,created_at,updated_at&order=created_at.desc&limit=${limit}`,
+      authorization,
+      {
+        method: 'GET',
+        idempotent: true,
+      },
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'job list failed';
+    if (message.includes('(401)') || message.includes('(403)')) {
+      return unauthorized(env, 'insufficient access');
+    }
+    throw error;
+  }
+
+  return jsonResponse(env, 200, { data });
+}
+
+async function handleInternalFilterNewReviews(env: Env, request: Request, rawBody: string) {
+  const verified = await verifySignedRequest(env, request, rawBody);
+  if (!verified) {
+    return unauthorized(env, 'invalid signature');
+  }
+
+  let body: FilterNewReviewsRequest;
+  try {
+    body = JSON.parse(rawBody) as FilterNewReviewsRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+
+  const appStoreId = normalizeAppStoreId(body?.appStoreId);
+  if (!appStoreId) {
+    return badRequest(env, 'appStoreId must be numeric');
+  }
+
+  const country = normalizeCountry(body?.country);
+  const inputReviews = Array.isArray(body?.reviews) ? body.reviews : [];
+  if (inputReviews.length === 0) {
+    return jsonResponse(env, 200, {
+      ok: true,
+      data: { total: 0, existingCount: 0, newCount: 0, reviews: [] },
+    });
+  }
+
+  const seen = new Set<string>();
+  const normalizedReviews = inputReviews
+    .map((review) => ({
+      reviewId: String(review.reviewId || '').trim(),
+      author: String(review.author || '').trim() || 'unknown',
+      content: String(review.content || '').trim(),
+      rating: normalizeRating(review.rating),
+      reviewedAt: normalizeReviewedAt(review.reviewedAt),
+    }))
+    .filter((review) => {
+      if (!review.reviewId || review.rating <= 0) {
+        return false;
+      }
+      if (seen.has(review.reviewId)) {
+        return false;
+      }
+      seen.add(review.reviewId);
+      return true;
+    });
+
+  if (normalizedReviews.length === 0) {
+    return jsonResponse(env, 200, {
+      ok: true,
+      data: { total: 0, existingCount: 0, newCount: 0, reviews: [] },
+    });
+  }
+
+  const existingRows = await supabaseRequest<Array<{ review_id: string }>>(env, '/rest/v1/rpc/get_existing_review_ids', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_app_store_id: appStoreId,
+      p_country: country,
+      p_review_ids: normalizedReviews.map((review) => review.reviewId),
+    }),
+    idempotent: true,
+  });
+
+  const existingIds = new Set(existingRows.map((row) => row.review_id));
+  const freshReviews = normalizedReviews.filter((review) => !existingIds.has(review.reviewId));
+
+  return jsonResponse(env, 200, {
+    ok: true,
+    data: {
+      total: normalizedReviews.length,
+      existingCount: existingIds.size,
+      newCount: freshReviews.length,
+      reviews: freshReviews,
+    },
+  });
+}
+
+async function handleInternalClaimJob(env: Env, request: Request, rawBody: string) {
+  const verified = await verifySignedRequest(env, request, rawBody);
+  if (!verified) {
+    return unauthorized(env, 'invalid signature');
+  }
+
+  let body: ClaimJobRequest = {};
+  try {
+    body = rawBody ? (JSON.parse(rawBody) as ClaimJobRequest) : {};
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+
+  const allowFallback = body.allowFallback === true;
+  const fallbackAppStoreId = allowFallback ? normalizeAppStoreId(body.fallbackAppStoreId) : null;
+  const fallbackCountry = allowFallback ? normalizeCountry(body.fallbackCountry) : null;
+  const fallbackAppName = allowFallback ? normalizeOptionalText(body.fallbackAppName, 120) : null;
+
+  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/claim_pipeline_job', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_default_app_store_id: fallbackAppStoreId,
+      p_default_country: fallbackCountry,
+      p_default_app_name: fallbackAppName,
+    }),
+    idempotent: false,
+  });
+
+  const row = rows[0] || {};
+  const status = ((row.status as string | null) || 'empty').toLowerCase();
+  const jobId = (row.job_id as string | null) || null;
+  const isFallback = status === 'fallback';
+  const data = {
+    jobId,
+    noJob: jobId == null && !isFallback,
+    appStoreId: (row.app_store_id as string | null) || (isFallback ? fallbackAppStoreId : null),
+    country:
+      (row.country as string | null) ||
+      (isFallback && fallbackCountry ? normalizeCountry(fallbackCountry) : null),
+    appName: (row.app_name as string | null) || (isFallback ? fallbackAppName : null),
+    source: (row.source as string | null) || 'queue',
+    status,
+    requestedAt: (row.requested_at as string | null) || new Date().toISOString(),
+  };
+
+  return jsonResponse(env, 200, { ok: true, data });
+}
+
+async function handleInternalJobStatus(env: Env, request: Request, rawBody: string) {
+  const verified = await verifySignedRequest(env, request, rawBody);
+  if (!verified) {
+    return unauthorized(env, 'invalid signature');
+  }
+
+  let body: JobStatusRequest;
+  try {
+    body = JSON.parse(rawBody) as JobStatusRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+
+  const normalizedJobId = (body?.jobId || '').trim();
+  const normalizedStatus = (body?.status || '').trim().toLowerCase();
+
+  if (!isUuid(normalizedJobId)) {
+    return badRequest(env, 'jobId must be uuid');
+  }
+
+  if (!['queued', 'running', 'completed', 'failed', 'canceled'].includes(normalizedStatus)) {
+    return badRequest(env, 'invalid status');
+  }
+
+  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/complete_pipeline_job', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_job_id: normalizedJobId,
+      p_status: normalizedStatus,
+      p_run_id: normalizeOptionalText(body.runId, 120),
+      p_error_message: normalizeOptionalText(body.errorMessage, 300),
+    }),
+    idempotent: true,
+  });
+
+  const data = rows[0] || null;
+  return jsonResponse(env, 200, { ok: true, data });
 }
 
 async function handlePrivateReviews(env: Env, request: Request) {
@@ -564,6 +920,18 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
     idempotent: true,
   });
 
+  if (isUuid(body.jobId || undefined)) {
+    await supabaseRequest(env, '/rest/v1/rpc/complete_pipeline_job', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_job_id: body.jobId,
+        p_status: 'running',
+        p_run_id: body.runId,
+      }),
+      idempotent: true,
+    });
+  }
+
   return jsonResponse(env, 200, {
     ok: true,
     runId: body.runId,
@@ -603,6 +971,19 @@ async function handleInternalParseError(env: Env, request: Request, rawBody: str
     idempotent: true,
   });
 
+  if (isUuid(body.jobId || undefined)) {
+    await supabaseRequest(env, '/rest/v1/rpc/complete_pipeline_job', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_job_id: body.jobId,
+        p_status: 'failed',
+        p_run_id: normalizeOptionalText(body.runId, 120),
+        p_error_message: normalizeOptionalText(body.message, 300),
+      }),
+      idempotent: true,
+    });
+  }
+
   return jsonResponse(env, 200, {
     ok: true,
     parseErrorId: body.parseErrorId,
@@ -634,6 +1015,18 @@ async function handleInternalPublish(env: Env, request: Request, rawBody: string
     idempotent: true,
   });
 
+  if (isUuid(body.jobId || undefined)) {
+    await supabaseRequest(env, '/rest/v1/rpc/complete_pipeline_job', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_job_id: body.jobId,
+        p_status: 'completed',
+        p_run_id: body.runId,
+      }),
+      idempotent: true,
+    });
+  }
+
   return jsonResponse(env, 200, {
     ok: true,
     runId: body.runId,
@@ -652,12 +1045,14 @@ async function handleInternalAlertEvents(env: Env, request: Request, rawBody: st
     return badRequest(env, 'invalid payload');
   }
 
+  const normalizedCountry = normalizeCountry(body.country);
+
   const rows = body.alerts.map((alert) => ({
-    event_id: `${body.runId}_${alert.reviewId}`,
+    event_id: `${body.appStoreId}_${normalizedCountry}_${alert.reviewId}`,
     run_id: body.runId,
     review_id: alert.reviewId,
     app_store_id: body.appStoreId,
-    country: body.country,
+    country: normalizedCountry,
     rating: alert.rating,
     priority: alert.priority,
     category: alert.category,
@@ -716,8 +1111,32 @@ export default {
         return await handlePublicCategories(env, request);
       }
 
+      if (request.method === 'GET' && url.pathname === '/api/public/apps') {
+        return await handlePublicApps(env, request);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/private/jobs') {
+        return await handlePrivateJobs(env, request);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/private/jobs') {
+        return await handlePrivateCreateJob(env, request);
+      }
+
       if (request.method === 'GET' && url.pathname === '/api/private/reviews') {
         return await handlePrivateReviews(env, request);
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/claim-job') {
+        return await handleInternalClaimJob(env, request, await request.text());
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/job-status') {
+        return await handleInternalJobStatus(env, request, await request.text());
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/filter-new-reviews') {
+        return await handleInternalFilterNewReviews(env, request, await request.text());
       }
 
       if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/upsert-reviews') {

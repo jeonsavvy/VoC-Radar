@@ -1,4 +1,6 @@
 import type {
+  PipelineJobItem,
+  PublicAppItem,
   PrivateReviewItem,
   PublicCategoryPoint,
   PublicOverview,
@@ -9,11 +11,20 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, ''
 const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || '10000');
 const REQUEST_RETRY_COUNT = Number(import.meta.env.VITE_API_RETRY_COUNT || '2');
 
+const CONFIG_HINT =
+  'API 응답이 JSON이 아닙니다. VITE_API_BASE_URL이 Worker URL(https://voc-radar-api...workers.dev)인지 확인하세요.';
+
 const shouldRetry = (method: string, status?: number) => {
   const upper = method.toUpperCase();
   const idempotent = upper === 'GET' || upper === 'HEAD' || upper === 'OPTIONS';
   const serverError = typeof status === 'number' ? status >= 500 : true;
   return idempotent && serverError;
+};
+
+const isHtmlPayload = (contentType: string | null, body: string) => {
+  const lowerType = (contentType || '').toLowerCase();
+  const trimmed = body.trim().toLowerCase();
+  return lowerType.includes('text/html') || trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html');
 };
 
 async function fetchJson<T>(
@@ -48,10 +59,25 @@ async function fetchJson<T>(
           continue;
         }
 
+        if (isHtmlPayload(response.headers.get('content-type'), text)) {
+          throw new Error(CONFIG_HINT);
+        }
+
         throw new Error(`API ${response.status}: ${text || response.statusText}`);
       }
 
-      return (await response.json()) as T;
+      const contentType = response.headers.get('content-type');
+      const text = await response.text();
+
+      if (isHtmlPayload(contentType, text)) {
+        throw new Error(CONFIG_HINT);
+      }
+
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        throw new Error('API 응답 파싱에 실패했습니다. Worker/API 상태를 확인하세요.');
+      }
     } catch (error) {
       if (attempt >= retries || !shouldRetry(method)) {
         throw error;
@@ -114,4 +140,32 @@ export async function getPrivateReviews(
       },
     },
   );
+}
+
+export async function getPublicApps(limit = 20) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return fetchJson<{ data: PublicAppItem[] }>(`/api/public/apps?${params.toString()}`);
+}
+
+export async function createPipelineJob(
+  accessToken: string,
+  payload: { appStoreId: string; country: string; appName?: string; note?: string },
+) {
+  return fetchJson<{ ok: true; data: PipelineJobItem }>(`/api/private/jobs`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getMyPipelineJobs(accessToken: string, limit = 20) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  return fetchJson<{ data: PipelineJobItem[] }>(`/api/private/jobs?${params.toString()}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
 }

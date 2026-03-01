@@ -37,3 +37,27 @@ export interface PrivateReviewItem {
   summary: string;
   confidence: number | null;
 }
+
+export interface PublicAppItem {
+  app_store_id: string;
+  country: string;
+  app_name: string | null;
+  updated_at: string;
+}
+
+export interface PipelineJobItem {
+  id: string;
+  app_store_id: string;
+  country: string;
+  app_name: string | null;
+  source: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
+  run_id: string | null;
+  note: string | null;
+  error_message: string | null;
+  requested_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}

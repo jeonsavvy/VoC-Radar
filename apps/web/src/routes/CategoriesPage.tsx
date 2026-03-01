@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react';
 import { getCategories } from '../lib/api';
+import type { AppSelection } from '../lib/appSelection';
 import type { PublicCategoryPoint } from '../types';
 
-const defaultAppId = import.meta.env.VITE_DEFAULT_APP_ID || '1018769995';
-const defaultCountry = import.meta.env.VITE_DEFAULT_COUNTRY || 'kr';
+type Props = {
+  selection: AppSelection;
+};
 
-export function CategoriesPage() {
+export function CategoriesPage({ selection }: Props) {
   const [items, setItems] = useState<PublicCategoryPoint[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
 
-    getCategories(defaultAppId, defaultCountry)
+    getCategories(selection.appId, selection.country)
       .then((response) => {
         if (!mounted) {
           return;
@@ -29,7 +31,7 @@ export function CategoriesPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [selection.appId, selection.country]);
 
   return (
     <section className="panel" aria-labelledby="category-heading">

@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { getTrends } from '../lib/api';
+import type { AppSelection } from '../lib/appSelection';
 import type { PublicTrendPoint } from '../types';
 
-const defaultAppId = import.meta.env.VITE_DEFAULT_APP_ID || '1018769995';
-const defaultCountry = import.meta.env.VITE_DEFAULT_COUNTRY || 'kr';
+type Props = {
+  selection: AppSelection;
+};
 
-export function TrendsPage() {
+export function TrendsPage({ selection }: Props) {
   const [points, setPoints] = useState<PublicTrendPoint[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let mounted = true;
 
-    getTrends(defaultAppId, defaultCountry)
+    getTrends(selection.appId, selection.country)
       .then((response) => {
         if (!mounted) {
           return;
@@ -29,7 +31,7 @@ export function TrendsPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [selection.appId, selection.country]);
 
   const trendSummary = useMemo(() => {
     if (points.length === 0) {

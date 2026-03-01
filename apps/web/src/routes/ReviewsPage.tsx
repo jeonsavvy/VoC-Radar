@@ -2,16 +2,15 @@ import { useEffect, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { getPrivateReviews } from '../lib/api';
 import { getAccessToken } from '../lib/auth';
+import type { AppSelection } from '../lib/appSelection';
 import type { PrivateReviewItem } from '../types';
 
 type Props = {
   loggedIn: boolean;
+  selection: AppSelection;
 };
 
-const defaultAppId = import.meta.env.VITE_DEFAULT_APP_ID || '1018769995';
-const defaultCountry = import.meta.env.VITE_DEFAULT_COUNTRY || 'kr';
-
-export function ReviewsPage({ loggedIn }: Props) {
+export function ReviewsPage({ loggedIn, selection }: Props) {
   const [items, setItems] = useState<PrivateReviewItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -28,7 +27,7 @@ export function ReviewsPage({ loggedIn }: Props) {
           throw new Error('인증 토큰을 찾을 수 없습니다. 다시 로그인하세요.');
         }
 
-        const response = await getPrivateReviews(defaultAppId, token, defaultCountry);
+        const response = await getPrivateReviews(selection.appId, token, selection.country);
         if (!mounted) {
           return;
         }
@@ -50,7 +49,7 @@ export function ReviewsPage({ loggedIn }: Props) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [selection.appId, selection.country]);
 
   if (!loggedIn) {
     return <Navigate to="/login" replace />;

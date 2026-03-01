@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { getOverview } from '../lib/api';
+import type { AppSelection } from '../lib/appSelection';
 import type { PublicOverview } from '../types';
 
-const defaultCountry = import.meta.env.VITE_DEFAULT_COUNTRY || 'kr';
+type Props = {
+  selection: AppSelection;
+};
 
-export function AppOverviewPage() {
+export function AppOverviewPage({ selection }: Props) {
   const params = useParams();
-  const appId = params.appId || import.meta.env.VITE_DEFAULT_APP_ID || '1018769995';
+  const appId = params.appId || selection.appId;
+  const country = selection.country;
 
   const [overview, setOverview] = useState<PublicOverview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -19,7 +23,7 @@ export function AppOverviewPage() {
     setLoading(true);
     setError(null);
 
-    getOverview(appId, defaultCountry)
+    getOverview(appId, country)
       .then((response) => {
         if (!mounted) {
           return;
@@ -41,13 +45,13 @@ export function AppOverviewPage() {
     return () => {
       mounted = false;
     };
-  }, [appId]);
+  }, [appId, country]);
 
   return (
     <section className="panel" aria-labelledby="app-summary-heading">
       <h2 id="app-summary-heading">앱 요약 리포트</h2>
       <p className="muted">
-        App ID: <code>{appId}</code> · Country: <code>{defaultCountry}</code>
+        App ID: <code>{appId}</code> · Country: <code>{country}</code>
       </p>
 
       {loading && <p>불러오는 중...</p>}

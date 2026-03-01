@@ -18,7 +18,10 @@
 
 1. Supabase SQL Editor 열기
 2. `supabase/migrations/202602250001_voc_radar_init.sql` 실행
-3. Auth > Users에서 테스트 계정 1개 생성
+3. `supabase/migrations/202602270001_pipeline_jobs.sql` 실행
+4. `supabase/migrations/202602270002_review_prefilter.sql` 실행
+5. `supabase/migrations/202603010001_pipeline_jobs_function_fix.sql` 실행
+6. Auth > Users에서 테스트 계정 1개 생성
 
 검증 SQL:
 
@@ -26,6 +29,8 @@
 select count(*) from public.reviews;
 select count(*) from public.review_ai;
 select count(*) from public.pipeline_runs;
+select count(*) from public.pipeline_jobs;
+select * from public.get_existing_review_ids('1018769995','kr', array[]::text[]) limit 1;
 ```
 
 ---
@@ -74,6 +79,8 @@ curl https://<worker-domain>/api/health
 - `VITE_DEFAULT_APP_ID`
 - `VITE_DEFAULT_COUNTRY`
 
+> `VITE_DEFAULT_*`는 초기 fallback 값이며, 운영 중 앱 전환은 `/analyze` 화면에서 처리할 수 있습니다.
+
 빌드 커맨드:
 
 ```bash
@@ -94,12 +101,17 @@ apps/web/dist
 
 ## 4) n8n 전환
 
-1. `workflow.json` import
-2. Credential 연결: Gemini / Google Sheets / Telegram
+1. 워크플로우 선택 후 import
+   - Supabase only 권장: `n8n/workflow.supabase-only.json` (job queue claim 포함)
+   - Dual-write(시트 백업 유지): `workflow.json`
+2. Credential 연결
+   - Supabase only: Gemini / Telegram
+   - Dual-write: Gemini / Google Sheets / Telegram
 3. ENV 설정:
    - `VOC_BFF_BASE_URL`
    - `PIPELINE_WEBHOOK_SECRET`
-   - `VOC_APP_ID`, `VOC_APP_COUNTRY`, `VOC_APP_NAME`
+   - `VOC_APP_ID`, `VOC_APP_COUNTRY`, `VOC_APP_NAME` (fallback 용)
+   - `VOC_ALLOW_FALLBACK` (`false` 권장)
    - `VOC_ALERT_MAX_RATING`
 4. Schedule OFF 상태에서 수동 1회 실행
 5. 성공 후 Schedule ON
@@ -113,6 +125,9 @@ apps/web/dist
 - [ ] `GET /api/public/categories` 200
 - [ ] 비로그인 `GET /api/private/reviews` = 401
 - [ ] 로그인 `GET /api/private/reviews` = 200
+- [ ] 로그인 `POST /api/private/jobs` = 201
+- [ ] n8n 실행 시 `pipeline_jobs`가 `queued -> running/completed` 전이
+- [ ] 동일 리뷰가 재수집돼도 LLM 호출 건수/Telegram 알림 중복이 발생하지 않음
 - [ ] n8n 실행 후 `pipeline_runs.status='published'`
 - [ ] parse 에러 발생 시 `parse_errors` 적재 확인
 - [ ] Telegram 알림 발생 시 `alert_events` 적재 확인

@@ -9,12 +9,15 @@
 
 ## Data flow
 
-1. n8n fetches iTunes RSS.
-2. n8n requests Gemini classification.
-3. n8n normalizes + signs payload.
-4. Worker verifies HMAC + upserts Supabase tables.
-5. Worker updates cache version on publish event.
-6. Frontend reads public/private endpoints.
+1. Frontend can enqueue app analysis requests (`pipeline_jobs`).
+2. n8n claims queued jobs first, then fallback app 설정으로 실행.
+3. n8n fetches iTunes RSS.
+4. n8n prefilters existing review IDs via Worker internal endpoint.
+5. n8n requests Gemini classification only for new reviews.
+6. n8n normalizes + signs payload.
+7. Worker verifies HMAC + upserts Supabase tables.
+8. Worker updates cache version on publish event.
+9. Frontend reads public/private endpoints + job status.
 
 ## Security defaults
 

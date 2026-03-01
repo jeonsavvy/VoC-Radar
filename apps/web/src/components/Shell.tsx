@@ -1,19 +1,45 @@
+import { FormEvent, useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { isValidAppId, normalizeCountry, type AppSelection } from '../lib/appSelection';
 
 type Props = {
   loggedIn: boolean;
   onSignOut: () => void;
+  selection: AppSelection;
+  onSelectionChange: (next: AppSelection) => void;
 };
 
-const navItems = [
-  { to: '/', label: 'Overview' },
-  { to: '/apps/1018769995', label: 'App Summary' },
-  { to: '/trends', label: 'Trends' },
-  { to: '/categories', label: 'Categories' },
-  { to: '/reviews', label: 'Reviews' },
-];
+export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Props) {
+  const [appIdInput, setAppIdInput] = useState(selection.appId);
+  const [countryInput, setCountryInput] = useState(selection.country);
 
-export function Shell({ loggedIn, onSignOut }: Props) {
+  useEffect(() => {
+    setAppIdInput(selection.appId);
+    setCountryInput(selection.country);
+  }, [selection.appId, selection.country]);
+
+  const navItems = [
+    { to: '/', label: 'Overview' },
+    { to: `/apps/${selection.appId}`, label: 'App Summary' },
+    { to: '/trends', label: 'Trends' },
+    { to: '/categories', label: 'Categories' },
+    { to: '/analyze', label: 'Analyze' },
+    { to: '/reviews', label: 'Reviews' },
+  ];
+
+  const onApplySelection = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextAppId = appIdInput.trim();
+    if (!isValidAppId(nextAppId)) {
+      return;
+    }
+
+    onSelectionChange({
+      appId: nextAppId,
+      country: normalizeCountry(countryInput),
+    });
+  };
+
   return (
     <div className="app-shell">
       <header className="topbar" role="banner">
@@ -53,6 +79,27 @@ export function Shell({ loggedIn, onSignOut }: Props) {
             </NavLink>
           )}
         </div>
+
+        <form className="topbar-form" onSubmit={onApplySelection}>
+          <label htmlFor="topbar-app-id">App ID</label>
+          <input
+            id="topbar-app-id"
+            value={appIdInput}
+            onChange={(event) => setAppIdInput(event.target.value)}
+            placeholder="1018769995"
+          />
+          <label htmlFor="topbar-country">Country</label>
+          <input
+            id="topbar-country"
+            value={countryInput}
+            onChange={(event) => setCountryInput(event.target.value)}
+            maxLength={2}
+            placeholder="kr"
+          />
+          <button type="submit" className="ghost-button">
+            적용
+          </button>
+        </form>
       </header>
 
       <main className="content" role="main">

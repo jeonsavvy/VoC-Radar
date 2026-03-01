@@ -49,6 +49,7 @@ npm install
 ## 2) Supabase 마이그레이션 적용
 
 > Supabase CLI 또는 SQL Editor에서 `supabase/migrations/202602250001_voc_radar_init.sql` 적용
+> 그리고 `supabase/migrations/202602270001_pipeline_jobs.sql`, `supabase/migrations/202602270002_review_prefilter.sql`, `supabase/migrations/202603010001_pipeline_jobs_function_fix.sql` 순서로 추가 적용
 
 핵심 테이블:
 
@@ -88,8 +89,8 @@ CORS_ORIGIN=http://localhost:5173
 VITE_API_BASE_URL=http://127.0.0.1:8787
 VITE_SUPABASE_URL=https://<your-project>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-key>
-VITE_DEFAULT_APP_ID=1018769995
-VITE_DEFAULT_COUNTRY=kr
+VITE_DEFAULT_APP_ID=1018769995 # optional fallback
+VITE_DEFAULT_COUNTRY=kr        # optional fallback
 VITE_API_TIMEOUT_MS=10000
 VITE_API_RETRY_COUNT=2
 ```
@@ -108,7 +109,12 @@ npm run dev:web
 
 ## n8n 설정 (v2)
 
-`workflow.json`을 n8n으로 import 후 아래 환경변수 사용:
+n8n import 파일 선택:
+
+- `n8n/workflow.supabase-only.json` (권장, Google Sheets 의존 없음)
+- `workflow.json` (Dual-write: Supabase + Google Sheets)
+
+import 후 아래 환경변수 사용:
 
 | 변수 | 설명 |
 |---|---|
@@ -117,11 +123,14 @@ npm run dev:web
 | `VOC_APP_ID` | App Store 앱 ID |
 | `VOC_APP_COUNTRY` | 국가 코드 (`kr` 등) |
 | `VOC_APP_NAME` | 앱 표시명 |
+| `VOC_ALLOW_FALLBACK` | `true`면 큐 비어도 fallback 앱 수집, 기본 `false` |
 | `VOC_MODEL_VERSION` | 모델 버전 라벨 |
 | `VOC_ALERT_MAX_RATING` | 알림 평점 상한 |
 | `VOC_SHEET_ID` | Dual-write 백업용 Google Sheet ID |
 | `VOC_SHEET_NAME` | Dual-write 시트명 |
 | `TELEGRAM_CHAT_ID` | Telegram 알림 대상 (없으면 알림 OFF) |
+
+> v2.1부터는 `Analyze` 화면에서 앱/국가를 요청 큐로 등록할 수 있어, 고정값(`VOC_APP_*`)은 fallback 용도로만 사용 가능합니다.
 
 ---
 
@@ -130,6 +139,7 @@ npm run dev:web
 ### Public
 
 - `GET /api/health`
+- `GET /api/public/apps?limit`
 - `GET /api/public/overview?appId&country&from&to`
 - `GET /api/public/trends?appId&country&from&to`
 - `GET /api/public/categories?appId&country&from&to`
@@ -137,9 +147,14 @@ npm run dev:web
 ### Private (Auth 필수)
 
 - `GET /api/private/reviews?appId&country&cursor&limit`
+- `GET /api/private/jobs?limit`
+- `POST /api/private/jobs`
 
 ### Internal (n8n 전용, HMAC 서명 필수)
 
+- `POST /api/internal/pipeline/claim-job`
+- `POST /api/internal/pipeline/job-status`
+- `POST /api/internal/pipeline/filter-new-reviews`
 - `POST /api/internal/pipeline/upsert-reviews`
 - `POST /api/internal/pipeline/parse-error`
 - `POST /api/internal/pipeline/publish`
@@ -152,6 +167,7 @@ npm run dev:web
 - 상세뷰 kill-switch: `DETAIL_VIEW_ENABLED=false`
 - 내부 API는 `x-voc-timestamp` + `x-voc-signature`(HMAC SHA-256) 검증
 - 외부 호출(Supabase/Auth)은 timeout + retry(멱등성 고려) 적용
+- n8n은 LLM 호출 전 `filter-new-reviews`를 통해 이미 처리된 review_id를 제거
 - Dual-write 유지로 롤백 경로 보장 (`n8n/workflow.v1.json`)
 
 ---
