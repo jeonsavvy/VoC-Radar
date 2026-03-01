@@ -94,7 +94,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
       });
 
       if (response.trigger?.dispatched === false) {
-        setMessage(`요청 등록 완료: ${response.data.id} (n8n 즉시 트리거 실패/미설정으로 대기 상태 유지)`);
+        setMessage(`요청 등록 완료: ${response.data.id} (즉시 트리거 미설정/실패, n8n 1분 폴링으로 자동 처리)`);
       } else {
         setMessage(`요청 등록 완료: ${response.data.id} (n8n 즉시 실행 트리거 전송됨)`);
       }
