@@ -404,6 +404,76 @@ function isUuid(value: string | null | undefined) {
   );
 }
 
+async function completePipelineJob(
+  env: Env,
+  input: {
+    jobId?: string | null;
+    status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
+    runId?: string | null;
+    errorMessage?: string | null;
+  },
+): Promise<{ updated: boolean; data: Record<string, unknown> | null }> {
+  const normalizedJobId = (input.jobId || '').trim();
+  if (!isUuid(normalizedJobId)) {
+    return { updated: false, data: null };
+  }
+
+  let rows: Array<Record<string, unknown>> = [];
+  try {
+    rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/complete_pipeline_job', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_job_id: normalizedJobId,
+        p_status: input.status,
+        p_run_id: normalizeOptionalText(input.runId, 120),
+        p_error_message: normalizeOptionalText(input.errorMessage, 300),
+      }),
+      idempotent: true,
+    });
+  } catch {
+    rows = [];
+  }
+
+  if (rows.length > 0) {
+    return { updated: true, data: rows[0] || null };
+  }
+
+  const now = new Date().toISOString();
+  const patchBody: Record<string, unknown> = {
+    status: input.status,
+    updated_at: now,
+  };
+
+  if (input.runId) {
+    patchBody.run_id = input.runId;
+  }
+
+  if (input.status === 'running') {
+    patchBody.started_at = now;
+  }
+
+  if (['completed', 'failed', 'canceled'].includes(input.status)) {
+    patchBody.finished_at = now;
+  }
+
+  patchBody.error_message = input.status === 'failed' ? input.errorMessage || null : null;
+
+  const fallbackRows = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/pipeline_jobs?id=eq.${encodeURIComponent(normalizedJobId)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify(patchBody),
+      idempotent: true,
+    },
+  );
+
+  return { updated: fallbackRows.length > 0, data: fallbackRows[0] || null };
+}
+
 function normalizeReviewedAt(rawValue: unknown) {
   const normalized = String(rawValue ?? '').trim();
   if (!normalized) {
@@ -1024,21 +1094,11 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
   const jobId = (body?.jobId || '').toString().trim();
   const runId = normalizeOptionalText(body?.runId, 120);
 
-  const completeJobIfNoNewReviews = async () => {
-    if (!isUuid(jobId)) {
-      return;
-    }
-
-    await supabaseRequest(env, '/rest/v1/rpc/complete_pipeline_job', {
-      method: 'POST',
-      body: JSON.stringify({
-        p_job_id: jobId,
-        p_status: 'completed',
-        p_run_id: runId,
-      }),
-      idempotent: true,
-    });
-  };
+  const completeJobIfNoNewReviews = async () => completePipelineJob(env, {
+    jobId,
+    status: 'completed',
+    runId,
+  });
 
   const inputReviews = Array.isArray(body?.reviews) ? body.reviews : [];
   if (inputReviews.length === 0) {
@@ -1178,18 +1238,14 @@ async function handleInternalJobStatus(env: Env, request: Request, rawBody: stri
     return badRequest(env, 'invalid status');
   }
 
-  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/complete_pipeline_job', {
-    method: 'POST',
-    body: JSON.stringify({
-      p_job_id: normalizedJobId,
-      p_status: normalizedStatus,
-      p_run_id: normalizeOptionalText(body.runId, 120),
-      p_error_message: normalizeOptionalText(body.errorMessage, 300),
-    }),
-    idempotent: true,
+  const result = await completePipelineJob(env, {
+    jobId: normalizedJobId,
+    status: normalizedStatus as 'queued' | 'running' | 'completed' | 'failed' | 'canceled',
+    runId: normalizeOptionalText(body.runId, 120),
+    errorMessage: normalizeOptionalText(body.errorMessage, 300),
   });
 
-  const data = rows[0] || null;
+  const data = result.data || null;
   return jsonResponse(env, 200, { ok: true, data });
 }
 
@@ -1352,14 +1408,10 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
   });
 
   if (isUuid(body.jobId || undefined)) {
-    await supabaseRequest(env, '/rest/v1/rpc/complete_pipeline_job', {
-      method: 'POST',
-      body: JSON.stringify({
-        p_job_id: body.jobId,
-        p_status: 'running',
-        p_run_id: body.runId,
-      }),
-      idempotent: true,
+    await completePipelineJob(env, {
+      jobId: body.jobId,
+      status: 'running',
+      runId: body.runId,
     });
   }
 
@@ -1409,15 +1461,11 @@ async function handleInternalParseError(env: Env, request: Request, rawBody: str
   });
 
   if (isUuid(body.jobId || undefined)) {
-    await supabaseRequest(env, '/rest/v1/rpc/complete_pipeline_job', {
-      method: 'POST',
-      body: JSON.stringify({
-        p_job_id: body.jobId,
-        p_status: 'failed',
-        p_run_id: normalizeOptionalText(body.runId, 120),
-        p_error_message: normalizeOptionalText(body.message, 300),
-      }),
-      idempotent: true,
+    await completePipelineJob(env, {
+      jobId: body.jobId,
+      status: 'failed',
+      runId: normalizeOptionalText(body.runId, 120),
+      errorMessage: normalizeOptionalText(body.message, 300),
     });
   }
 
@@ -1459,14 +1507,10 @@ async function handleInternalPublish(env: Env, request: Request, rawBody: string
   });
 
   if (isUuid(body.jobId || undefined)) {
-    await supabaseRequest(env, '/rest/v1/rpc/complete_pipeline_job', {
-      method: 'POST',
-      body: JSON.stringify({
-        p_job_id: body.jobId,
-        p_status: 'completed',
-        p_run_id: body.runId,
-      }),
-      idempotent: true,
+    await completePipelineJob(env, {
+      jobId: body.jobId,
+      status: 'completed',
+      runId: body.runId,
     });
   }
 

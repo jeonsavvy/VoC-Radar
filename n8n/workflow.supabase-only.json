@@ -661,7 +661,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const context = $('Prepare Run Context').item.json || {};\nconst data = $json.data || {};\nconst reviews = Array.isArray(data.reviews) ? data.reviews : [];\n\nif (reviews.length === 0) {\n  console.log('No new reviews. Skip LLM + alerts + upsert.');\n  return [];\n}\n\nreturn [{\n  json: {\n    ...context,\n    totalFetched: Number(data.total || 0),\n    existingCount: Number(data.existingCount || 0),\n    newCount: Number(data.newCount || reviews.length),\n    reviews,\n  }\n}];"
+        "jsCode": "const context = $('Prepare Run Context').item.json || {};\nconst data = $json.data || {};\nconst reviews = Array.isArray(data.reviews) ? data.reviews : [];\n\nif (reviews.length === 0) {\n  console.log('No new reviews. Skip LLM + alerts + upsert.');\n  return [];\n}\n\nconst rawBatch = ($env.VOC_LLM_BATCH_LIMIT || '60').toString().trim();\nconst parsedBatch = Number(rawBatch);\nconst batchLimit = Number.isFinite(parsedBatch)\n  ? Math.min(Math.max(Math.floor(parsedBatch), 1), 80)\n  : 60;\n\nconst selectedReviews = reviews.slice(0, batchLimit);\nconst deferredCount = Math.max(reviews.length - selectedReviews.length, 0);\nif (deferredCount > 0) {\n  console.log(`LLM batch limited: processing ${selectedReviews.length}/${reviews.length}, deferred=${deferredCount}`);\n}\n\nreturn [{\n  json: {\n    ...context,\n    totalFetched: Number(data.total || 0),\n    existingCount: Number(data.existingCount || 0),\n    newCount: Number(data.newCount || reviews.length),\n    batchLimit,\n    deferredCount,\n    reviews: selectedReviews,\n  }\n}];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
