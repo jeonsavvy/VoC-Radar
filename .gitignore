@@ -4,6 +4,8 @@
 # Environment variables
 .env
 .env.local
+.env.*
+!.env.example
 
 # Credentials
 credentials.json
