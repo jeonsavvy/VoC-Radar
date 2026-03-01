@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getCategories, getOverview, getTrends } from '../lib/api';
 import type { AppSelection } from '../lib/appSelection';
@@ -67,14 +67,6 @@ export function HomePage({ selection }: Props) {
   const sampledLowRatingCount = overview?.low_rating_count ?? 0;
   const sampledPositiveRatio = overview?.positive_ratio ?? 0;
   const sampledAverageRating = overview?.average_rating ?? 0;
-  const sampledDailyAverage = useMemo(() => {
-    if (!overview) {
-      return 0;
-    }
-    const denominator = trends.length > 0 ? trends.length : 1;
-    return overview.total_reviews / denominator;
-  }, [overview, trends.length]);
-
   return (
     <div className="story-grid">
       <section className="hero split-hero" aria-labelledby="hero-title">
@@ -134,10 +126,6 @@ export function HomePage({ selection }: Props) {
               <div>
                 <dt>최근 수집 리뷰 수</dt>
                 <dd>{sampledReviewCount.toLocaleString()}</dd>
-              </div>
-              <div>
-                <dt>최근 수집 일평균</dt>
-                <dd>{sampledDailyAverage > 0 ? sampledDailyAverage.toFixed(1) : '-'}</dd>
               </div>
               <div>
                 <dt>최근 수집 Critical</dt>

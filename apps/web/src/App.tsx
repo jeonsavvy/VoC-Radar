@@ -10,7 +10,6 @@ import { CategoriesPage } from './routes/CategoriesPage';
 import { HomePage } from './routes/HomePage';
 import { LoginPage } from './routes/LoginPage';
 import { ReviewsPage } from './routes/ReviewsPage';
-import { TrendsPage } from './routes/TrendsPage';
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -69,7 +68,6 @@ export default function App() {
         >
           <Route index element={<HomePage selection={selection} />} />
           <Route path="apps/:appId?" element={<AppOverviewPage selection={selection} />} />
-          <Route path="trends" element={<TrendsPage selection={selection} />} />
           <Route path="categories" element={<CategoriesPage selection={selection} />} />
           <Route
             path="analyze"
