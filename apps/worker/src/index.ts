@@ -130,7 +130,17 @@ async function supabaseRequest<T>(
     return [] as T;
   }
 
-  return (await response.json()) as T;
+  const text = await response.text();
+  if (!text.trim()) {
+    return [] as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'invalid json';
+    throw new Error(`Supabase response parse failed (${response.status}) on ${path}: ${message}`);
+  }
 }
 
 async function supabaseUserRequest<T>(
@@ -158,7 +168,17 @@ async function supabaseUserRequest<T>(
     return [] as T;
   }
 
-  return (await response.json()) as T;
+  const text = await response.text();
+  if (!text.trim()) {
+    return [] as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'invalid json';
+    throw new Error(`Supabase user response parse failed (${response.status}) on ${path}: ${message}`);
+  }
 }
 
 async function verifyAccessToken(env: Env, authorization: string | null): Promise<boolean> {
@@ -778,9 +798,17 @@ async function handlePrivateCreateJob(env: Env, request: Request) {
     throw error;
   }
 
+  const created = data[0] || null;
+  if (!created) {
+    return jsonResponse(env, 500, {
+      error:
+        'pipeline_jobs insert returned empty response. Check Supabase RLS SELECT policy for authenticated users on pipeline_jobs.',
+    });
+  }
+
   return jsonResponse(env, 201, {
     ok: true,
-    data: data[0] || null,
+    data: created,
   });
 }
 
