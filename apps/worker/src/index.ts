@@ -20,7 +20,7 @@ const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_RETRY_COUNT = 2;
 const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
 const ITUNES_REVIEWS_PER_PAGE = 50;
-const MAX_FETCH_REVIEW_LIMIT = 500;
+const MAX_FETCH_REVIEW_LIMIT = 100;
 
 type JsonValue = Record<string, unknown> | unknown[];
 

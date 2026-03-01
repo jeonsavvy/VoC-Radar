@@ -121,7 +121,8 @@ import 후 아래 환경변수 사용:
 |---|---|
 | `VOC_BFF_BASE_URL` | Worker API base URL (예: `https://voc-radar-api.<subdomain>.workers.dev`) |
 | `PIPELINE_WEBHOOK_SECRET` | 내부 API 인증 토큰(`x-voc-token`) |
-| `VOC_FETCH_LIMIT` | 요청당 수집 최대 개수(기본/최대 500) |
+| `VOC_FETCH_LIMIT` | 요청당 수집 최대 개수(기본/최대 100) |
+| `VOC_LLM_BATCH_LIMIT` | 1회 LLM 분석 배치 크기(기본/최대 50) |
 | `VOC_MODEL_VERSION` | 모델 버전 라벨 |
 | `VOC_ALERT_MAX_RATING` | 알림 평점 상한 |
 | `N8N_PIPELINE_TRIGGER_SECRET` | webhook 헤더 검증용(선택, Worker 값과 동일하게) |

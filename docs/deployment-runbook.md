@@ -105,13 +105,14 @@ apps/web/dist
 ## 4) n8n 전환
 
 1. 워크플로우 선택 후 import
-   - 운영본: `n8n/workflow.supabase-only.json` (job queue claim + 최대 500개 리뷰 수집 + webhook/폴링 듀얼 트리거)
+   - 운영본: `n8n/workflow.supabase-only.json` (job queue claim + 최대 100개 리뷰 수집 + 1회 50개 LLM 배치 + webhook/폴링 듀얼 트리거)
 2. Credential 연결
    - Gemini
 3. ENV 설정:
    - `VOC_BFF_BASE_URL`
    - `PIPELINE_WEBHOOK_SECRET`
-   - `VOC_FETCH_LIMIT` (`500` 권장, 최대 500)
+   - `VOC_FETCH_LIMIT` (`100` 권장, 최대 100)
+   - `VOC_LLM_BATCH_LIMIT` (`50` 권장, 최대 50)
    - `VOC_ALERT_MAX_RATING`
    - `N8N_PIPELINE_TRIGGER_SECRET` (선택, Worker와 동일값 권장)
 4. workflow를 **Active ON**
