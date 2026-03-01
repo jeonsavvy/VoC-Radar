@@ -7,16 +7,14 @@
           "interval": [
             {
               "field": "minutes",
-              "minutesInterval": 60
+              "minutesInterval": 1
             }
           ]
         },
         "triggerTimes": {
           "item": [
             {
-              "mode": "interval",
-              "hour": 9,
-              "minute": 0
+              "mode": "everyMinute"
             }
           ]
         },
@@ -29,8 +27,8 @@
         112
       ],
       "id": "schedule-trigger-daily",
-      "name": "Schedule Trigger (Hourly Strategy)",
-      "notes": "RSS 50개 제한 대응을 위해 1시간 주기로 변경함"
+      "name": "Schedule Trigger (Queue Polling)",
+      "notes": "큐 처리 지연 최소화를 위해 1분 폴링으로 변경함"
     },
     {
       "parameters": {
@@ -688,17 +686,6 @@
   ],
   "pinData": {},
   "connections": {
-    "Schedule Trigger (Hourly Strategy)": {
-      "main": [
-        [
-          {
-            "node": "Prepare Claim Job Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "HTTP Request": {
       "main": [
         [
@@ -970,6 +957,17 @@
         [
           {
             "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger (Queue Polling)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Claim Job Payload",
             "type": "main",
             "index": 0
           }
