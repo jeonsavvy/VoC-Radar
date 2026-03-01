@@ -671,6 +671,20 @@
       "id": "ensure-new-reviews-v2",
       "name": "Ensure New Reviews",
       "notes": "신규 리뷰 0건이면 이후 노드 스킵"
+    },
+    {
+      "parameters": {
+        "jsCode": "const expected = ($env.N8N_PIPELINE_TRIGGER_SECRET || '').toString().trim();\n\nif (!expected) {\n  return [{ json: { triggerSource: 'webhook', secretCheck: 'skipped' } }];\n}\n\nconst headers = $json.headers || {};\nconst provided = (\n  headers['x-voc-trigger-secret'] ||\n  headers['X-Voc-Trigger-Secret'] ||\n  ''\n).toString().trim();\n\nif (!provided || provided !== expected) {\n  throw new Error('invalid trigger secret');\n}\n\nreturn [{ json: { triggerSource: 'webhook', secretCheck: 'passed' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        112
+      ],
+      "id": "validate-trigger-secret",
+      "name": "Validate Trigger Secret",
+      "notes": "N8N_PIPELINE_TRIGGER_SECRET이 설정된 경우 webhook 호출 헤더를 검증함"
     }
   ],
   "pinData": {},
@@ -953,6 +967,17 @@
       ]
     },
     "Webhook Trigger (Queue Event)": {
+      "main": [
+        [
+          {
+            "node": "Validate Trigger Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Trigger Secret": {
       "main": [
         [
           {

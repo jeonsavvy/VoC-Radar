@@ -127,6 +127,7 @@ import 후 아래 환경변수 사용:
 | `VOC_FETCH_LIMIT` | 요청당 수집 최대 개수(기본/최대 500) |
 | `VOC_MODEL_VERSION` | 모델 버전 라벨 |
 | `VOC_ALERT_MAX_RATING` | 알림 평점 상한 |
+| `N8N_PIPELINE_TRIGGER_SECRET` | webhook 헤더 검증용(선택, Worker 값과 동일하게) |
 
 > v2.2부터는 Worker가 job 등록 직후 n8n webhook을 즉시 호출합니다.  
 > n8n workflow는 **Active 상태**여야 webhook이 수신됩니다.

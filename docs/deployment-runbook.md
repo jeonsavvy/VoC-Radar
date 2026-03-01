@@ -115,6 +115,7 @@ apps/web/dist
    - `VOC_ALLOW_FALLBACK` (`false` 권장)
    - `VOC_FETCH_LIMIT` (`500` 권장, 최대 500)
    - `VOC_ALERT_MAX_RATING`
+   - `N8N_PIPELINE_TRIGGER_SECRET` (선택, Worker와 동일값 권장)
 4. workflow를 **Active ON**
 5. n8n Webhook URL 확인:
    - `POST https://<n8n-domain>/webhook/voc-radar-queue-trigger`
