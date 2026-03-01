@@ -3,6 +3,8 @@ export interface Env {
   SUPABASE_SERVICE_ROLE_KEY: string;
   SUPABASE_ANON_KEY: string;
   PIPELINE_WEBHOOK_SECRET: string;
+  N8N_PIPELINE_TRIGGER_URL?: string;
+  N8N_PIPELINE_TRIGGER_SECRET?: string;
   DETAIL_VIEW_ENABLED?: string;
   API_TIMEOUT_MS?: string;
   API_RETRY_COUNT?: string;

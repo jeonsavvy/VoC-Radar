@@ -3,32 +3,21 @@
   "nodes": [
     {
       "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "minutes",
-              "minutesInterval": 1
-            }
-          ]
-        },
-        "triggerTimes": {
-          "item": [
-            {
-              "mode": "everyMinute"
-            }
-          ]
-        },
-        "timezone": "Asia/Seoul"
+        "httpMethod": "POST",
+        "path": "voc-radar-queue-trigger",
+        "responseMode": "onReceived",
+        "options": {}
       },
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.2,
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
       "position": [
         -128,
         112
       ],
-      "id": "schedule-trigger-daily",
-      "name": "Schedule Trigger (Queue Polling)",
-      "notes": "큐 처리 지연 최소화를 위해 1분 폴링으로 변경함"
+      "id": "webhook-trigger-queue",
+      "name": "Webhook Trigger (Queue Event)",
+      "webhookId": "voc-radar-queue-trigger",
+      "notes": "Worker에서 queue 등록 직후 이 webhook을 호출하면 즉시 claim+처리를 시작함"
     },
     {
       "parameters": {
@@ -963,7 +952,7 @@
         ]
       ]
     },
-    "Schedule Trigger (Queue Polling)": {
+    "Webhook Trigger (Queue Event)": {
       "main": [
         [
           {

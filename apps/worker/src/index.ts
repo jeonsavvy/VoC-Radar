@@ -318,6 +318,57 @@ function normalizeOptionalText(rawValue: unknown, maxLength = 120) {
   return normalized.slice(0, maxLength);
 }
 
+async function triggerN8nPipeline(
+  env: Env,
+  payload: {
+    jobId: string;
+    appStoreId: string;
+    country: string;
+    requestedAt: string;
+  },
+): Promise<{ dispatched: boolean; reason?: string; statusCode?: number; detail?: string }> {
+  const webhookUrl = (env.N8N_PIPELINE_TRIGGER_URL || '').trim();
+  if (!webhookUrl) {
+    return {
+      dispatched: false,
+      reason: 'trigger_webhook_not_configured',
+    };
+  }
+
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  };
+
+  const triggerSecret = (env.N8N_PIPELINE_TRIGGER_SECRET || '').trim();
+  if (triggerSecret) {
+    headers['x-voc-trigger-secret'] = triggerSecret;
+  }
+
+  const response = await fetchWithRetry(env, webhookUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+    timeoutMs: 10000,
+    retries: 2,
+    idempotent: true,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    return {
+      dispatched: false,
+      reason: 'trigger_webhook_failed',
+      statusCode: response.status,
+      detail: detail.slice(0, 300),
+    };
+  }
+
+  return {
+    dispatched: true,
+    statusCode: response.status,
+  };
+}
+
 function isUuid(value: string | null | undefined) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     (value || '').trim(),
@@ -806,9 +857,17 @@ async function handlePrivateCreateJob(env: Env, request: Request) {
     });
   }
 
+  const trigger = await triggerN8nPipeline(env, {
+    jobId: String(created.id || '').trim(),
+    appStoreId,
+    country,
+    requestedAt: now,
+  });
+
   return jsonResponse(env, 201, {
     ok: true,
     data: created,
+    trigger,
   });
 }
 

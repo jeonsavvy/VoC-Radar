@@ -1,4 +1,5 @@
 import type {
+  CreatePipelineJobResponse,
   PipelineJobItem,
   PublicAppItem,
   PublicAppMeta,
@@ -157,7 +158,7 @@ export async function createPipelineJob(
   accessToken: string,
   payload: { appStoreId: string; country: string; appName?: string; note?: string },
 ) {
-  return fetchJson<{ ok: true; data: PipelineJobItem }>(`/api/private/jobs`, {
+  return fetchJson<CreatePipelineJobResponse>(`/api/private/jobs`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${accessToken}`,

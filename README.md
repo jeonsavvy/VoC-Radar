@@ -7,7 +7,7 @@ VoC-Radar는 App Store 리뷰 VoC 파이프라인을 **n8n 오케스트레이션
 
 ```mermaid
 graph TD
-    A[Schedule Trigger in n8n] --> B[Claim Job from Worker Queue]
+    A[Webhook Trigger in n8n] --> B[Claim Job from Worker Queue]
     B --> C[Signed Internal Webhook: /fetch-reviews]
     C --> D[Signed Internal Webhook: /filter-new-reviews]
     D --> E[Gemini Classification]
@@ -78,6 +78,8 @@ DETAIL_VIEW_ENABLED=true
 API_TIMEOUT_MS=10000
 API_RETRY_COUNT=2
 CORS_ORIGIN=http://localhost:5173
+N8N_PIPELINE_TRIGGER_URL=https://<your-n8n-domain>/webhook/voc-radar-queue-trigger
+N8N_PIPELINE_TRIGGER_SECRET=<optional-random-secret>
 ```
 
 ## 4) Web 환경변수 설정
@@ -126,7 +128,9 @@ import 후 아래 환경변수 사용:
 | `VOC_MODEL_VERSION` | 모델 버전 라벨 |
 | `VOC_ALERT_MAX_RATING` | 알림 평점 상한 |
 
-> v2.1부터는 `Analyze` 화면에서 앱/국가를 요청 큐로 등록할 수 있어, 고정값(`VOC_APP_*`)은 fallback 용도로만 사용 가능합니다.
+> v2.2부터는 Worker가 job 등록 직후 n8n webhook을 즉시 호출합니다.  
+> n8n workflow는 **Active 상태**여야 webhook이 수신됩니다.
+> v2.1부터의 `VOC_APP_*` 값은 fallback 용도입니다.
 
 ---
 
@@ -163,6 +167,7 @@ import 후 아래 환경변수 사용:
 ## 보안/운영 기본값
 
 - 상세뷰 kill-switch: `DETAIL_VIEW_ENABLED=false`
+- 이벤트 트리거: Worker env에 `N8N_PIPELINE_TRIGGER_URL` 설정 시 queue 등록 직후 즉시 실행
 - 내부 API는 `x-voc-timestamp` + `x-voc-signature`(HMAC SHA-256) 검증
 - 외부 호출(Supabase/Auth)은 timeout + retry(멱등성 고려) 적용
 - n8n은 LLM 호출 전 `filter-new-reviews`를 통해 이미 처리된 review_id를 제거

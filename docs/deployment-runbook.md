@@ -59,6 +59,8 @@ npx wrangler deploy
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_ANON_KEY`
 - `PIPELINE_WEBHOOK_SECRET`
+- `N8N_PIPELINE_TRIGGER_URL` (예: `https://<n8n-domain>/webhook/voc-radar-queue-trigger`)
+- `N8N_PIPELINE_TRIGGER_SECRET` (선택)
 - `DETAIL_VIEW_ENABLED` (기본 true)
 - `CORS_ORIGIN` (Pages 도메인)
 
@@ -103,7 +105,7 @@ apps/web/dist
 ## 4) n8n 전환
 
 1. 워크플로우 선택 후 import
-   - 운영본: `n8n/workflow.supabase-only.json` (job queue claim + 최대 500개 리뷰 수집)
+   - 운영본: `n8n/workflow.supabase-only.json` (job queue claim + 최대 500개 리뷰 수집 + webhook 트리거)
 2. Credential 연결
    - Gemini
 3. ENV 설정:
@@ -113,8 +115,10 @@ apps/web/dist
    - `VOC_ALLOW_FALLBACK` (`false` 권장)
    - `VOC_FETCH_LIMIT` (`500` 권장, 최대 500)
    - `VOC_ALERT_MAX_RATING`
-4. Schedule OFF 상태에서 수동 1회 실행
-5. 성공 후 Schedule ON
+4. workflow를 **Active ON**
+5. n8n Webhook URL 확인:
+   - `POST https://<n8n-domain>/webhook/voc-radar-queue-trigger`
+6. 이 URL을 Worker env `N8N_PIPELINE_TRIGGER_URL`에 입력 후 Worker 재배포
 
 ---
 

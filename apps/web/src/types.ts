@@ -68,3 +68,16 @@ export interface PipelineJobItem {
   created_at: string;
   updated_at: string;
 }
+
+export interface PipelineTriggerResult {
+  dispatched: boolean;
+  reason?: string;
+  statusCode?: number;
+  detail?: string;
+}
+
+export interface CreatePipelineJobResponse {
+  ok: true;
+  data: PipelineJobItem;
+  trigger?: PipelineTriggerResult;
+}
