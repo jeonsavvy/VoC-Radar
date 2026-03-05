@@ -3,7 +3,7 @@ import { Navigate } from 'react-router-dom';
 import { getCategories, getPrivateReviews } from '../lib/api';
 import { getAccessToken } from '../lib/auth';
 import type { AppSelection } from '../lib/appSelection';
-import type { PrivateReviewItem, PrivateReviewSortKey } from '../types';
+import type { Priority, PrivateReviewItem, PrivateReviewSortKey } from '../types';
 
 type Props = {
   loggedIn: boolean;
@@ -62,6 +62,55 @@ const DEFAULT_COLUMN_VISIBILITY: Record<ReviewColumnKey, boolean> = {
   category: true,
   summary: true,
 };
+
+const PRIORITY_ORDER: Record<Priority, number> = {
+  Normal: 0,
+  High: 1,
+  Critical: 2,
+};
+
+function compareReviewedAt(left: PrivateReviewItem, right: PrivateReviewItem) {
+  return new Date(left.reviewed_at).getTime() - new Date(right.reviewed_at).getTime();
+}
+
+function comparePrivateReviews(left: PrivateReviewItem, right: PrivateReviewItem, sortKey: PrivateReviewSortKey) {
+  if (sortKey === 'reviewed_at') {
+    return compareReviewedAt(left, right);
+  }
+  if (sortKey === 'rating') {
+    return left.rating - right.rating;
+  }
+  if (sortKey === 'priority') {
+    return PRIORITY_ORDER[left.priority] - PRIORITY_ORDER[right.priority];
+  }
+
+  const leftText = String(left[sortKey] ?? '');
+  const rightText = String(right[sortKey] ?? '');
+  return leftText.localeCompare(rightText, 'ko');
+}
+
+function sortPrivateReviewItems(
+  items: PrivateReviewItem[],
+  sortKey: PrivateReviewSortKey,
+  sortDirection: 'asc' | 'desc',
+) {
+  const primaryDirection = sortDirection === 'asc' ? 1 : -1;
+
+  return [...items].sort((left, right) => {
+    const primary = comparePrivateReviews(left, right, sortKey);
+    if (primary !== 0) {
+      return primary * primaryDirection;
+    }
+
+    const reviewedAt = compareReviewedAt(left, right);
+    if (reviewedAt !== 0) {
+      // 백엔드 정렬 규칙과 동일하게 tie-breaker는 최신 리뷰 우선으로 고정한다.
+      return reviewedAt * -1;
+    }
+
+    return left.review_id.localeCompare(right.review_id);
+  });
+}
 
 export function ReviewsPage({ loggedIn, selection }: Props) {
   const [items, setItems] = useState<PrivateReviewItem[]>([]);
@@ -184,7 +233,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
           return searchable.includes(normalizedKeyword);
         });
 
-        setItems(verifiedItems);
+        setItems(sortPrivateReviewItems(verifiedItems, sortKey, sortDirection));
         setHasNext(response.hasNext);
       } catch (err) {
         if (!mounted || requestId !== latestRequestRef.current) {
@@ -274,7 +323,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
 
   return (
     <section className="panel" aria-labelledby="review-heading">
-      <h2 id="review-heading">상세 리뷰 (인증 사용자 전용)</h2>
+      <h2 id="review-heading">상세 리뷰</h2>
 
       {loading && <p>불러오는 중...</p>}
       {error && <p className="error">{error}</p>}
@@ -358,7 +407,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
 
         <fieldset className="review-column-config">
           <legend>컬럼 표시/순서 설정</legend>
-          <p className="muted">플랫폼 이용자가 상세 리뷰 컬럼을 자유롭게 켜고 끄거나 순서를 조정할 수 있습니다.</p>
+          <p className="muted">상세 리뷰 컬럼을 자유롭게 켜고 끄거나 순서를 조정할 수 있습니다.</p>
           <ul className="column-setting-list">
             {columnOrder.map((key, index) => {
               const column = COLUMN_BY_KEY[key];
