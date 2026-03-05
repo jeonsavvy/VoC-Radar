@@ -81,7 +81,7 @@
       "retryOnFail": true,
       "waitBetweenTries": 3000,
       "maxTries": 3,
-      "executeOnce": true,
+      "executeOnce": false,
       "notes": "AI 리뷰 분석 (Google Gemini)\n\n추출 정보: 긴급도(Critical/High/Normal), 유형(버그/사용성/칭찬/기타), 요약\n\n운영 팁: 모델/API 요금제 한도는 수시로 바뀔 수 있으니 실제 한도에 맞춰 스케줄 주기를 조정하세요.",
       "continueOnFail": true
     },
