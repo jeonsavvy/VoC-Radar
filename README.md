@@ -142,20 +142,6 @@ npm run typecheck
 npm run build
 ```
 
----
-
-## 오픈소스 공개 체크리스트
-
-공개 자체는 가능합니다. 다만 아래를 지킨 뒤 공개하세요.
-
-- 저장소에 실제 키/토큰/계정정보가 없는지 재확인
-- Cloudflare/Supabase/n8n 비밀값 전부 재발급(로테이션)
-- `.env*` 파일은 예시만 남기고 실제 값은 제거
-- 개인정보(실제 사용자 리뷰 원문) 공유 범위 점검
-- `LICENSE` 파일 명시
-
-배포 절차는 `docs/deployment-runbook.md`, 구조 설명은 `docs/architecture.md`를 참고하세요.
-
 ## 라이선스
 
 MIT
