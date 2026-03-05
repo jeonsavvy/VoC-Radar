@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { Shell } from './components/Shell';
 import { defaultSelection, persistSelection, readSelection } from './lib/appSelection';
 import { signOut } from './lib/auth';
@@ -65,8 +65,6 @@ export default function App() {
           }
         >
           <Route index element={<HomePage selection={selection} />} />
-          <Route path="apps/:appId?" element={<Navigate to="/" replace />} />
-          <Route path="categories" element={<Navigate to="/" replace />} />
           <Route
             path="analyze"
             element={

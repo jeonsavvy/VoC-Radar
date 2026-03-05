@@ -9,7 +9,6 @@ import type {
   PrivateReviewSortKey,
   PublicCategoryPoint,
   PublicOverview,
-  PublicTrendPoint,
 } from '../types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
@@ -103,18 +102,6 @@ async function fetchJson<T>(
 export async function getOverview(appId: string, country = 'kr') {
   const params = new URLSearchParams({ appId, country });
   return fetchJson<{ data: PublicOverview }>(`/api/public/overview?${params.toString()}`);
-}
-
-export async function getTrends(appId: string, country = 'kr', from?: string, to?: string) {
-  const params = new URLSearchParams({ appId, country });
-  if (from) {
-    params.set('from', from);
-  }
-  if (to) {
-    params.set('to', to);
-  }
-
-  return fetchJson<{ data: PublicTrendPoint[] }>(`/api/public/trends?${params.toString()}`);
 }
 
 export async function getCategories(appId: string, country = 'kr', from?: string, to?: string) {

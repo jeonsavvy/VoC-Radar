@@ -8,3 +8,5 @@ DETAIL_VIEW_ENABLED=true
 API_TIMEOUT_MS=10000
 API_RETRY_COUNT=2
 CORS_ORIGIN=http://localhost:5173
+# 운영 배포 기본값 예시:
+# CORS_ORIGIN=https://voc-radar.pages.dev

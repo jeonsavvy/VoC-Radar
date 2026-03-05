@@ -43,6 +43,10 @@ npm run deploy:worker
 - `PIPELINE_WEBHOOK_SECRET`
 - `CORS_ORIGIN`
 
+운영 권장값:
+
+- `CORS_ORIGIN=https://voc-radar.pages.dev`
+
 선택 환경변수:
 
 - `N8N_PIPELINE_TRIGGER_URL`
@@ -66,6 +70,10 @@ curl https://<worker-domain>/api/health
 - `VITE_SUPABASE_ANON_KEY`
 - `VITE_DEFAULT_APP_ID`
 - `VITE_DEFAULT_COUNTRY`
+
+운영 권장값:
+
+- `VITE_API_BASE_URL=https://voc-radar-api.jeonsavvy.workers.dev`
 
 빌드:
 
@@ -100,6 +108,10 @@ apps/web/dist
 - `VOC_MODEL_VERSION`
 - `VOC_ALERT_MAX_RATING`
 - `N8N_PIPELINE_TRIGGER_SECRET` (선택)
+
+운영 권장값:
+
+- `VOC_BFF_BASE_URL=https://voc-radar-api.jeonsavvy.workers.dev`
 
 4. 워크플로우 Active ON
 5. webhook URL 사용 시 Worker의 `N8N_PIPELINE_TRIGGER_URL`에 등록

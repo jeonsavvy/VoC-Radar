@@ -11,13 +11,6 @@ export interface PublicOverview {
   last_review_at: string | null;
 }
 
-export interface PublicTrendPoint {
-  bucket_date: string;
-  total_reviews: number;
-  critical_count: number;
-  average_rating: number;
-}
-
 export interface PublicCategoryPoint {
   category: string;
   total_reviews: number;

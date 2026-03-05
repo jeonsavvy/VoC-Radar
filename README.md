@@ -59,7 +59,7 @@ PIPELINE_WEBHOOK_SECRET=<strong-secret>
 DETAIL_VIEW_ENABLED=true
 API_TIMEOUT_MS=10000
 API_RETRY_COUNT=2
-CORS_ORIGIN=http://localhost:5173
+CORS_ORIGIN=https://voc-radar.pages.dev
 N8N_PIPELINE_TRIGGER_URL=https://<your-n8n-domain>/webhook/voc-radar-queue-trigger
 N8N_PIPELINE_TRIGGER_SECRET=<optional-random-secret>
 ```
@@ -69,7 +69,7 @@ N8N_PIPELINE_TRIGGER_SECRET=<optional-random-secret>
 `apps/web/.env.local`:
 
 ```bash
-VITE_API_BASE_URL=http://127.0.0.1:8787
+VITE_API_BASE_URL=https://voc-radar-api.jeonsavvy.workers.dev
 VITE_SUPABASE_URL=https://<your-project>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-key>
 VITE_DEFAULT_APP_ID=1018769995
@@ -84,7 +84,7 @@ n8n에서 워크플로우 `n8n/workflow.supabase-only.json` import 후 아래 �
 
 | 변수 | 설명 |
 |---|---|
-| `VOC_BFF_BASE_URL` | Worker URL |
+| `VOC_BFF_BASE_URL` | Worker URL (운영: `https://voc-radar-api.jeonsavvy.workers.dev`) |
 | `PIPELINE_WEBHOOK_SECRET` | 내부 API 인증 토큰(`x-voc-token`) |
 | `VOC_FETCH_WINDOW_DAYS` | 리뷰 수집 기간(기본 30일, 최대 90일) |
 | `VOC_FETCH_MAX_PAGES` | 수집 페이지 상한(기본 120, 최대 200 / 페이지당 50건) |
