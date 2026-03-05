@@ -332,6 +332,75 @@ function clampLimit(rawValue: string | null, fallback = 25, max = 100) {
   return Math.max(1, Math.min(max, Math.floor(parsed)));
 }
 
+function parsePage(rawValue: string | null, fallback = 1, max = 1000) {
+  const parsed = Number(rawValue || fallback);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.min(max, Math.floor(parsed)));
+}
+
+type PrivateReviewSortBy = 'reviewed_at' | 'author' | 'rating' | 'priority' | 'category' | 'summary';
+type SortDirection = 'asc' | 'desc';
+
+function parsePrivateReviewSortBy(rawValue: string | null): PrivateReviewSortBy {
+  const normalized = (rawValue || '').trim().toLowerCase();
+  if (
+    normalized === 'reviewed_at' ||
+    normalized === 'author' ||
+    normalized === 'rating' ||
+    normalized === 'priority' ||
+    normalized === 'category' ||
+    normalized === 'summary'
+  ) {
+    return normalized;
+  }
+  return 'reviewed_at';
+}
+
+function parseSortDirection(rawValue: string | null, fallback: SortDirection = 'desc'): SortDirection {
+  const normalized = (rawValue || '').trim().toLowerCase();
+  if (normalized === 'asc' || normalized === 'desc') {
+    return normalized;
+  }
+  return fallback;
+}
+
+function parseRatingFilter(rawValue: string | null) {
+  if (!rawValue) {
+    return null;
+  }
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 5) {
+    return null;
+  }
+  return Math.floor(parsed);
+}
+
+function normalizePriorityFilter(rawValue: string | null) {
+  const normalized = (rawValue || '').trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === 'Critical' || normalized === 'High' || normalized === 'Normal') {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeSearchKeyword(rawValue: string | null, maxLength = 80) {
+  const normalized = (rawValue || '').trim();
+  if (!normalized) {
+    return null;
+  }
+  return normalized
+    .slice(0, maxLength)
+    .replace(/[%*(),]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function normalizeCountry(rawCountry: string | null | undefined, fallback = 'kr') {
   const normalized = (rawCountry || '').trim().toLowerCase();
   if (!normalized) {
@@ -1306,24 +1375,53 @@ async function handlePrivateReviews(env: Env, request: Request) {
   }
 
   const { searchParams } = new URL(request.url);
-  const appId = searchParams.get('appId');
-  const country = searchParams.get('country') || 'kr';
+  const appId = normalizeAppStoreId(searchParams.get('appId'));
+  const country = normalizeCountry(searchParams.get('country'));
   const limit = clampLimit(searchParams.get('limit'));
+  const page = parsePage(searchParams.get('page'));
+  const sortBy = parsePrivateReviewSortBy(searchParams.get('sortBy'));
+  const sortDirection = parseSortDirection(searchParams.get('sortDirection'));
+  const rating = parseRatingFilter(searchParams.get('rating'));
+  const priority = normalizePriorityFilter(searchParams.get('priority'));
+  const category = normalizeOptionalText(searchParams.get('category'), 120);
+  const search = normalizeSearchKeyword(searchParams.get('search'));
   const cursor = searchParams.get('cursor');
 
   if (!appId) {
-    return badRequest(env, 'appId is required');
+    return badRequest(env, 'appId must be numeric');
   }
+
+  const queryLimit = cursor ? limit : Math.min(limit + 1, 101);
+  const offset = Math.max(0, (page - 1) * limit);
+
+  const order =
+    sortBy === 'reviewed_at' ? `${sortBy}.${sortDirection}` : `${sortBy}.${sortDirection},reviewed_at.desc`;
 
   const filters = new URLSearchParams({
     app_store_id: `eq.${appId}`,
     country: `eq.${country}`,
-    order: 'reviewed_at.desc',
-    limit: String(limit),
+    order,
+    limit: String(queryLimit),
   });
 
   if (cursor) {
     filters.set('reviewed_at', `lt.${cursor}`);
+  } else {
+    filters.set('offset', String(offset));
+  }
+
+  if (rating != null) {
+    filters.set('rating', `eq.${rating}`);
+  }
+  if (priority) {
+    filters.set('priority', `eq.${priority}`);
+  }
+  if (category) {
+    filters.set('category', `eq.${category}`);
+  }
+  if (search) {
+    const pattern = `*${search}*`;
+    filters.set('or', `(author.ilike.${pattern},summary.ilike.${pattern},category.ilike.${pattern},content.ilike.${pattern})`);
   }
 
   let data: Array<Record<string, unknown>> = [];
@@ -1345,10 +1443,19 @@ async function handlePrivateReviews(env: Env, request: Request) {
     throw error;
   }
 
-  const last = data[data.length - 1] as { reviewed_at?: string } | undefined;
-  const nextCursor = data.length >= limit ? (last?.reviewed_at ?? null) : null;
+  let hasNext = false;
+  let rows = data;
+  if (!cursor) {
+    hasNext = rows.length > limit;
+    if (hasNext) {
+      rows = rows.slice(0, limit);
+    }
+  }
 
-  return jsonResponse(env, 200, { data, nextCursor });
+  const last = rows[rows.length - 1] as { reviewed_at?: string } | undefined;
+  const nextCursor = rows.length >= limit ? (last?.reviewed_at ?? null) : null;
+
+  return jsonResponse(env, 200, { data: rows, page, limit, hasNext, nextCursor });
 }
 
 async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: string) {

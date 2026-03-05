@@ -43,8 +43,6 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
 
   const navItems = [
     { to: '/', label: 'Overview' },
-    { to: `/apps/${selection.appId}`, label: 'App Summary' },
-    { to: '/categories', label: 'Categories' },
     { to: '/analyze', label: 'Analyze' },
     { to: '/reviews', label: 'Reviews' },
   ];

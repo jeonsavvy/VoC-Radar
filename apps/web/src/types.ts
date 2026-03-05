@@ -38,6 +38,16 @@ export interface PrivateReviewItem {
   confidence: number | null;
 }
 
+export type PrivateReviewSortKey = 'reviewed_at' | 'author' | 'rating' | 'priority' | 'category' | 'summary';
+
+export interface PrivateReviewsResponse {
+  data: PrivateReviewItem[];
+  page: number;
+  limit: number;
+  hasNext: boolean;
+  nextCursor: string | null;
+}
+
 export interface PublicAppItem {
   app_store_id: string;
   country: string;

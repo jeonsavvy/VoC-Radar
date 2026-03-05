@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { Shell } from './components/Shell';
 import { defaultSelection, persistSelection, readSelection } from './lib/appSelection';
 import { signOut } from './lib/auth';
 import { supabase } from './lib/supabase';
 import { AnalyzePage } from './routes/AnalyzePage';
-import { AppOverviewPage } from './routes/AppOverviewPage';
-import { CategoriesPage } from './routes/CategoriesPage';
 import { HomePage } from './routes/HomePage';
 import { LoginPage } from './routes/LoginPage';
 import { ReviewsPage } from './routes/ReviewsPage';
@@ -67,8 +65,8 @@ export default function App() {
           }
         >
           <Route index element={<HomePage selection={selection} />} />
-          <Route path="apps/:appId?" element={<AppOverviewPage selection={selection} />} />
-          <Route path="categories" element={<CategoriesPage selection={selection} />} />
+          <Route path="apps/:appId?" element={<Navigate to="/" replace />} />
+          <Route path="categories" element={<Navigate to="/" replace />} />
           <Route
             path="analyze"
             element={

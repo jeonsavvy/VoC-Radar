@@ -2,9 +2,11 @@ import type {
   CancelPipelineJobsResponse,
   CreatePipelineJobResponse,
   PipelineJobItem,
+  Priority,
   PublicAppItem,
   PublicAppMeta,
-  PrivateReviewItem,
+  PrivateReviewsResponse,
+  PrivateReviewSortKey,
   PublicCategoryPoint,
   PublicOverview,
   PublicTrendPoint,
@@ -130,16 +132,49 @@ export async function getCategories(appId: string, country = 'kr', from?: string
 export async function getPrivateReviews(
   appId: string,
   accessToken: string,
-  country = 'kr',
-  cursor?: string,
-  limit = 25,
+  options?: {
+    country?: string;
+    page?: number;
+    limit?: number;
+    sortBy?: PrivateReviewSortKey;
+    sortDirection?: 'asc' | 'desc';
+    rating?: 1 | 2 | 3 | 4 | 5;
+    priority?: Priority;
+    category?: string;
+    search?: string;
+    cursor?: string;
+  },
 ) {
-  const params = new URLSearchParams({ appId, country, limit: String(limit) });
-  if (cursor) {
-    params.set('cursor', cursor);
+  const params = new URLSearchParams({
+    appId,
+    country: options?.country || 'kr',
+    limit: String(options?.limit ?? 25),
+    page: String(options?.page ?? 1),
+  });
+
+  if (options?.sortBy) {
+    params.set('sortBy', options.sortBy);
+  }
+  if (options?.sortDirection) {
+    params.set('sortDirection', options.sortDirection);
+  }
+  if (options?.rating) {
+    params.set('rating', String(options.rating));
+  }
+  if (options?.priority) {
+    params.set('priority', options.priority);
+  }
+  if (options?.category?.trim()) {
+    params.set('category', options.category.trim());
+  }
+  if (options?.search?.trim()) {
+    params.set('search', options.search.trim());
+  }
+  if (options?.cursor) {
+    params.set('cursor', options.cursor);
   }
 
-  return fetchJson<{ data: PrivateReviewItem[]; nextCursor: string | null }>(
+  return fetchJson<PrivateReviewsResponse>(
     `/api/private/reviews?${params.toString()}`,
     {
       method: 'GET',
