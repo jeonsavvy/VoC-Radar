@@ -429,16 +429,108 @@ function normalizeOptionalText(rawValue: unknown, maxLength = 120) {
 }
 
 const CATEGORY_KEYWORDS = {
-  payment: ['결제', '구독', '환불', '인앱', '구매', 'billing', 'payment', 'subscription', 'refund'],
-  account: ['로그인', 'log in', 'login', '계정', '인증', '회원가입', '가입', 'account', 'auth', 'sign in'],
-  bug: ['버그', '오류', '에러', '튕', '크래시', '멈춤', '작동 안', '실행 안', 'bug', 'error', 'crash', 'fail'],
-  performance: ['느림', '지연', '렉', '버벅', '속도', '발열', '배터리', '프리징', '로딩', 'lag', 'slow', 'performance', 'stability'],
-  usability: ['사용성', '불편', 'ui', 'ux', '디자인', '가독성', '동선', '메뉴', '접근성', '편의'],
-  request: ['요청', '기능 추가', '추가해', '개선해', '지원해', '원해', 'feature request', 'please add', 'wish'],
-  praise: ['칭찬', '좋아', '좋음', '최고', '만족', '감사', '추천', 'great', 'love', 'excellent', 'awesome'],
+  bugPerformance: [
+    '버그',
+    '오류',
+    '에러',
+    '튕',
+    '크래시',
+    '멈춤',
+    '먹통',
+    '작동 안',
+    '실행 안',
+    '느림',
+    '지연',
+    '렉',
+    '버벅',
+    '속도',
+    '발열',
+    '배터리',
+    '프리징',
+    '로딩',
+    'lag',
+    'slow',
+    'performance',
+    'stability',
+    'bug',
+    'error',
+    'crash',
+    'fail',
+  ],
+  accountPayment: [
+    '결제',
+    '구독',
+    '환불',
+    '인앱',
+    '구매',
+    '로그인',
+    'log in',
+    'login',
+    '계정',
+    '인증',
+    '회원가입',
+    '가입',
+    'billing',
+    'payment',
+    'subscription',
+    'refund',
+    'account',
+    'auth',
+    'sign in',
+  ],
+  featureUsability: [
+    '사용성',
+    '불편',
+    'ui',
+    'ux',
+    '디자인',
+    '가독성',
+    '동선',
+    '메뉴',
+    '접근성',
+    '편의',
+    '요청',
+    '기능 추가',
+    '추가해',
+    '개선해',
+    '지원해',
+    '원해',
+    'feature request',
+    'please add',
+    'wish',
+  ],
+  contentPolicy: [
+    '콘텐츠',
+    '커뮤니티',
+    '운영',
+    '정책',
+    '약관',
+    '규정',
+    '신고',
+    '정지',
+    '제재',
+    '차단',
+    '검수',
+    '게시글',
+    '피드',
+    '노출',
+    '알림',
+    '고객센터',
+    '문의',
+    '응대',
+    'content',
+    'community',
+    'policy',
+    'moderation',
+    'report',
+    'ban',
+    'suspend',
+    'support',
+  ],
+  positive: ['칭찬', '좋아', '좋음', '최고', '만족', '감사', '추천', 'great', 'love', 'excellent', 'awesome'],
 };
 
-const CRITICAL_CATEGORIES = new Set(['기능오류', '결제/구독', '계정/로그인', '성능/안정성']);
+const CRITICAL_CATEGORIES = new Set(['버그 및 성능', '계정 및 결제']);
 
 function includesAnyKeyword(haystack: string, keywords: string[]) {
   return keywords.some((keyword) => haystack.includes(keyword));
@@ -447,41 +539,35 @@ function includesAnyKeyword(haystack: string, keywords: string[]) {
 function normalizeVocCategory(rawCategory: unknown, rawSummary?: unknown, rawContent?: unknown) {
   const category = String(rawCategory ?? '').trim();
   if (!category) {
-    return '기타/일반';
+    return '긍정 리뷰 및 기타';
   }
 
-  if (category === '기능오류' || category === '결제/구독' || category === '계정/로그인' || category === '성능/안정성') {
+  if (category === '버그 및 성능' || category === '계정 및 결제' || category === '기능 및 사용성') {
     return category;
   }
-  if (category === 'UX/UI' || category === '기능요청' || category === '긍정피드백' || category === '기타/일반') {
+  if (category === '콘텐츠 및 운영 정책' || category === '긍정 리뷰 및 기타') {
     return category;
   }
 
   const source = `${category} ${(rawSummary ?? '').toString()} ${(rawContent ?? '').toString()}`.toLowerCase();
 
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.payment)) {
-    return '결제/구독';
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.accountPayment)) {
+    return '계정 및 결제';
   }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.account)) {
-    return '계정/로그인';
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.bugPerformance)) {
+    return '버그 및 성능';
   }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.bug)) {
-    return '기능오류';
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.contentPolicy)) {
+    return '콘텐츠 및 운영 정책';
   }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.performance)) {
-    return '성능/안정성';
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.featureUsability)) {
+    return '기능 및 사용성';
   }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.usability)) {
-    return 'UX/UI';
-  }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.request)) {
-    return '기능요청';
-  }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.praise)) {
-    return '긍정피드백';
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.positive)) {
+    return '긍정 리뷰 및 기타';
   }
 
-  return '기타/일반';
+  return '긍정 리뷰 및 기타';
 }
 
 function isCriticalReview(rating: number, category: string) {
@@ -1621,7 +1707,7 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
     const aiRows = body.reviews.map((review) => {
       const summary = review.summary || '분류 결과 없음';
       const content = review.content || '';
-      const normalizedCategory = normalizeVocCategory(review.category || '기타/일반', summary, content);
+      const normalizedCategory = normalizeVocCategory(review.category || '긍정 리뷰 및 기타', summary, content);
       const normalizedPriority = derivePriorityValue(review.rating, normalizedCategory, review.priority || 'Normal');
 
       return {
