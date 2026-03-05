@@ -554,7 +554,8 @@ async function triggerN8nPipeline(
     body: JSON.stringify(payload),
     timeoutMs: 10000,
     retries: 2,
-    idempotent: true,
+    // webhook은 중복 호출 시 부작용이 생길 수 있어 재시도 대상에서 제외한다.
+    idempotent: false,
   });
 
   if (!response.ok) {
@@ -1485,7 +1486,7 @@ async function handlePrivateReviews(env: Env, request: Request) {
     return badRequest(env, 'appId must be numeric');
   }
 
-  const queryLimit = cursor ? limit : Math.min(limit + 1, 101);
+  const queryLimit = Math.min(limit + 1, 101);
   const offset = Math.max(0, (page - 1) * limit);
 
   const order =
@@ -1539,11 +1540,9 @@ async function handlePrivateReviews(env: Env, request: Request) {
 
   let hasNext = false;
   let rows = data;
-  if (!cursor) {
-    hasNext = rows.length > limit;
-    if (hasNext) {
-      rows = rows.slice(0, limit);
-    }
+  hasNext = rows.length > limit;
+  if (hasNext) {
+    rows = rows.slice(0, limit);
   }
 
   rows = rows.map((row) => {
@@ -1557,7 +1556,7 @@ async function handlePrivateReviews(env: Env, request: Request) {
   });
 
   const last = rows[rows.length - 1] as { reviewed_at?: string } | undefined;
-  const nextCursor = rows.length >= limit ? (last?.reviewed_at ?? null) : null;
+  const nextCursor = hasNext ? (last?.reviewed_at ?? null) : null;
 
   return jsonResponse(env, 200, { data: rows, page, limit, hasNext, nextCursor });
 }

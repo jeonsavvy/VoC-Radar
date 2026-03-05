@@ -106,6 +106,10 @@ apps/web/dist
 
 webhook을 쓰지 않아도, 워크플로우의 1분 폴링 트리거로 큐 처리가 가능합니다.
 
+중요 점검:
+
+- `Basic LLM Chain` 노드의 `executeOnce`가 `false`인지 확인 (true면 첫 배치만 처리됨)
+
 ---
 
 ## 5) 운영 점검

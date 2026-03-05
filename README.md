@@ -118,7 +118,7 @@ npm run dev:web
 
 ### Private (Auth 필요)
 
-- `GET /api/private/reviews?appId&country&cursor&limit`
+- `GET /api/private/reviews?appId&country&page&limit&sortBy&sortDirection&rating&priority&category&search`
 - `GET /api/private/jobs?limit`
 - `POST /api/private/jobs`
 - `POST /api/private/jobs/cancel`
@@ -141,6 +141,12 @@ npm run dev:web
 npm run lint
 npm run typecheck
 npm run build
+```
+
+추가로 n8n 워크플로우 구조 검증:
+
+```bash
+npm run verify:workflow
 ```
 
 ## 라이선스

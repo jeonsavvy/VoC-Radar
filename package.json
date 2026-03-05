@@ -11,7 +11,8 @@
     "build:web": "npm run build --workspace @voc-radar/web",
     "build:worker": "npm run build --workspace @voc-radar/worker",
     "typecheck": "npm run typecheck --workspace @voc-radar/web && npm run typecheck --workspace @voc-radar/worker",
-    "lint": "npm run lint --workspace @voc-radar/web && npm run lint --workspace @voc-radar/worker",
+    "lint": "npm run lint --workspace @voc-radar/web && npm run lint --workspace @voc-radar/worker && npm run verify:workflow",
+    "verify:workflow": "node scripts/validate-workflow.js",
     "dev:web": "npm run dev --workspace @voc-radar/web",
     "dev:worker": "npm run dev --workspace @voc-radar/worker",
     "deploy:worker": "npm run deploy --workspace @voc-radar/worker"
