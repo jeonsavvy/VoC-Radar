@@ -428,6 +428,100 @@ function normalizeOptionalText(rawValue: unknown, maxLength = 120) {
   return normalized.slice(0, maxLength);
 }
 
+const CATEGORY_KEYWORDS = {
+  payment: ['결제', '구독', '환불', '인앱', '구매', 'billing', 'payment', 'subscription', 'refund'],
+  account: ['로그인', 'log in', 'login', '계정', '인증', '회원가입', '가입', 'account', 'auth', 'sign in'],
+  bug: ['버그', '오류', '에러', '튕', '크래시', '멈춤', '작동 안', '실행 안', 'bug', 'error', 'crash', 'fail'],
+  performance: ['느림', '지연', '렉', '버벅', '속도', '발열', '배터리', '프리징', '로딩', 'lag', 'slow', 'performance', 'stability'],
+  usability: ['사용성', '불편', 'ui', 'ux', '디자인', '가독성', '동선', '메뉴', '접근성', '편의'],
+  request: ['요청', '기능 추가', '추가해', '개선해', '지원해', '원해', 'feature request', 'please add', 'wish'],
+  praise: ['칭찬', '좋아', '좋음', '최고', '만족', '감사', '추천', 'great', 'love', 'excellent', 'awesome'],
+};
+
+const CRITICAL_CATEGORIES = new Set(['기능오류', '결제/구독', '계정/로그인', '성능/안정성']);
+
+function includesAnyKeyword(haystack: string, keywords: string[]) {
+  return keywords.some((keyword) => haystack.includes(keyword));
+}
+
+function normalizeVocCategory(rawCategory: unknown, rawSummary?: unknown, rawContent?: unknown) {
+  const category = String(rawCategory ?? '').trim();
+  if (!category) {
+    return '기타/일반';
+  }
+
+  if (category === '기능오류' || category === '결제/구독' || category === '계정/로그인' || category === '성능/안정성') {
+    return category;
+  }
+  if (category === 'UX/UI' || category === '기능요청' || category === '긍정피드백' || category === '기타/일반') {
+    return category;
+  }
+
+  const source = `${category} ${(rawSummary ?? '').toString()} ${(rawContent ?? '').toString()}`.toLowerCase();
+
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.payment)) {
+    return '결제/구독';
+  }
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.account)) {
+    return '계정/로그인';
+  }
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.bug)) {
+    return '기능오류';
+  }
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.performance)) {
+    return '성능/안정성';
+  }
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.usability)) {
+    return 'UX/UI';
+  }
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.request)) {
+    return '기능요청';
+  }
+  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.praise)) {
+    return '긍정피드백';
+  }
+
+  return '기타/일반';
+}
+
+function isCriticalReview(rating: number, category: string) {
+  return rating === 1 && CRITICAL_CATEGORIES.has(category);
+}
+
+function normalizePriorityValue(rawPriority: unknown): 'Critical' | 'High' | 'Normal' {
+  const normalized = String(rawPriority ?? '')
+    .replace(/[🚨⚠️✅]/g, '')
+    .trim()
+    .toLowerCase();
+
+  if (normalized.includes('critical')) {
+    return 'Critical';
+  }
+  if (normalized.includes('high')) {
+    return 'High';
+  }
+  return 'Normal';
+}
+
+function derivePriorityValue(rating: number, category: string, rawPriority: unknown): 'Critical' | 'High' | 'Normal' {
+  if (isCriticalReview(rating, category)) {
+    return 'Critical';
+  }
+
+  const normalizedPriority = normalizePriorityValue(rawPriority);
+  if (normalizedPriority === 'Critical') {
+    return 'High';
+  }
+  if (normalizedPriority === 'High') {
+    return 'High';
+  }
+  if (rating <= 2) {
+    return 'High';
+  }
+
+  return 'Normal';
+}
+
 async function triggerN8nPipeline(
   env: Env,
   payload: {
@@ -1452,6 +1546,16 @@ async function handlePrivateReviews(env: Env, request: Request) {
     }
   }
 
+  rows = rows.map((row) => {
+    const summary = String(row.summary ?? '');
+    const content = String(row.content ?? '');
+    const normalizedCategory = normalizeVocCategory(row.category, summary, content);
+    return {
+      ...row,
+      category: normalizedCategory,
+    };
+  });
+
   const last = rows[rows.length - 1] as { reviewed_at?: string } | undefined;
   const nextCursor = rows.length >= limit ? (last?.reviewed_at ?? null) : null;
 
@@ -1515,15 +1619,22 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
       idempotent: true,
     });
 
-    const aiRows = body.reviews.map((review) => ({
-      review_id: review.reviewId,
-      priority: review.priority || 'Normal',
-      category: review.category || '기타',
-      summary: review.summary || '분류 결과 없음',
-      confidence: review.confidence ?? null,
-      model_version: review.modelVersion ?? 'gemini',
-      updated_at: now,
-    }));
+    const aiRows = body.reviews.map((review) => {
+      const summary = review.summary || '분류 결과 없음';
+      const content = review.content || '';
+      const normalizedCategory = normalizeVocCategory(review.category || '기타/일반', summary, content);
+      const normalizedPriority = derivePriorityValue(review.rating, normalizedCategory, review.priority || 'Normal');
+
+      return {
+        review_id: review.reviewId,
+        priority: normalizedPriority,
+        category: normalizedCategory,
+        summary,
+        confidence: review.confidence ?? null,
+        model_version: review.modelVersion ?? 'gemini',
+        updated_at: now,
+      };
+    });
 
     await supabaseRequest(env, '/rest/v1/review_ai?on_conflict=review_id', {
       method: 'POST',
@@ -1688,18 +1799,23 @@ async function handleInternalAlertEvents(env: Env, request: Request, rawBody: st
 
   const normalizedCountry = normalizeCountry(body.country);
 
-  const rows = body.alerts.map((alert) => ({
-    event_id: `${body.appStoreId}_${normalizedCountry}_${alert.reviewId}`,
-    run_id: body.runId,
-    review_id: alert.reviewId,
-    app_store_id: body.appStoreId,
-    country: normalizedCountry,
-    rating: alert.rating,
-    priority: alert.priority,
-    category: alert.category,
-    summary: alert.summary,
-    sent_at: alert.sentAt || new Date().toISOString(),
-  }));
+  const rows = body.alerts.map((alert) => {
+    const normalizedCategory = normalizeVocCategory(alert.category, alert.summary, '');
+    const normalizedPriority = derivePriorityValue(alert.rating, normalizedCategory, alert.priority);
+
+    return {
+      event_id: `${body.appStoreId}_${normalizedCountry}_${alert.reviewId}`,
+      run_id: body.runId,
+      review_id: alert.reviewId,
+      app_store_id: body.appStoreId,
+      country: normalizedCountry,
+      rating: alert.rating,
+      priority: normalizedPriority,
+      category: normalizedCategory,
+      summary: alert.summary,
+      sent_at: alert.sentAt || new Date().toISOString(),
+    };
+  });
 
   if (rows.length === 0) {
     return jsonResponse(env, 200, { ok: true, inserted: 0 });

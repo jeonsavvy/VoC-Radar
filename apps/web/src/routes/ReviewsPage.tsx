@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
 import { getCategories, getPrivateReviews } from '../lib/api';
 import { getAccessToken } from '../lib/auth';
@@ -81,6 +81,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
   const [columnOrder, setColumnOrder] = useState<ReviewColumnKey[]>(DEFAULT_COLUMN_ORDER);
   const [columnVisibility, setColumnVisibility] =
     useState<Record<ReviewColumnKey, boolean>>(DEFAULT_COLUMN_VISIBILITY);
+  const latestRequestRef = useRef(0);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -141,6 +142,8 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
     const load = async () => {
       setLoading(true);
       setError(null);
+      const requestId = latestRequestRef.current + 1;
+      latestRequestRef.current = requestId;
       try {
         const token = await getAccessToken();
         if (!token) {
@@ -159,20 +162,39 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
           search: debouncedSearch || undefined,
         });
 
-        if (!mounted) {
+        if (!mounted || requestId !== latestRequestRef.current) {
           return;
         }
-        setItems(response.data);
+
+        const verifiedItems = response.data.filter((item) => {
+          if (ratingFilter !== 'all' && item.rating !== Number(ratingFilter)) {
+            return false;
+          }
+          if (priorityFilter !== 'all' && item.priority !== priorityFilter) {
+            return false;
+          }
+          if (categoryFilter !== 'all' && item.category !== categoryFilter) {
+            return false;
+          }
+          if (!debouncedSearch) {
+            return true;
+          }
+          const normalizedKeyword = debouncedSearch.toLowerCase();
+          const searchable = [item.author, item.summary, item.category, item.content].join(' ').toLowerCase();
+          return searchable.includes(normalizedKeyword);
+        });
+
+        setItems(verifiedItems);
         setHasNext(response.hasNext);
       } catch (err) {
-        if (!mounted) {
+        if (!mounted || requestId !== latestRequestRef.current) {
           return;
         }
         setError(err instanceof Error ? err.message : '리뷰 상세 조회 실패');
         setItems([]);
         setHasNext(false);
       } finally {
-        if (mounted) {
+        if (mounted && requestId === latestRequestRef.current) {
           setLoading(false);
         }
       }

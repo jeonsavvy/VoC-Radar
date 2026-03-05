@@ -45,6 +45,7 @@ npm install
 2. `supabase/migrations/202602270001_pipeline_jobs.sql`
 3. `supabase/migrations/202602270002_review_prefilter.sql`
 4. `supabase/migrations/202603010001_pipeline_jobs_function_fix.sql`
+5. `supabase/migrations/202603050002_critical_rule_and_category_normalization.sql`
 
 ### 3) Worker 환경변수
 

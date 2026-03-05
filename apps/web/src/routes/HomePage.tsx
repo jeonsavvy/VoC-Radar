@@ -103,8 +103,6 @@ export function HomePage({ selection }: Props) {
 
   const sampledReviewCount = overview?.total_reviews ?? 0;
   const sampledCriticalCount = overview?.critical_count ?? 0;
-  const sampledLowRatingCount = overview?.low_rating_count ?? 0;
-  const sampledPositiveRatio = overview?.positive_ratio ?? 0;
   const sampledAverageRating = overview?.average_rating ?? 0;
 
   return (
@@ -138,16 +136,8 @@ export function HomePage({ selection }: Props) {
                 <dd>{sampledCriticalCount.toLocaleString()}</dd>
               </div>
               <div>
-                <dt>최근 30일 저평점(≤2)</dt>
-                <dd>{sampledLowRatingCount.toLocaleString()}</dd>
-              </div>
-              <div>
                 <dt>최근 30일 평균 평점</dt>
                 <dd>{sampledAverageRating.toFixed(2)}</dd>
-              </div>
-              <div>
-                <dt>최근 30일 긍정 비율</dt>
-                <dd>{sampledPositiveRatio.toFixed(1)}%</dd>
               </div>
             </dl>
 
@@ -183,7 +173,6 @@ export function HomePage({ selection }: Props) {
               </article>
 
               <article className="story-section">
-                <h4>최근 30일 업데이트 시각</h4>
                 <ul className="bullet-list">
                   <li>최신 집계 시각: {overview.last_review_at ? new Date(overview.last_review_at).toLocaleString() : '-'}</li>
                   <li>집계 기준: 최근 30일</li>
