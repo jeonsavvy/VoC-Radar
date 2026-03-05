@@ -428,150 +428,12 @@ function normalizeOptionalText(rawValue: unknown, maxLength = 120) {
   return normalized.slice(0, maxLength);
 }
 
-const CATEGORY_KEYWORDS = {
-  bugPerformance: [
-    '버그',
-    '오류',
-    '에러',
-    '튕',
-    '크래시',
-    '멈춤',
-    '먹통',
-    '작동 안',
-    '실행 안',
-    '느림',
-    '지연',
-    '렉',
-    '버벅',
-    '속도',
-    '발열',
-    '배터리',
-    '프리징',
-    '로딩',
-    'lag',
-    'slow',
-    'performance',
-    'stability',
-    'bug',
-    'error',
-    'crash',
-    'fail',
-  ],
-  accountPayment: [
-    '결제',
-    '구독',
-    '환불',
-    '인앱',
-    '구매',
-    '로그인',
-    'log in',
-    'login',
-    '계정',
-    '인증',
-    '회원가입',
-    '가입',
-    'billing',
-    'payment',
-    'subscription',
-    'refund',
-    'account',
-    'auth',
-    'sign in',
-  ],
-  featureUsability: [
-    '사용성',
-    '불편',
-    'ui',
-    'ux',
-    '디자인',
-    '가독성',
-    '동선',
-    '메뉴',
-    '접근성',
-    '편의',
-    '요청',
-    '기능 추가',
-    '추가해',
-    '개선해',
-    '지원해',
-    '원해',
-    'feature request',
-    'please add',
-    'wish',
-  ],
-  contentPolicy: [
-    '콘텐츠',
-    '커뮤니티',
-    '운영',
-    '정책',
-    '약관',
-    '규정',
-    '신고',
-    '정지',
-    '제재',
-    '차단',
-    '검수',
-    '게시글',
-    '피드',
-    '노출',
-    '알림',
-    '고객센터',
-    '문의',
-    '응대',
-    'content',
-    'community',
-    'policy',
-    'moderation',
-    'report',
-    'ban',
-    'suspend',
-    'support',
-  ],
-  positive: ['칭찬', '좋아', '좋음', '최고', '만족', '감사', '추천', 'great', 'love', 'excellent', 'awesome'],
-};
-
-const CRITICAL_CATEGORIES = new Set(['버그 및 성능', '계정 및 결제']);
-
-function includesAnyKeyword(haystack: string, keywords: string[]) {
-  return keywords.some((keyword) => haystack.includes(keyword));
-}
-
-function normalizeVocCategory(rawCategory: unknown, rawSummary?: unknown, rawContent?: unknown) {
+function normalizeVocCategory(rawCategory: unknown, _rawSummary?: unknown, _rawContent?: unknown) {
   const category = String(rawCategory ?? '').trim();
   if (!category) {
     return '긍정 리뷰 및 기타';
   }
-
-  if (category === '버그 및 성능' || category === '계정 및 결제' || category === '기능 및 사용성') {
-    return category;
-  }
-  if (category === '콘텐츠 및 운영 정책' || category === '긍정 리뷰 및 기타') {
-    return category;
-  }
-
-  const source = `${category} ${(rawSummary ?? '').toString()} ${(rawContent ?? '').toString()}`.toLowerCase();
-
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.accountPayment)) {
-    return '계정 및 결제';
-  }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.bugPerformance)) {
-    return '버그 및 성능';
-  }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.contentPolicy)) {
-    return '콘텐츠 및 운영 정책';
-  }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.featureUsability)) {
-    return '기능 및 사용성';
-  }
-  if (includesAnyKeyword(source, CATEGORY_KEYWORDS.positive)) {
-    return '긍정 리뷰 및 기타';
-  }
-
-  return '긍정 리뷰 및 기타';
-}
-
-function isCriticalReview(rating: number, category: string) {
-  return rating === 1 && CRITICAL_CATEGORIES.has(category);
+  return category;
 }
 
 function normalizePriorityValue(rawPriority: unknown): 'Critical' | 'High' | 'Normal' {
@@ -589,23 +451,8 @@ function normalizePriorityValue(rawPriority: unknown): 'Critical' | 'High' | 'No
   return 'Normal';
 }
 
-function derivePriorityValue(rating: number, category: string, rawPriority: unknown): 'Critical' | 'High' | 'Normal' {
-  if (isCriticalReview(rating, category)) {
-    return 'Critical';
-  }
-
-  const normalizedPriority = normalizePriorityValue(rawPriority);
-  if (normalizedPriority === 'Critical') {
-    return 'High';
-  }
-  if (normalizedPriority === 'High') {
-    return 'High';
-  }
-  if (rating <= 2) {
-    return 'High';
-  }
-
-  return 'Normal';
+function derivePriorityValue(_rating: number, _category: string, rawPriority: unknown): 'Critical' | 'High' | 'Normal' {
+  return normalizePriorityValue(rawPriority);
 }
 
 async function triggerN8nPipeline(

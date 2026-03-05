@@ -67,7 +67,7 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "={{ '# Input Data (JSON List)\\n' + JSON.stringify($json.reviews || []) + '\\n\\n# Task\\n위 JSON 데이터(리뷰 리스트)를 하나씩 분석해서, 아래 정보를 포함한 **새로운 JSON List**를 만들어.\\n(순서를 절대 바꾸지 말고 입력된 개수 그대로 출력해.)\\n\\n# Output Format (Array of Objects)\\n[\\n  {\\n    \"author\": \"원문 작성자 이름 그대로\",\\n    \"date\": \"원문 reviewedAt 날짜 그대로\",\\n    \"rating\": \"원문 rating 그대로\",\\n    \"content\": \"원문 내용 그대로\",\\n    \"priority\": \"🚨 Critical / ⚠️ High / ✅ Normal 중 택1\",\\n    \"category\": \"버그 및 성능 / 계정 및 결제 / 기능 및 사용성 / 콘텐츠 및 운영 정책 / 긍정 리뷰 및 기타 중 택1\",\\n    \"summary\": \"내용 1줄 요약\"\\n  },\\n  ... (반복)\\n]\\n\\n\\n\\n# Critical 기준\\n- 🚨 Critical은 반드시 \"별점 1점 + 핵심 장애 카테고리(버그 및 성능/계정 및 결제)\"일 때만 부여해.\\n- 나머지는 ⚠️ High 또는 ✅ Normal로 분류해.\\n\\n(오직 JSON 데이터만 출력해. 마크다운 코드블록 쓰지 마.)\\n\\nIMPORTANT: Return ONLY the JSON array. Do not include markdown formatting like ```json. If content is empty, set summary to \"내용 없음\".' }}",
+        "text": "={{ '# Input Data (JSON List)\\n' + JSON.stringify($json.reviews || []) + '\\n\\n# Task\\n위 JSON 데이터(리뷰 리스트)를 하나씩 분석해서, 아래 정보를 포함한 **새로운 JSON List**를 만들어.\\n(순서를 절대 바꾸지 말고 입력된 개수 그대로 출력해.)\\n\\n# Output Format (Array of Objects)\\n[\\n  {\\n    \"author\": \"원문 작성자 이름 그대로\",\\n    \"date\": \"원문 reviewedAt 날짜 그대로\",\\n    \"rating\": \"원문 rating 그대로\",\\n    \"content\": \"원문 내용 그대로\",\\n    \"priority\": \"🚨 Critical / ⚠️ High / ✅ Normal 중 택1\",\\n    \"category\": \"버그 및 성능 / 계정 및 결제 / 기능 및 사용성 / 콘텐츠 및 운영 정책 / 긍정 리뷰 및 기타 중 택1\",\\n    \"summary\": \"내용 1줄 요약\"\\n  },\\n  ... (반복)\\n]\\n\\n# 분류 기준\\n- category는 리뷰 맥락을 바탕으로 LLM이 자율적으로 판단해.\\n- priority(특히 🚨 Critical)는 별점 규칙에 묶지 말고, 실제 사용자 영향도/장애 심각도를 기준으로 LLM이 자율 판단해.\\n- 별점과 priority가 일치하지 않아도 된다.\\n\\n(오직 JSON 데이터만 출력해. 마크다운 코드블록 쓰지 마.)\\n\\nIMPORTANT: Return ONLY the JSON array. Do not include markdown formatting like ```json. If content is empty, set summary to \"내용 없음\".' }}",
         "batching": {}
       },
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
@@ -142,7 +142,7 @@
           "conditions": [
             {
               "id": "check-critical-rating",
-              "leftValue": "={{ (() => { const rawCategory = ($json.category || $json.유형 || '').toString().trim(); const rawSummary = ($json.summary || $json.요약 || '').toString().trim(); const rawContent = ($json.content || $json.원본 || '').toString().trim(); const source = `${rawCategory} ${rawSummary} ${rawContent}`.toLowerCase(); const r = Number(($json.rating || $json.별점 || '0').toString().trim()); const isCriticalCategory = ['버그','오류','에러','튕','크래시','멈춤','결제','구독','환불','로그인','계정','인증','느림','렉','발열','bug','error','crash','payment','billing','login','account','performance','stability'].some((keyword) => source.includes(keyword)); return (r === 1 && isCriticalCategory) ? 'yes' : 'no'; })() }}",
+              "leftValue": "={{ /critical/i.test((($json.priority || $json.긴급도 || '').toString().replace(/[🚨⚠️✅]/g, '').trim())) ? 'yes' : 'no' }}",
               "rightValue": "yes",
               "operator": {
                 "type": "string",

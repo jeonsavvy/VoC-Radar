@@ -10,6 +10,7 @@ SQL Editor에서 아래 파일을 순서대로 실행합니다.
 4. `supabase/migrations/202603010001_pipeline_jobs_function_fix.sql`
 5. `supabase/migrations/202603050002_critical_rule_and_category_normalization.sql`
 6. `supabase/migrations/202603050003_category_rebucket_5way.sql`
+7. `supabase/migrations/202603050004_llm_autonomous_decision.sql`
 
 추가 확인:
 
