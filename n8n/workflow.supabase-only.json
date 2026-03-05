@@ -11,8 +11,8 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        -128,
-        112
+        -320,
+        0
       ],
       "id": "webhook-trigger-queue",
       "name": "Webhook Trigger (Queue Event)",
@@ -57,8 +57,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        896,
-        -16
+        1120,
+        -80
       ],
       "id": "638e245b-1e11-4e26-92d5-36de6e727396",
       "name": "HTTP Request",
@@ -73,8 +73,8 @@
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.8,
       "position": [
-        464,
-        256
+        2320,
+        80
       ],
       "id": "0ed4ad28-e5bc-46db-aa46-25b1b2cef11b",
       "name": "Basic LLM Chain",
@@ -93,8 +93,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        664,
-        256
+        2560,
+        80
       ],
       "id": "parse-json-response",
       "name": "Parse JSON Response"
@@ -107,8 +107,8 @@
       "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
       "typeVersion": 1,
       "position": [
-        464,
-        112
+        2080,
+        80
       ],
       "id": "848e3076-2ed7-44d1-a766-76479b6aaed9",
       "name": "Google Gemini Chat Model",
@@ -126,8 +126,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1088,
-        256
+        3040,
+        80
       ],
       "id": "check-duplicate-filter",
       "name": "Filter Duplicates"
@@ -158,8 +158,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        1520,
-        256
+        3280,
+        160
       ],
       "id": "check-critical-priority",
       "name": "Check Critical Priority"
@@ -190,8 +190,8 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        864,
-        256
+        2800,
+        80
       ],
       "id": "cdcd9089-0930-40f0-8be9-7876aa998a88",
       "name": "Has Parse Error?"
@@ -203,8 +203,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1360,
-        96
+        3280,
+        0
       ],
       "id": "prepare-upsert-payload-v2",
       "name": "Prepare Upsert Payload",
@@ -217,8 +217,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1568,
-        96
+        3520,
+        0
       ],
       "id": "sign-upsert-payload-v2",
       "name": "Sign Upsert Payload",
@@ -266,8 +266,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1776,
-        96
+        3760,
+        0
       ],
       "id": "upsert-reviews-to-bff-v2",
       "name": "Upsert Reviews to BFF",
@@ -280,8 +280,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1984,
-        96
+        4000,
+        0
       ],
       "id": "prepare-publish-payload-v2",
       "name": "Prepare Publish Payload",
@@ -294,8 +294,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2192,
-        96
+        4240,
+        0
       ],
       "id": "sign-publish-payload-v2",
       "name": "Sign Publish Payload",
@@ -343,8 +343,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2400,
-        96
+        4480,
+        0
       ],
       "id": "notify-publish-bff-v2",
       "name": "Notify Publish to BFF",
@@ -357,8 +357,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1168,
-        336
+        3040,
+        240
       ],
       "id": "prepare-parse-error-payload-v2",
       "name": "Prepare Parse Error Payload",
@@ -371,8 +371,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1376,
-        336
+        3280,
+        240
       ],
       "id": "sign-parse-error-payload-v2",
       "name": "Sign Parse Error Payload",
@@ -416,8 +416,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1584,
-        336
+        3520,
+        240
       ],
       "id": "send-parse-error-to-bff-v2",
       "name": "Send Parse Error to BFF",
@@ -430,8 +430,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1984,
-        416
+        3520,
+        160
       ],
       "id": "prepare-alert-events-payload-v2",
       "name": "Prepare Alert Events Payload",
@@ -444,8 +444,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2192,
-        416
+        3760,
+        160
       ],
       "id": "sign-alert-events-payload-v2",
       "name": "Sign Alert Events Payload",
@@ -493,8 +493,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        2400,
-        416
+        4000,
+        160
       ],
       "id": "send-alert-events-to-bff-v2",
       "name": "Send Alert Events to BFF",
@@ -507,8 +507,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        64,
-        112
+        160,
+        -80
       ],
       "id": "prepare-claim-job-payload-v2",
       "name": "Prepare Claim Job Payload",
@@ -521,8 +521,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        272,
-        112
+        400,
+        -80
       ],
       "id": "sign-claim-job-payload-v2",
       "name": "Sign Claim Job Payload",
@@ -566,8 +566,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        480,
-        112
+        640,
+        -80
       ],
       "id": "claim-job-from-bff-v2",
       "name": "Claim Job from BFF",
@@ -580,8 +580,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        688,
-        112
+        880,
+        -80
       ],
       "id": "prepare-run-context-v2",
       "name": "Prepare Run Context",
@@ -594,8 +594,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1104,
-        -16
+        1360,
+        -80
       ],
       "id": "prepare-preflight-reviews-payload-v2",
       "name": "Prepare Preflight Reviews Payload",
@@ -608,8 +608,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1312,
-        -16
+        1600,
+        -80
       ],
       "id": "sign-preflight-reviews-payload-v2",
       "name": "Sign Preflight Reviews Payload",
@@ -653,8 +653,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1520,
-        -16
+        1840,
+        -80
       ],
       "id": "filter-new-reviews-via-bff-v2",
       "name": "Filter New Reviews via BFF",
@@ -667,8 +667,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1728,
-        -16
+        2080,
+        -80
       ],
       "id": "ensure-new-reviews-v2",
       "name": "Ensure New Reviews",
@@ -681,8 +681,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        64,
-        112
+        -80,
+        0
       ],
       "id": "validate-trigger-secret",
       "name": "Validate Trigger Secret",
@@ -710,8 +710,8 @@
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        -128,
-        -56
+        -320,
+        -160
       ],
       "id": "schedule-trigger-queue-polling",
       "name": "Schedule Trigger (Queue Polling)",
