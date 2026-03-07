@@ -56,7 +56,7 @@ export function LoginPage({ onSignedIn }: Props) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="수집 실행 로그인" description="원문 리뷰는 공개되어 있습니다. 수집 실행과 실행 이력 확인만 로그인 후 사용할 수 있습니다." />
+      <PageHeader title="로그인" description="수집 실행과 실행 이력 확인은 로그인 후 사용할 수 있습니다." />
 
       <Card>
         <CardHeader>

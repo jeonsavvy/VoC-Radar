@@ -147,7 +147,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
         if (!mounted || requestId !== latestRequestRef.current) {
           return;
         }
-        setError(err instanceof Error ? err.message : '원문 리뷰를 불러오지 못했습니다.');
+        setError(err instanceof Error ? err.message : '리뷰를 불러오지 못했습니다.');
         setItems([]);
         setHasNext(false);
       } finally {
@@ -183,7 +183,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="원문 리뷰" />
+      <PageHeader title="리뷰" />
 
       {error ? (
         <Card className="border-destructive/20">
@@ -196,7 +196,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
           <div className="flex items-end justify-between gap-3">
             <div>
               <CardTitle className="text-xl">조회 조건</CardTitle>
-              <CardDescription>유형, 우선순위, 별점 기준으로 원문 리뷰를 좁혀봅니다.</CardDescription>
+              <CardDescription>유형, 우선순위, 별점 기준으로 리뷰를 좁혀봅니다.</CardDescription>
             </div>
             <Badge variant={activeFilterCount > 0 ? 'default' : 'secondary'}>{activeFilterCount}개 필터 적용</Badge>
           </div>
@@ -206,7 +206,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
             <Label htmlFor="review-search">검색어</Label>
             <div className="relative mt-2">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input id="review-search" value={searchKeyword} onChange={(event) => setSearchKeyword(event.target.value)} className="pl-9" placeholder="요약, 원문 검색" />
+              <Input id="review-search" value={searchKeyword} onChange={(event) => setSearchKeyword(event.target.value)} className="pl-9" placeholder="요약, 리뷰 검색" />
             </div>
           </div>
 
@@ -360,7 +360,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
                     </div>
 
                     <div className="rounded-xl border border-border bg-panel px-4 py-4">
-                      <p className="text-xs font-medium text-muted-foreground">원문 리뷰</p>
+                      <p className="text-xs font-medium text-muted-foreground">리뷰</p>
                       <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">{item.content}</p>
                     </div>
                   </CardContent>

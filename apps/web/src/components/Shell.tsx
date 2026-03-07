@@ -17,7 +17,7 @@ type Props = {
 
 const NAV_ITEMS = [
   { to: '/', label: '대시보드' },
-  { to: '/reviews', label: '원문 리뷰' },
+  { to: '/reviews', label: '리뷰' },
   { to: '/analyze', label: '수집 실행' },
 ] as const;
 
