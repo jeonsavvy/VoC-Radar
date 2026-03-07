@@ -27,7 +27,9 @@ VoC-Radar는 App Store 리뷰를 수집하고, 유형별로 정리해 공개 대
 - `apps/web`: React 프론트엔드
 - `apps/worker`: Cloudflare Worker API
 - `n8n/workflow.supabase-only.json`: 운영 워크플로우
-- `supabase/migrations`: DB 스키마/함수 SQL
+- `supabase/bootstrap`: 신규 설치용 단일 SQL
+- `supabase/migrations`: 변경 이력 SQL
+- `supabase/README.md`: Supabase SQL 사용 가이드
 - `docs`: 배포/아키텍처 문서
 
 ---
@@ -42,17 +44,18 @@ npm install
 
 ### 2) Supabase SQL 실행
 
-현재 `supabase/migrations/`는 누적 히스토리입니다.
-신규 환경이면 아래 파일을 **순서대로** 실행해야 합니다.
+신규 Supabase 프로젝트면 아래 **1개 파일만** 실행하세요.
 
-1. `supabase/migrations/202602250001_voc_radar_init.sql`
-2. `supabase/migrations/202602270001_pipeline_jobs.sql`
-3. `supabase/migrations/202602270002_review_prefilter.sql`
-4. `supabase/migrations/202603010001_pipeline_jobs_function_fix.sql`
-5. `supabase/migrations/202603050002_critical_rule_and_category_normalization.sql`
-6. `supabase/migrations/202603050003_category_rebucket_5way.sql`
-7. `supabase/migrations/202603050004_llm_autonomous_decision.sql`
-8. `supabase/migrations/202603070001_issue_action_read_models.sql`
+```sql
+supabase/bootstrap/20260307_voc_radar_bootstrap.sql
+```
+
+`supabase/migrations/`는 누적 변경 이력입니다.
+운영 DB를 유지 중이면 기존 migration 체인을 함부로 지우거나 전체 재실행하지 마세요.
+
+자세한 설명:
+
+- `supabase/README.md`
 
 ### 3) Worker 환경변수
 
