@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BellRing, LogIn, LogOut, RefreshCw } from 'lucide-react';
+import { BellRing, LogIn, LogOut } from 'lucide-react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { AppSearchPicker } from '@/components/app-search-picker';
 import { Badge } from '@/components/ui/badge';
@@ -23,10 +23,10 @@ const NAV_ITEMS = [
 ] as const;
 
 const ROUTE_HINT: Record<string, string> = {
-  '/': '문제 → 원인 → 액션을 한 화면에서 확인합니다.',
-  '/analyze': '리뷰 수집을 실행하고 최근 처리 상태를 확인합니다.',
-  '/reviews': '문제별로 원문 리뷰를 좁혀서 확인합니다.',
-  '/login': '상세 리뷰와 실행 권한을 관리합니다.',
+  '/': '최근 30일 App Store 리뷰를 요약해 보여줍니다.',
+  '/analyze': 'App Store 리뷰 수집을 실행합니다.',
+  '/reviews': '원문 리뷰를 필터링해 확인합니다.',
+  '/login': '로그인 상태를 관리합니다.',
 };
 
 function formatRunStatus(run: RunSummaryItem | null) {
@@ -114,7 +114,7 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
               <img src="/assets/voc-radar-mark.svg" alt="VoC-Radar" className="size-11 rounded-xl border border-border bg-card p-1.5" />
               <div>
                 <p className="text-sm font-semibold text-foreground">VoC-Radar</p>
-                <p className="mt-1 text-xs text-muted-foreground">앱 리뷰에서 지금 봐야 할 문제와 액션을 정리하는 운영형 대시보드</p>
+                <p className="mt-1 text-xs text-muted-foreground">App Store 리뷰 분석</p>
               </div>
             </div>
 
@@ -183,7 +183,7 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
                         isSelected ? 'border-primary bg-primary/8 text-primary' : 'border-border bg-background hover:bg-accent',
                       )}
                     >
-                      {(item.app_name || '이름 미확인 앱').slice(0, 18)}
+                      {(item.app_name || `앱 ${item.app_store_id}`).slice(0, 18)}
                     </button>
                   );
                 })}
@@ -193,7 +193,7 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
             <div className="grid gap-3 rounded-xl bg-panel p-4">
               <div>
                 <p className="text-xs font-medium text-muted-foreground">현재 선택 앱</p>
-                <p className="mt-1 text-lg font-semibold text-foreground">{appName || '앱 이름 확인 중'}</p>
+                <p className="mt-1 text-lg font-semibold text-foreground">{appName || `앱 ${selection.appId}`}</p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {selection.appId} · {selection.country.toUpperCase()}
                 </p>
@@ -205,10 +205,7 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
                   최근 반영 상태
                 </div>
                 <p className="text-sm text-muted-foreground">{formatRunStatus(latestRun)}</p>
-                <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <RefreshCw className="size-3.5" />
-                  {ROUTE_HINT[location.pathname] || ROUTE_HINT['/']}
-                </p>
+                <p className="text-xs text-muted-foreground">{ROUTE_HINT[location.pathname] || ROUTE_HINT['/']}</p>
               </div>
             </div>
           </div>

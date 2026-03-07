@@ -187,7 +187,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
       <PageHeader
         eyebrow="원문 리뷰"
         title="문제별로 원문 리뷰를 좁혀서 확인합니다."
-        description="이슈, 유형, 우선순위, 별점 기준으로 리뷰를 줄여서 보고 원문과 권장 액션을 함께 확인할 수 있습니다."
+        description="문제, 유형, 우선순위, 별점 기준으로 리뷰를 줄여서 보고 원문을 확인합니다."
         status={`${items.length.toLocaleString()}건 표시`}
         meta={`${selection.appId} · ${selection.country.toUpperCase()}`}
         actions={
@@ -236,7 +236,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
                 value={searchKeyword}
                 onChange={(event) => setSearchKeyword(event.target.value)}
                 className="pl-9"
-                placeholder="문제명, 원인, 액션, 본문 검색"
+                placeholder="문제명, 요약, 본문 검색"
               />
             </div>
           </div>
@@ -369,25 +369,25 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
           <div className="flex items-end justify-between gap-3">
             <div>
               <CardTitle className="text-xl">원문 리뷰 목록</CardTitle>
-              <CardDescription>문제명과 권장 액션을 함께 보며 근거 리뷰를 확인합니다.</CardDescription>
+              <CardDescription>문제명과 요약을 기준으로 근거 리뷰를 확인합니다.</CardDescription>
             </div>
             <Badge variant="outline">페이지 {page}</Badge>
           </div>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
-            <table className="min-w-[1080px] text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+              <table className="min-w-[1080px] text-sm">
+                <thead>
+                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
                   <th className="px-3 py-3">작성일</th>
                   <th className="px-3 py-3">문제</th>
-                  <th className="px-3 py-3">유형</th>
-                  <th className="px-3 py-3">우선순위</th>
-                  <th className="px-3 py-3">별점</th>
-                  <th className="px-3 py-3">권장 액션</th>
-                  <th className="px-3 py-3">요약</th>
-                  <th className="px-3 py-3 text-right">상세</th>
-                </tr>
+                    <th className="px-3 py-3">유형</th>
+                    <th className="px-3 py-3">우선순위</th>
+                    <th className="px-3 py-3">별점</th>
+                    <th className="px-3 py-3">원인 요약</th>
+                    <th className="px-3 py-3">요약</th>
+                    <th className="px-3 py-3 text-right">상세</th>
+                  </tr>
               </thead>
               <tbody>
                 {loading ? (
@@ -415,10 +415,9 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
                         <Badge variant={PRIORITY_VARIANT[item.priority]}>{item.priority}</Badge>
                       </td>
                       <td className="px-3 py-3 font-semibold text-foreground">{item.rating}</td>
-                      <td className="px-3 py-3 text-foreground">{item.action_hint}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{item.reason_summary}</td>
                       <td className="px-3 py-3">
                         <p className="font-medium text-foreground">{item.summary}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{item.reason_summary}</p>
                       </td>
                       <td className="px-3 py-3 text-right">
                         <Button variant="outline" size="sm" onClick={() => setSelectedReview(item)}>
@@ -460,10 +459,6 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
               <div className="rounded-xl border border-border bg-panel px-4 py-4">
                 <p className="text-xs font-medium text-muted-foreground">원인 요약</p>
                 <p className="mt-2 text-sm text-foreground">{selectedReview.reason_summary}</p>
-              </div>
-              <div className="rounded-xl border border-border bg-panel px-4 py-4">
-                <p className="text-xs font-medium text-muted-foreground">권장 액션</p>
-                <p className="mt-2 text-sm text-foreground">{selectedReview.action_hint}</p>
               </div>
               <div className="rounded-xl border border-border bg-panel px-4 py-4">
                 <p className="text-xs font-medium text-muted-foreground">원문 리뷰</p>

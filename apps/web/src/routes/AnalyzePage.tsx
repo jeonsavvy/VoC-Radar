@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, LoaderCircle, Play, RefreshCw, XCircle } from 'lucide-react';
+import { LoaderCircle, Play, XCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { AppSearchPicker } from '@/components/app-search-picker';
 import { EmptyState } from '@/components/empty-state';
@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { cancelPipelineJobs, createPipelineJob, getMyPipelineJobs, getPublicAppMeta } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
-import { type AppSelection } from '@/lib/appSelection';
+import type { AppSelection } from '@/lib/appSelection';
 import type { PipelineJobItem } from '@/types';
 
 type Props = {
@@ -91,7 +91,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     setMessage(null);
 
     if (!loggedIn) {
-      setMessage('로그인 후 실제 수집 실행을 요청할 수 있습니다.');
+      setMessage('로그인 후 수집 실행이 가능합니다.');
       return;
     }
 
@@ -109,11 +109,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
         note: note.trim() || undefined,
       });
 
-      setMessage(
-        response.trigger?.dispatched === false
-          ? `실행 요청이 등록되었습니다. (${response.data.id}) 즉시 트리거 실패 시 1분 폴링으로 이어집니다.`
-          : `실행 요청이 등록되었습니다. (${response.data.id})`,
-      );
+      setMessage(`수집 요청이 등록되었습니다. (${response.data.id})`);
       setNote('');
       await loadJobs();
     } catch (err) {
@@ -173,19 +169,19 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     <div className="space-y-6">
       <PageHeader
         eyebrow="수집 실행"
-        title="리뷰 수집을 실행하고 최근 처리 상태를 확인합니다."
-        description="앱을 선택한 뒤 수집을 요청하면 Worker → n8n → 분류 → 반영 흐름으로 이어집니다. 실패나 지연이 생기면 최근 실행 이력에서 바로 확인합니다."
+        title="App Store 리뷰 수집 실행"
+        description="App Store ID를 입력해 리뷰 수집을 실행합니다."
         status={jobs.length > 0 ? `최근 실행 ${jobs.length}건` : '실행 대기'}
         meta={`${selection.appId} · ${selection.country.toUpperCase()}`}
         actions={
           loggedIn ? (
             <Button variant="outline" onClick={onCancelAll} disabled={cancelingAll || cancelableCount === 0}>
               <XCircle className="size-4" />
-              실행 중/대기 취소
+              대기/실행 취소
             </Button>
           ) : (
             <Button asChild>
-              <Link to="/login">로그인 후 실행 요청</Link>
+              <Link to="/login">로그인</Link>
             </Button>
           )
         }
@@ -203,100 +199,64 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
         </Card>
       ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[1.08fr_0.92fr]">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">수집 요청</CardTitle>
-            <CardDescription>앱을 선택하고 실행 메모를 남기면 바로 수집을 시작할 수 있습니다.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-4" onSubmit={onSubmit}>
-              <AppSearchPicker
-                selection={selection}
-                appName={appName}
-                onSelect={(next, meta) => {
-                  onSelectionChange(next);
-                  setAppName(meta?.appName?.trim() || null);
-                }}
-              />
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-xl">수집 요청</CardTitle>
+          <CardDescription>앱 ID와 국가 코드를 입력한 뒤 실행합니다.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form className="space-y-4" onSubmit={onSubmit}>
+            <AppSearchPicker
+              selection={selection}
+              appName={appName}
+              onSelect={(next) => {
+                onSelectionChange(next);
+                setAppName(null);
+              }}
+            />
 
-              <div className="rounded-xl border border-border bg-panel px-4 py-3">
-                <p className="text-xs font-medium text-muted-foreground">현재 선택 앱</p>
-                <p className="mt-1 text-base font-semibold text-foreground">{appName || '앱명 확인 중'}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {selection.appId} · {selection.country.toUpperCase()}
-                </p>
+            <div className="rounded-xl border border-border bg-panel px-4 py-3">
+              <p className="text-xs font-medium text-muted-foreground">현재 선택 앱</p>
+              <p className="mt-1 text-base font-semibold text-foreground">{appName || `앱 ${selection.appId}`}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {selection.appId} · {selection.country.toUpperCase()}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="run-note">메모</Label>
+              <Textarea id="run-note" value={note} onChange={(event) => setNote(event.target.value)} placeholder="선택 사항" />
+            </div>
+
+            {!loggedIn ? (
+              <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-muted-foreground">
+                로그인 후 수집 실행이 가능합니다.
               </div>
+            ) : null}
 
-              <div className="space-y-2">
-                <Label htmlFor="run-note">실행 메모</Label>
-                <Textarea
-                  id="run-note"
-                  value={note}
-                  onChange={(event) => setNote(event.target.value)}
-                  placeholder="예: 신규 릴리즈 이후 1점 리뷰 증가 원인 확인"
-                />
-              </div>
-
-              {!loggedIn ? (
-                <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-muted-foreground">
-                  로그인 전에는 앱 컨텍스트만 바꿀 수 있습니다. 실제 수집 요청은 로그인 후 가능합니다.
-                </div>
-              ) : null}
-
-              <Button type="submit" size="lg" className="w-full" disabled={submitting}>
-                {submitting ? (
-                  <>
-                    <LoaderCircle className="size-4 animate-spin" />
-                    요청 등록 중...
-                  </>
-                ) : (
-                  <>
-                    <Play className="size-4" />
-                    리뷰 수집 요청
-                  </>
-                )}
-              </Button>
-            </form>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl">실행 흐름</CardTitle>
-            <CardDescription>현재 파이프라인이 어떤 단계로 이어지는지 짧게 정리했습니다.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {[
-              { icon: Play, title: '1. 수집 요청 등록', body: '앱/국가/메모를 저장하고 실행 큐에 올립니다.' },
-              { icon: RefreshCw, title: '2. 리뷰 수집 및 중복 제거', body: '최근 리뷰를 가져오고 이미 저장된 리뷰는 제외합니다.' },
-              { icon: CheckCircle2, title: '3. 분류 및 반영', body: '문제 유형·원인·권장 액션을 생성한 뒤 대시보드에 반영합니다.' },
-            ].map((step) => {
-              const Icon = step.icon;
-              return (
-                <div key={step.title} className="rounded-xl border border-border bg-panel px-4 py-4">
-                  <div className="flex items-start gap-3">
-                    <div className="rounded-full bg-primary/10 p-2 text-primary">
-                      <Icon className="size-4" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">{step.title}</p>
-                      <p className="mt-1 text-sm text-muted-foreground">{step.body}</p>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      </div>
+            <Button type="submit" size="lg" className="w-full" disabled={submitting}>
+              {submitting ? (
+                <>
+                  <LoaderCircle className="size-4 animate-spin" />
+                  요청 등록 중...
+                </>
+              ) : (
+                <>
+                  <Play className="size-4" />
+                  수집 실행
+                </>
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
           <div className="flex items-end justify-between gap-3">
             <div>
               <CardTitle className="text-xl">최근 실행 이력</CardTitle>
-              <CardDescription>내 계정 기준 최근 실행 상태를 확인합니다.</CardDescription>
+              <CardDescription>내 계정 기준 최근 실행 상태입니다.</CardDescription>
             </div>
             <Badge variant="outline">{cancelableCount}건 취소 가능</Badge>
           </div>
@@ -321,7 +281,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
                         <Badge variant={STATUS_BADGE[job.status]}>{job.status}</Badge>
                         <Badge variant="outline">{job.country.toUpperCase()}</Badge>
                       </div>
-                      <p className="mt-3 text-base font-semibold text-foreground">{job.app_name || '앱 이름 미확인'}</p>
+                      <p className="mt-3 text-base font-semibold text-foreground">{job.app_name || `앱 ${job.app_store_id}`}</p>
                       <p className="mt-1 text-sm text-muted-foreground">
                         {job.app_store_id} · 요청 {new Date(job.requested_at).toLocaleString()}
                       </p>
@@ -338,17 +298,14 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
                     <p>메모: {job.note || '없음'}</p>
                     <p>Run ID: {job.run_id || '-'}</p>
                     {job.error_message ? (
-                      <p className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-destructive">
-                        <AlertCircle className="mr-2 inline size-4" />
-                        {job.error_message}
-                      </p>
+                      <p className="rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2 text-destructive">{job.error_message}</p>
                     ) : null}
                   </div>
                 </div>
               ))}
             </div>
           ) : (
-            <EmptyState icon={Play} title="아직 실행 이력이 없습니다." description="수집 요청을 등록하면 여기에서 최근 상태를 확인할 수 있습니다." />
+            <EmptyState icon={Play} title="실행 이력이 없습니다." description="수집 실행을 하면 최근 상태가 여기에 표시됩니다." />
           )}
         </CardContent>
       </Card>
