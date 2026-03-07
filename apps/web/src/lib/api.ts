@@ -3,13 +3,14 @@ import type {
   CreatePipelineJobResponse,
   PipelineJobItem,
   Priority,
+  PrivateReviewSortKey,
+  PrivateReviewsResponse,
   PublicAppItem,
   PublicAppMeta,
-  PrivateReviewsResponse,
-  PrivateReviewSortKey,
   PublicCategoryPoint,
   PublicOverview,
-} from '../types';
+  PublicTrendPoint,
+} from '@/types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || '10000');
@@ -18,7 +19,6 @@ const REQUEST_RETRY_COUNT = Number(import.meta.env.VITE_API_RETRY_COUNT || '2');
 const CONFIG_HINT =
   'API 응답이 JSON이 아닙니다. VITE_API_BASE_URL이 Worker URL(https://voc-radar-api...workers.dev)인지 확인하세요.';
 
-// GET/HEAD/OPTIONS + 5xx일 때만 재시도한다.
 const shouldRetry = (method: string, status?: number) => {
   const upper = method.toUpperCase();
   const idempotent = upper === 'GET' || upper === 'HEAD' || upper === 'OPTIONS';
@@ -32,10 +32,6 @@ const isHtmlPayload = (contentType: string | null, body: string) => {
   return lowerType.includes('text/html') || trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html');
 };
 
-// 프론트 공통 API 호출기:
-// - timeout
-// - idempotent retry
-// - JSON 응답 검증
 async function fetchJson<T>(
   path: string,
   options: {
@@ -99,20 +95,24 @@ async function fetchJson<T>(
   throw new Error('요청 재시도 한도를 초과했습니다.');
 }
 
-export async function getOverview(appId: string, country = 'kr') {
+export async function getOverview(appId: string, country = 'kr', from?: string, to?: string) {
   const params = new URLSearchParams({ appId, country });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
   return fetchJson<{ data: PublicOverview }>(`/api/public/overview?${params.toString()}`);
+}
+
+export async function getTrends(appId: string, country = 'kr', from?: string, to?: string) {
+  const params = new URLSearchParams({ appId, country });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  return fetchJson<{ data: PublicTrendPoint[] }>(`/api/public/trends?${params.toString()}`);
 }
 
 export async function getCategories(appId: string, country = 'kr', from?: string, to?: string) {
   const params = new URLSearchParams({ appId, country });
-  if (from) {
-    params.set('from', from);
-  }
-  if (to) {
-    params.set('to', to);
-  }
-
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
   return fetchJson<{ data: PublicCategoryPoint[] }>(`/api/public/categories?${params.toString()}`);
 }
 
@@ -139,37 +139,20 @@ export async function getPrivateReviews(
     page: String(options?.page ?? 1),
   });
 
-  if (options?.sortBy) {
-    params.set('sortBy', options.sortBy);
-  }
-  if (options?.sortDirection) {
-    params.set('sortDirection', options.sortDirection);
-  }
-  if (options?.rating) {
-    params.set('rating', String(options.rating));
-  }
-  if (options?.priority) {
-    params.set('priority', options.priority);
-  }
-  if (options?.category?.trim()) {
-    params.set('category', options.category.trim());
-  }
-  if (options?.search?.trim()) {
-    params.set('search', options.search.trim());
-  }
-  if (options?.cursor) {
-    params.set('cursor', options.cursor);
-  }
+  if (options?.sortBy) params.set('sortBy', options.sortBy);
+  if (options?.sortDirection) params.set('sortDirection', options.sortDirection);
+  if (options?.rating) params.set('rating', String(options.rating));
+  if (options?.priority) params.set('priority', options.priority);
+  if (options?.category?.trim()) params.set('category', options.category.trim());
+  if (options?.search?.trim()) params.set('search', options.search.trim());
+  if (options?.cursor) params.set('cursor', options.cursor);
 
-  return fetchJson<PrivateReviewsResponse>(
-    `/api/private/reviews?${params.toString()}`,
-    {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
+  return fetchJson<PrivateReviewsResponse>(`/api/private/reviews?${params.toString()}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
     },
-  );
+  });
 }
 
 export async function getPublicApps(limit = 20) {

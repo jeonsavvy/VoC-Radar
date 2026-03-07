@@ -1,45 +1,125 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Columns3,
+  Eye,
+  Filter,
+  ListFilter,
+  MessageSquareText,
+  Search,
+  Star,
+  Wrench,
+} from 'lucide-react';
 import { Navigate } from 'react-router-dom';
-import { getCategories, getPrivateReviews } from '../lib/api';
-import { getAccessToken } from '../lib/auth';
-import type { AppSelection } from '../lib/appSelection';
-import type { Priority, PrivateReviewItem, PrivateReviewSortKey } from '../types';
+import { PageHeader } from '@/components/page-header';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { getCategories, getPrivateReviews } from '@/lib/api';
+import { getAccessToken } from '@/lib/auth';
+import { cn } from '@/lib/utils';
+import type { AppSelection } from '@/lib/appSelection';
+import type { Priority, PrivateReviewItem, PrivateReviewSortKey } from '@/types';
 
 type Props = {
   loggedIn: boolean;
   selection: AppSelection;
 };
 
+const PRIORITY_ORDER: Record<Priority, number> = {
+  Normal: 0,
+  High: 1,
+  Critical: 2,
+};
+
+const PRIORITY_VARIANT: Record<Priority, 'success' | 'warning' | 'destructive'> = {
+  Normal: 'success',
+  High: 'warning',
+  Critical: 'destructive',
+};
+
 const REVIEW_COLUMNS = [
   {
     key: 'reviewed_at',
     label: '작성일',
-    render: (item: PrivateReviewItem) => new Date(item.reviewed_at).toLocaleDateString(),
+    render: (item: PrivateReviewItem) => (
+      <div className="space-y-1">
+        <p className="font-medium text-foreground">{new Date(item.reviewed_at).toLocaleDateString()}</p>
+        <p className="text-xs text-muted-foreground">{new Date(item.reviewed_at).toLocaleTimeString()}</p>
+      </div>
+    ),
   },
   {
     key: 'author',
     label: '작성자',
-    render: (item: PrivateReviewItem) => item.author,
+    render: (item: PrivateReviewItem) => (
+      <div className="space-y-1">
+        <p className="font-medium text-foreground">{item.author || 'Unknown'}</p>
+        <p className="text-xs text-muted-foreground">{item.country.toUpperCase()}</p>
+      </div>
+    ),
   },
   {
     key: 'rating',
     label: '별점',
-    render: (item: PrivateReviewItem) => item.rating,
+    render: (item: PrivateReviewItem) => (
+      <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/55 px-3 py-1.5">
+        <Star className="size-3.5 fill-warning text-warning" />
+        <span className="font-medium text-foreground">{item.rating}</span>
+      </div>
+    ),
   },
   {
     key: 'priority',
     label: '우선순위',
-    render: (item: PrivateReviewItem) => item.priority,
+    render: (item: PrivateReviewItem) => <Badge variant={PRIORITY_VARIANT[item.priority]}>{item.priority}</Badge>,
   },
   {
     key: 'category',
     label: '유형',
-    render: (item: PrivateReviewItem) => item.category,
+    render: (item: PrivateReviewItem) => <Badge variant="outline">{item.category}</Badge>,
   },
   {
     key: 'summary',
     label: '요약',
-    render: (item: PrivateReviewItem) => item.summary,
+    render: (item: PrivateReviewItem) => (
+      <div className="space-y-1">
+        <p className="line-clamp-2 max-w-[32rem] text-sm font-medium text-foreground">{item.summary}</p>
+        <p className="line-clamp-1 max-w-[32rem] text-xs text-muted-foreground">{item.content}</p>
+      </div>
+    ),
   },
 ] as const;
 
@@ -61,12 +141,6 @@ const DEFAULT_COLUMN_VISIBILITY: Record<ReviewColumnKey, boolean> = {
   priority: true,
   category: true,
   summary: true,
-};
-
-const PRIORITY_ORDER: Record<Priority, number> = {
-  Normal: 0,
-  High: 1,
-  Critical: 2,
 };
 
 function compareReviewedAt(left: PrivateReviewItem, right: PrivateReviewItem) {
@@ -104,7 +178,6 @@ function sortPrivateReviewItems(
 
     const reviewedAt = compareReviewedAt(left, right);
     if (reviewedAt !== 0) {
-      // 백엔드 정렬 규칙과 동일하게 tie-breaker는 최신 리뷰 우선으로 고정한다.
       return reviewedAt * -1;
     }
 
@@ -112,8 +185,19 @@ function sortPrivateReviewItems(
   });
 }
 
+function activeFilterCount(input: {
+  search: string;
+  rating: string;
+  priority: string;
+  category: string;
+}) {
+  return [input.search.trim(), input.rating !== 'all', input.priority !== 'all', input.category !== 'all'].filter(Boolean)
+    .length;
+}
+
 export function ReviewsPage({ loggedIn, selection }: Props) {
   const [items, setItems] = useState<PrivateReviewItem[]>([]);
+  const [selectedReview, setSelectedReview] = useState<PrivateReviewItem | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchKeyword, setSearchKeyword] = useState('');
@@ -128,8 +212,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
   const [limit, setLimit] = useState<10 | 25 | 50>(25);
   const [hasNext, setHasNext] = useState(false);
   const [columnOrder, setColumnOrder] = useState<ReviewColumnKey[]>(DEFAULT_COLUMN_ORDER);
-  const [columnVisibility, setColumnVisibility] =
-    useState<Record<ReviewColumnKey, boolean>>(DEFAULT_COLUMN_VISIBILITY);
+  const [columnVisibility, setColumnVisibility] = useState<Record<ReviewColumnKey, boolean>>(DEFAULT_COLUMN_VISIBILITY);
   const latestRequestRef = useRef(0);
 
   useEffect(() => {
@@ -141,17 +224,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
 
   useEffect(() => {
     setPage(1);
-  }, [
-    selection.appId,
-    selection.country,
-    limit,
-    sortKey,
-    sortDirection,
-    ratingFilter,
-    priorityFilter,
-    categoryFilter,
-    debouncedSearch,
-  ]);
+  }, [selection.appId, selection.country, limit, sortKey, sortDirection, ratingFilter, priorityFilter, categoryFilter, debouncedSearch]);
 
   useEffect(() => {
     let mounted = true;
@@ -216,18 +289,10 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
         }
 
         const verifiedItems = response.data.filter((item) => {
-          if (ratingFilter !== 'all' && item.rating !== Number(ratingFilter)) {
-            return false;
-          }
-          if (priorityFilter !== 'all' && item.priority !== priorityFilter) {
-            return false;
-          }
-          if (categoryFilter !== 'all' && item.category !== categoryFilter) {
-            return false;
-          }
-          if (!debouncedSearch) {
-            return true;
-          }
+          if (ratingFilter !== 'all' && item.rating !== Number(ratingFilter)) return false;
+          if (priorityFilter !== 'all' && item.priority !== priorityFilter) return false;
+          if (categoryFilter !== 'all' && item.category !== categoryFilter) return false;
+          if (!debouncedSearch) return true;
           const normalizedKeyword = debouncedSearch.toLowerCase();
           const searchable = [item.author, item.summary, item.category, item.content].join(' ').toLowerCase();
           return searchable.includes(normalizedKeyword);
@@ -249,7 +314,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
       }
     };
 
-    load();
+    void load();
 
     return () => {
       mounted = false;
@@ -269,14 +334,12 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
   ]);
 
   const visibleColumns = useMemo(
-    () =>
-      columnOrder
-        .map((key) => COLUMN_BY_KEY[key])
-        .filter((column) => columnVisibility[column.key]),
+    () => columnOrder.map((key) => COLUMN_BY_KEY[key]).filter((column) => columnVisibility[column.key]),
     [columnOrder, columnVisibility],
   );
 
   const activeColumnCount = Object.values(columnVisibility).filter(Boolean).length;
+  const totalFilterCount = activeFilterCount({ search: debouncedSearch, rating: ratingFilter, priority: priorityFilter, category: categoryFilter });
 
   const toggleColumn = (key: ReviewColumnKey) => {
     setColumnVisibility((previous) => {
@@ -317,189 +380,378 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
     });
   };
 
+  const resetFilters = () => {
+    setSearchKeyword('');
+    setDebouncedSearch('');
+    setRatingFilter('all');
+    setPriorityFilter('all');
+    setCategoryFilter('all');
+    setSortKey('reviewed_at');
+    setSortDirection('desc');
+    setPage(1);
+    setLimit(25);
+  };
+
   if (!loggedIn) {
     return <Navigate to="/login" replace />;
   }
 
   return (
-    <section className="panel" aria-labelledby="review-heading">
-      <h2 id="review-heading">상세 리뷰</h2>
+    <TooltipProvider>
+      <div className="space-y-6">
+        <PageHeader
+          eyebrow="Review Workbench"
+          title="필터, 정렬, 컬럼 제어까지 포함한 상세 리뷰 분석 작업대"
+          description="현재 앱 컨텍스트의 비공개 리뷰 피드를 불러와 우선순위·카테고리·키워드 기준으로 정리했습니다. 행 단위 상세 다이얼로그에서 AI 요약과 원문을 함께 검토할 수 있습니다."
+          status={`${items.length.toLocaleString()} visible · page ${page}`}
+          meta={`${selection.appId} · ${selection.country.toUpperCase()}`}
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={totalFilterCount > 0 ? 'default' : 'secondary'}>{totalFilterCount} active filters</Badge>
+              <Button variant="outline" onClick={resetFilters}>
+                초기화
+              </Button>
+            </div>
+          }
+        />
 
-      {loading && <p>불러오는 중...</p>}
-      {error && <p className="error">{error}</p>}
+        {error ? (
+          <Card className="border-destructive/30">
+            <CardContent className="p-4 text-sm text-destructive" role="alert">
+              {error}
+            </CardContent>
+          </Card>
+        ) : null}
 
-      <div className="review-controls" aria-label="리뷰 조회 설정">
-        <div className="review-filter-grid">
-          <label className="review-field">
-            <span>검색어</span>
-            <input
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              placeholder="작성자, 요약, 유형, 본문"
-            />
-          </label>
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <ListFilter className="size-5 text-primary" />
+                  조회 컨트롤
+                </CardTitle>
+                <CardDescription>필터와 테이블 구성 옵션을 탭 단위로 분리했습니다.</CardDescription>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    <Columns3 className="size-4" />
+                    빠른 컬럼 토글
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel>Visible columns</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  {columnOrder.map((key) => {
+                    const isOnlyVisible = columnVisibility[key] && activeColumnCount === 1;
+                    return (
+                      <DropdownMenuCheckboxItem
+                        key={key}
+                        checked={columnVisibility[key]}
+                        disabled={isOnlyVisible}
+                        onCheckedChange={() => toggleColumn(key)}
+                      >
+                        {COLUMN_BY_KEY[key].label}
+                      </DropdownMenuCheckboxItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <Tabs defaultValue="filters" className="space-y-5">
+              <TabsList>
+                <TabsTrigger value="filters">Filters</TabsTrigger>
+                <TabsTrigger value="layout">Layout</TabsTrigger>
+              </TabsList>
 
-          <label className="review-field">
-            <span>별점</span>
-            <select value={ratingFilter} onChange={(event) => setRatingFilter(event.target.value as typeof ratingFilter)}>
-              <option value="all">전체</option>
-              <option value="5">5점</option>
-              <option value="4">4점</option>
-              <option value="3">3점</option>
-              <option value="2">2점</option>
-              <option value="1">1점</option>
-            </select>
-          </label>
-
-          <label className="review-field">
-            <span>우선순위</span>
-            <select
-              value={priorityFilter}
-              onChange={(event) => setPriorityFilter(event.target.value as typeof priorityFilter)}
-            >
-              <option value="all">전체</option>
-              <option value="Critical">Critical</option>
-              <option value="High">High</option>
-              <option value="Normal">Normal</option>
-            </select>
-          </label>
-
-          <label className="review-field">
-            <span>유형</span>
-            <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
-              <option value="all">전체</option>
-              {categoryOptions.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="review-field">
-            <span>정렬 기준</span>
-            <select value={sortKey} onChange={(event) => setSortKey(event.target.value as PrivateReviewSortKey)}>
-              {REVIEW_COLUMNS.map((column) => (
-                <option key={column.key} value={column.key}>
-                  {column.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label className="review-field">
-            <span>정렬 방향</span>
-            <select value={sortDirection} onChange={(event) => setSortDirection(event.target.value as 'asc' | 'desc')}>
-              <option value="desc">내림차순</option>
-              <option value="asc">오름차순</option>
-            </select>
-          </label>
-
-          <label className="review-field">
-            <span>페이지 크기</span>
-            <select value={limit} onChange={(event) => setLimit(Number(event.target.value) as 10 | 25 | 50)}>
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-            </select>
-          </label>
-        </div>
-
-        <fieldset className="review-column-config">
-          <legend>컬럼 표시/순서 설정</legend>
-          <p className="muted">상세 리뷰 컬럼을 자유롭게 켜고 끄거나 순서를 조정할 수 있습니다.</p>
-          <ul className="column-setting-list">
-            {columnOrder.map((key, index) => {
-              const column = COLUMN_BY_KEY[key];
-              const isOnlyVisible = columnVisibility[key] && activeColumnCount === 1;
-              return (
-                <li key={key}>
-                  <label className="column-toggle">
-                    <input
-                      type="checkbox"
-                      checked={columnVisibility[key]}
-                      onChange={() => toggleColumn(key)}
-                      disabled={isOnlyVisible}
-                    />
-                    <span>{column.label}</span>
-                  </label>
-
-                  <div className="column-order-actions">
-                    <button
-                      type="button"
-                      className="icon-button"
-                      onClick={() => moveColumn(key, 'up')}
-                      disabled={index === 0}
-                      aria-label={`${column.label} 컬럼을 앞으로 이동`}
-                    >
-                      ↑
-                    </button>
-                    <button
-                      type="button"
-                      className="icon-button"
-                      onClick={() => moveColumn(key, 'down')}
-                      disabled={index === columnOrder.length - 1}
-                      aria-label={`${column.label} 컬럼을 뒤로 이동`}
-                    >
-                      ↓
-                    </button>
+              <TabsContent value="filters" className="space-y-4">
+                <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
+                  <div className="space-y-2 xl:col-span-2">
+                    <Label htmlFor="review-search">검색어</Label>
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id="review-search"
+                        value={searchKeyword}
+                        onChange={(event) => setSearchKeyword(event.target.value)}
+                        placeholder="작성자, 요약, 유형, 본문"
+                        className="pl-9"
+                      />
+                    </div>
                   </div>
-                </li>
-              );
-            })}
-          </ul>
-        </fieldset>
-      </div>
 
-      <div className="review-pagination">
-        <button
-          type="button"
-          className="ghost-button"
-          onClick={() => setPage((previous) => Math.max(1, previous - 1))}
-          disabled={loading || page <= 1}
-        >
-          이전
-        </button>
-        <p className="muted review-result-count">
-          {page}페이지 · 현재 {items.length.toLocaleString()}건
-        </p>
-        <button
-          type="button"
-          className="ghost-button"
-          onClick={() => setPage((previous) => previous + 1)}
-          disabled={loading || !hasNext}
-        >
-          다음
-        </button>
-      </div>
+                  <div className="space-y-2">
+                    <Label>별점</Label>
+                    <Select value={ratingFilter} onValueChange={(value) => setRatingFilter(value as typeof ratingFilter)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="전체" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">전체</SelectItem>
+                        <SelectItem value="5">5점</SelectItem>
+                        <SelectItem value="4">4점</SelectItem>
+                        <SelectItem value="3">3점</SelectItem>
+                        <SelectItem value="2">2점</SelectItem>
+                        <SelectItem value="1">1점</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
 
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              {visibleColumns.map((column) => (
-                <th key={column.key} scope="col">
-                  {column.label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.review_id}>
-                {visibleColumns.map((column) => (
-                  <td key={`${item.review_id}-${column.key}`}>{column.render(item)}</td>
-                ))}
-              </tr>
-            ))}
-            {!loading && items.length === 0 && !error && (
-              <tr>
-                <td colSpan={Math.max(1, visibleColumns.length)}>조회 조건에 맞는 리뷰가 없습니다.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+                  <div className="space-y-2">
+                    <Label>우선순위</Label>
+                    <Select value={priorityFilter} onValueChange={(value) => setPriorityFilter(value as typeof priorityFilter)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="전체" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">전체</SelectItem>
+                        <SelectItem value="Critical">Critical</SelectItem>
+                        <SelectItem value="High">High</SelectItem>
+                        <SelectItem value="Normal">Normal</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>유형</Label>
+                    <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="전체" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">전체</SelectItem>
+                        {categoryOptions.map((category) => (
+                          <SelectItem key={category} value={category}>
+                            {category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>정렬 기준</Label>
+                    <Select value={sortKey} onValueChange={(value) => setSortKey(value as PrivateReviewSortKey)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="정렬 기준" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {REVIEW_COLUMNS.map((column) => (
+                          <SelectItem key={column.key} value={column.key}>
+                            {column.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>정렬 방향</Label>
+                    <Select value={sortDirection} onValueChange={(value) => setSortDirection(value as 'asc' | 'desc')}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="정렬 방향" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="desc">내림차순</SelectItem>
+                        <SelectItem value="asc">오름차순</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>페이지 크기</Label>
+                    <Select value={String(limit)} onValueChange={(value) => setLimit(Number(value) as 10 | 25 | 50)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="페이지 크기" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="10">10</SelectItem>
+                        <SelectItem value="25">25</SelectItem>
+                        <SelectItem value="50">50</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="layout" className="space-y-3">
+                {columnOrder.map((key, index) => {
+                  const column = COLUMN_BY_KEY[key];
+                  const isOnlyVisible = columnVisibility[key] && activeColumnCount === 1;
+                  return (
+                    <div key={key} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-background/35 px-4 py-3">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{column.label}</p>
+                        <p className="text-xs text-muted-foreground">순서 {index + 1}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button variant={columnVisibility[key] ? 'secondary' : 'ghost'} size="sm" onClick={() => toggleColumn(key)} disabled={isOnlyVisible}>
+                          {columnVisibility[key] ? 'Visible' : 'Hidden'}
+                        </Button>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="ghost" size="sm" onClick={() => moveColumn(key, 'up')} disabled={index === 0}>
+                              <ArrowUp className="size-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>앞으로 이동</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => moveColumn(key, 'down')}
+                              disabled={index === columnOrder.length - 1}
+                            >
+                              <ArrowDown className="size-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>뒤로 이동</TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  );
+                })}
+              </TabsContent>
+            </Tabs>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <MessageSquareText className="size-5 text-primary" />
+                  Review feed
+                </CardTitle>
+                <CardDescription>우선순위·카테고리·요약을 함께 읽는 데이터 테이블입니다.</CardDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Badge variant="secondary">{items.length.toLocaleString()} items</Badge>
+                <Badge variant={hasNext ? 'default' : 'outline'}>{hasNext ? 'Next page available' : 'End of page'}</Badge>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border/70 bg-background/35 px-4 py-3">
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <Badge variant="outline">page {page}</Badge>
+                <Badge variant="outline">limit {limit}</Badge>
+                <span className="inline-flex items-center gap-2">
+                  <ArrowUpDown className="size-4" />
+                  {COLUMN_BY_KEY[sortKey].label} / {sortDirection}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" onClick={() => setPage((previous) => Math.max(1, previous - 1))} disabled={loading || page <= 1}>
+                  이전
+                </Button>
+                <Button variant="outline" onClick={() => setPage((previous) => previous + 1)} disabled={loading || !hasNext}>
+                  다음
+                </Button>
+              </div>
+            </div>
+
+            <div className="overflow-hidden rounded-2xl border border-border/70 bg-background/35">
+              <div className="overflow-x-auto">
+                <Table className="min-w-[940px]">
+                  <TableHeader>
+                    <TableRow className="bg-card/90 hover:bg-card/90">
+                      {visibleColumns.map((column) => (
+                        <TableHead key={column.key} className="sticky top-0 bg-card/95 backdrop-blur-xl">
+                          {column.label}
+                        </TableHead>
+                      ))}
+                      <TableHead className="sticky top-0 bg-card/95 text-right backdrop-blur-xl">Open</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {loading ? (
+                      Array.from({ length: 6 }).map((_, index) => (
+                        <TableRow key={`loading-${index}`}>
+                          {visibleColumns.map((column) => (
+                            <TableCell key={`${column.key}-${index}`}>
+                              <div className="h-4 w-full animate-pulse rounded-full bg-muted/70" />
+                            </TableCell>
+                          ))}
+                          <TableCell className="text-right">
+                            <div className="ml-auto h-8 w-20 animate-pulse rounded-full bg-muted/70" />
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : items.length > 0 ? (
+                      items.map((item) => (
+                        <TableRow key={item.review_id}>
+                          {visibleColumns.map((column) => (
+                            <TableCell key={`${item.review_id}-${column.key}`}>{column.render(item)}</TableCell>
+                          ))}
+                          <TableCell className="text-right">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button variant="ghost" size="sm" onClick={() => setSelectedReview(item)}>
+                                  <Eye className="size-4" />
+                                  열기
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>원문/AI 요약 상세 보기</TooltipContent>
+                            </Tooltip>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={visibleColumns.length + 1} className="py-14 text-center text-sm text-muted-foreground">
+                          조회 조건에 맞는 리뷰가 없습니다.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <AnimatePresence>
+          {selectedReview ? (
+            <Dialog open={Boolean(selectedReview)} onOpenChange={(open) => !open && setSelectedReview(null)}>
+              <DialogContent>
+                <DialogHeader>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={PRIORITY_VARIANT[selectedReview.priority]}>{selectedReview.priority}</Badge>
+                    <Badge variant="outline">{selectedReview.category}</Badge>
+                    <Badge variant="outline">{selectedReview.rating} / 5</Badge>
+                  </div>
+                  <DialogTitle>{selectedReview.author || 'Unknown author'}</DialogTitle>
+                  <DialogDescription>
+                    {new Date(selectedReview.reviewed_at).toLocaleString()} · {selectedReview.app_store_id} · {selectedReview.country.toUpperCase()}
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="grid gap-4">
+                  <div className="rounded-2xl border border-border/70 bg-background/35 p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">AI summary</p>
+                    <p className="mt-3 text-base font-medium text-foreground">{selectedReview.summary}</p>
+                    <p className="mt-3 text-xs text-muted-foreground">
+                      confidence {selectedReview.confidence != null ? selectedReview.confidence.toFixed(2) : 'n/a'}
+                    </p>
+                  </div>
+
+                  <div className="rounded-2xl border border-border/70 bg-background/35 p-4">
+                    <p className="text-xs uppercase tracking-[0.22em] text-muted-foreground">Original review</p>
+                    <p className="mt-3 whitespace-pre-wrap text-sm text-foreground">{selectedReview.content || '본문 없음'}</p>
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+          ) : null}
+        </AnimatePresence>
       </div>
-    </section>
+    </TooltipProvider>
   );
 }
