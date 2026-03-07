@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getCategories, getIssues, getPrivateReviews } from '@/lib/api';
+import { getCategories, getPrivateReviews } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 import type { AppSelection } from '@/lib/appSelection';
 import type { PrivateReviewItem, PrivateReviewSortKey } from '@/types';
@@ -36,9 +36,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
   const [ratingFilter, setRatingFilter] = useState<'all' | '1' | '2' | '3' | '4' | '5'>(searchParams.get('rating') as any || 'all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | PrivateReviewItem['priority']>(searchParams.get('priority') as any || 'all');
   const [categoryFilter, setCategoryFilter] = useState<string>(searchParams.get('category') || 'all');
-  const [issueLabelFilter, setIssueLabelFilter] = useState<string>(searchParams.get('issueLabel') || 'all');
   const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
-  const [issueOptions, setIssueOptions] = useState<string[]>([]);
   const [sortKey, setSortKey] = useState<PrivateReviewSortKey>('reviewed_at');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
@@ -57,13 +55,19 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
     if (ratingFilter !== 'all') next.set('rating', ratingFilter);
     if (priorityFilter !== 'all') next.set('priority', priorityFilter);
     if (categoryFilter !== 'all') next.set('category', categoryFilter);
-    if (issueLabelFilter !== 'all') next.set('issueLabel', issueLabelFilter);
     setSearchParams(next, { replace: true });
-  }, [debouncedSearch, ratingFilter, priorityFilter, categoryFilter, issueLabelFilter, setSearchParams]);
+  }, [debouncedSearch, ratingFilter, priorityFilter, categoryFilter, setSearchParams]);
+
+  useEffect(() => {
+    const categoryFromQuery = searchParams.get('category');
+    if (categoryFromQuery && categoryFromQuery !== categoryFilter) {
+      setCategoryFilter(categoryFromQuery);
+    }
+  }, [searchParams, categoryFilter]);
 
   useEffect(() => {
     setPage(1);
-  }, [selection.appId, selection.country, limit, sortKey, sortDirection, ratingFilter, priorityFilter, categoryFilter, issueLabelFilter, debouncedSearch]);
+  }, [selection.appId, selection.country, limit, sortKey, sortDirection, ratingFilter, priorityFilter, categoryFilter, debouncedSearch]);
 
   useEffect(() => {
     let mounted = true;
@@ -77,18 +81,6 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
       .catch(() => {
         if (mounted) {
           setCategoryOptions([]);
-        }
-      });
-
-    getIssues(selection.appId, selection.country, 20)
-      .then((response) => {
-        if (mounted) {
-          setIssueOptions(response.data.map((item) => item.issue_label));
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setIssueOptions([]);
         }
       });
 
@@ -128,7 +120,6 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
           rating: ratingFilter === 'all' ? undefined : (Number(ratingFilter) as 1 | 2 | 3 | 4 | 5),
           priority: priorityFilter === 'all' ? undefined : priorityFilter,
           category: categoryFilter === 'all' ? undefined : categoryFilter,
-          issueLabel: issueLabelFilter === 'all' ? undefined : issueLabelFilter,
           search: debouncedSearch || undefined,
         });
 
@@ -167,15 +158,12 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
     ratingFilter,
     priorityFilter,
     categoryFilter,
-    issueLabelFilter,
     debouncedSearch,
   ]);
 
   const activeFilterCount = useMemo(
-    () =>
-      [debouncedSearch, ratingFilter !== 'all', priorityFilter !== 'all', categoryFilter !== 'all', issueLabelFilter !== 'all'].filter(Boolean)
-        .length,
-    [debouncedSearch, ratingFilter, priorityFilter, categoryFilter, issueLabelFilter],
+    () => [debouncedSearch, ratingFilter !== 'all', priorityFilter !== 'all', categoryFilter !== 'all'].filter(Boolean).length,
+    [debouncedSearch, ratingFilter, priorityFilter, categoryFilter],
   );
 
   if (!loggedIn) {
@@ -184,31 +172,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="원문 리뷰"
-        title="문제별로 원문 리뷰를 좁혀서 확인합니다."
-        description="문제, 유형, 우선순위, 별점 기준으로 리뷰를 줄여서 보고 원문을 확인합니다."
-        status={`${items.length.toLocaleString()}건 표시`}
-        meta={`${selection.appId} · ${selection.country.toUpperCase()}`}
-        actions={
-          <Button
-            variant="outline"
-            onClick={() => {
-              setSearchKeyword('');
-              setDebouncedSearch('');
-              setRatingFilter('all');
-              setPriorityFilter('all');
-              setCategoryFilter('all');
-              setIssueLabelFilter('all');
-              setSortKey('reviewed_at');
-              setSortDirection('desc');
-              setLimit(25);
-            }}
-          >
-            필터 초기화
-          </Button>
-        }
-      />
+      <PageHeader title="원문 리뷰" />
 
       {error ? (
         <Card className="border-destructive/20">
@@ -221,41 +185,18 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
           <div className="flex items-end justify-between gap-3">
             <div>
               <CardTitle className="text-xl">조회 조건</CardTitle>
-              <CardDescription>문제와 원인 중심으로 빠르게 좁혀보세요.</CardDescription>
+              <CardDescription>유형, 우선순위, 별점 기준으로 원문 리뷰를 좁혀봅니다.</CardDescription>
             </div>
             <Badge variant={activeFilterCount > 0 ? 'default' : 'secondary'}>{activeFilterCount}개 필터 적용</Badge>
           </div>
         </CardHeader>
-        <CardContent className="grid gap-4 lg:grid-cols-2 xl:grid-cols-6">
+        <CardContent className="grid gap-4 lg:grid-cols-2 xl:grid-cols-5">
           <div className="xl:col-span-2">
             <Label htmlFor="review-search">검색어</Label>
             <div className="relative mt-2">
               <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                id="review-search"
-                value={searchKeyword}
-                onChange={(event) => setSearchKeyword(event.target.value)}
-                className="pl-9"
-                placeholder="문제명, 요약, 본문 검색"
-              />
+              <Input id="review-search" value={searchKeyword} onChange={(event) => setSearchKeyword(event.target.value)} className="pl-9" placeholder="요약, 원문 검색" />
             </div>
-          </div>
-
-          <div>
-            <Label>문제</Label>
-            <Select value={issueLabelFilter} onValueChange={setIssueLabelFilter}>
-              <SelectTrigger className="mt-2">
-                <SelectValue placeholder="전체" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">전체</SelectItem>
-                {issueOptions.map((item) => (
-                  <SelectItem key={item} value={item}>
-                    {item}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
 
           <div>
@@ -307,7 +248,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
             </Select>
           </div>
 
-          <div className="grid gap-4 xl:col-span-6 xl:grid-cols-[180px_180px_120px_auto]">
+          <div className="grid gap-4 xl:col-span-5 xl:grid-cols-[180px_180px_120px_auto]">
             <div>
               <Label>정렬 기준</Label>
               <Select value={sortKey} onValueChange={(value) => setSortKey(value as PrivateReviewSortKey)}>
@@ -319,7 +260,6 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
                   <SelectItem value="rating">별점</SelectItem>
                   <SelectItem value="priority">우선순위</SelectItem>
                   <SelectItem value="category">유형</SelectItem>
-                  <SelectItem value="issue_label">문제</SelectItem>
                   <SelectItem value="summary">요약</SelectItem>
                 </SelectContent>
               </Select>
@@ -359,6 +299,21 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
               <Button variant="outline" onClick={() => setPage((previous) => previous + 1)} disabled={loading || !hasNext}>
                 다음
               </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSearchKeyword('');
+                  setDebouncedSearch('');
+                  setRatingFilter('all');
+                  setPriorityFilter('all');
+                  setCategoryFilter('all');
+                  setSortKey('reviewed_at');
+                  setSortDirection('desc');
+                  setLimit(25);
+                }}
+              >
+                초기화
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -366,34 +321,25 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
 
       <Card>
         <CardHeader>
-          <div className="flex items-end justify-between gap-3">
-            <div>
-              <CardTitle className="text-xl">원문 리뷰 목록</CardTitle>
-              <CardDescription>문제명과 요약을 기준으로 근거 리뷰를 확인합니다.</CardDescription>
-            </div>
-            <Badge variant="outline">페이지 {page}</Badge>
-          </div>
+          <CardTitle className="text-xl">원문 리뷰 목록</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
-              <table className="min-w-[1080px] text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="px-3 py-3">작성일</th>
-                  <th className="px-3 py-3">문제</th>
-                    <th className="px-3 py-3">유형</th>
-                    <th className="px-3 py-3">우선순위</th>
-                    <th className="px-3 py-3">별점</th>
-                    <th className="px-3 py-3">원인 요약</th>
-                    <th className="px-3 py-3">요약</th>
-                    <th className="px-3 py-3 text-right">상세</th>
-                  </tr>
+            <table className="min-w-[1080px] text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                  <th className="px-3 py-3">유형</th>
+                  <th className="px-3 py-3">별점</th>
+                  <th className="px-3 py-3">좌요약</th>
+                  <th className="px-3 py-3">우원문</th>
+                  <th className="px-3 py-3 text-right">상세</th>
+                </tr>
               </thead>
               <tbody>
                 {loading ? (
                   Array.from({ length: 6 }).map((_, index) => (
                     <tr key={index} className="border-b border-border/80">
-                      {Array.from({ length: 8 }).map((__, cellIndex) => (
+                      {Array.from({ length: 5 }).map((__, cellIndex) => (
                         <td key={cellIndex} className="px-3 py-4">
                           <div className="h-4 rounded-full bg-muted/70" />
                         </td>
@@ -404,20 +350,19 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
                   items.map((item) => (
                     <tr key={item.review_id} className="border-b border-border/80 transition-colors hover:bg-accent/50">
                       <td className="px-3 py-3">
-                        <p className="font-medium text-foreground">{new Date(item.reviewed_at).toLocaleDateString()}</p>
-                        <p className="mt-1 text-xs text-muted-foreground">{item.author || '작성자 미상'}</p>
-                      </td>
-                      <td className="px-3 py-3 font-semibold text-foreground">{item.issue_label}</td>
-                      <td className="px-3 py-3">
                         <Badge variant="outline">{item.category}</Badge>
                       </td>
                       <td className="px-3 py-3">
-                        <Badge variant={PRIORITY_VARIANT[item.priority]}>{item.priority}</Badge>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-foreground">{item.rating}</span>
+                          <Badge variant={PRIORITY_VARIANT[item.priority]}>{item.priority}</Badge>
+                        </div>
                       </td>
-                      <td className="px-3 py-3 font-semibold text-foreground">{item.rating}</td>
-                      <td className="px-3 py-3 text-muted-foreground">{item.reason_summary}</td>
                       <td className="px-3 py-3">
                         <p className="font-medium text-foreground">{item.summary}</p>
+                      </td>
+                      <td className="px-3 py-3">
+                        <p className="line-clamp-3 text-sm text-muted-foreground">{item.content}</p>
                       </td>
                       <td className="px-3 py-3 text-right">
                         <Button variant="outline" size="sm" onClick={() => setSelectedReview(item)}>
@@ -429,7 +374,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={8} className="px-3 py-12 text-center text-muted-foreground">
+                    <td colSpan={5} className="px-3 py-12 text-center text-muted-foreground">
                       조건에 맞는 리뷰가 없습니다.
                     </td>
                   </tr>
@@ -445,20 +390,20 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
           <DialogContent>
             <DialogHeader>
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant={PRIORITY_VARIANT[selectedReview.priority]}>{selectedReview.priority}</Badge>
                 <Badge variant="outline">{selectedReview.category}</Badge>
-                <Badge variant="outline">{selectedReview.issue_label}</Badge>
+                <Badge variant={PRIORITY_VARIANT[selectedReview.priority]}>{selectedReview.priority}</Badge>
+                <Badge variant="outline">{selectedReview.rating}점</Badge>
               </div>
               <DialogTitle>{selectedReview.summary}</DialogTitle>
               <DialogDescription>
-                {new Date(selectedReview.reviewed_at).toLocaleString()} · {selectedReview.author || '작성자 미상'} · {selectedReview.rating}점
+                {new Date(selectedReview.reviewed_at).toLocaleString()} · {selectedReview.author || '작성자 미상'}
               </DialogDescription>
             </DialogHeader>
 
             <div className="grid gap-4">
               <div className="rounded-xl border border-border bg-panel px-4 py-4">
-                <p className="text-xs font-medium text-muted-foreground">원인 요약</p>
-                <p className="mt-2 text-sm text-foreground">{selectedReview.reason_summary}</p>
+                <p className="text-xs font-medium text-muted-foreground">요약</p>
+                <p className="mt-2 text-sm text-foreground">{selectedReview.summary}</p>
               </div>
               <div className="rounded-xl border border-border bg-panel px-4 py-4">
                 <p className="text-xs font-medium text-muted-foreground">원문 리뷰</p>

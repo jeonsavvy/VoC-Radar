@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BellRing, LogIn, LogOut } from 'lucide-react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { AppSearchPicker } from '@/components/app-search-picker';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { getPublicAppMeta, getPublicApps, getRuns } from '@/lib/api';
 import type { AppSelection } from '@/lib/appSelection';
@@ -21,13 +20,6 @@ const NAV_ITEMS = [
   { to: '/analyze', label: '수집 실행' },
   { to: '/reviews', label: '원문 리뷰' },
 ] as const;
-
-const ROUTE_HINT: Record<string, string> = {
-  '/': '최근 30일 App Store 리뷰를 요약해 보여줍니다.',
-  '/analyze': 'App Store 리뷰 수집을 실행합니다.',
-  '/reviews': '원문 리뷰를 필터링해 확인합니다.',
-  '/login': '로그인 상태를 관리합니다.',
-};
 
 function formatRunStatus(run: RunSummaryItem | null) {
   if (!run) {
@@ -103,24 +95,17 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
     };
   }, []);
 
-  const currentNavLabel = useMemo(() => NAV_ITEMS.find((item) => item.to === location.pathname)?.label ?? '로그인', [location.pathname]);
-
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-background/90 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-start gap-3">
+            <div className="flex items-center gap-3">
               <img src="/assets/voc-radar-mark.svg" alt="VoC-Radar" className="size-11 rounded-xl border border-border bg-card p-1.5" />
-              <div>
-                <p className="text-sm font-semibold text-foreground">VoC-Radar</p>
-                <p className="mt-1 text-xs text-muted-foreground">App Store 리뷰 분석</p>
-              </div>
+              <p className="text-sm font-semibold text-foreground">VoC-Radar</p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline">{currentNavLabel}</Badge>
-              <Badge variant={loggedIn ? 'success' : 'secondary'}>{loggedIn ? '로그인됨' : '공개 모드'}</Badge>
               {loggedIn ? (
                 <Button variant="outline" onClick={onSignOut}>
                   <LogOut className="size-4" />
@@ -158,10 +143,9 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
 
               <AppSearchPicker
                 selection={selection}
-                appName={appName}
-                onSelect={(next, meta) => {
+                onSelect={(next) => {
                   onSelectionChange(next);
-                  setAppName(meta?.appName?.trim() || null);
+                  setAppName(null);
                 }}
               />
 
@@ -205,7 +189,6 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
                   최근 반영 상태
                 </div>
                 <p className="text-sm text-muted-foreground">{formatRunStatus(latestRun)}</p>
-                <p className="text-xs text-muted-foreground">{ROUTE_HINT[location.pathname] || ROUTE_HINT['/']}</p>
               </div>
             </div>
           </div>
@@ -216,7 +199,7 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
         <main className="pb-10">
           <Outlet />
         </main>
-        <footer className="border-t border-border pt-5 text-center text-sm text-muted-foreground">© VoC-Radar</footer>
+        <footer className="pt-5 text-center text-sm text-muted-foreground">© VoC-Radar</footer>
       </div>
     </div>
   );

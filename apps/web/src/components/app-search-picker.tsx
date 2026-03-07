@@ -7,8 +7,7 @@ import { cn } from '@/lib/utils';
 
 interface AppSearchPickerProps {
   selection: AppSelection;
-  appName?: string | null;
-  onSelect: (next: AppSelection, meta?: { appName?: string | null }) => void;
+  onSelect: (next: AppSelection) => void;
   className?: string;
   compact?: boolean;
 }

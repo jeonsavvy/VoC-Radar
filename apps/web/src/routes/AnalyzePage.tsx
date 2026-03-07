@@ -167,25 +167,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        eyebrow="수집 실행"
-        title="App Store 리뷰 수집 실행"
-        description="App Store ID를 입력해 리뷰 수집을 실행합니다."
-        status={jobs.length > 0 ? `최근 실행 ${jobs.length}건` : '실행 대기'}
-        meta={`${selection.appId} · ${selection.country.toUpperCase()}`}
-        actions={
-          loggedIn ? (
-            <Button variant="outline" onClick={onCancelAll} disabled={cancelingAll || cancelableCount === 0}>
-              <XCircle className="size-4" />
-              대기/실행 취소
-            </Button>
-          ) : (
-            <Button asChild>
-              <Link to="/login">로그인</Link>
-            </Button>
-          )
-        }
-      />
+      <PageHeader description="App Store ID를 입력해 리뷰 수집을 실행합니다." />
 
       {message ? (
         <Card className="border-primary/20">
@@ -202,13 +184,11 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
       <Card>
         <CardHeader>
           <CardTitle className="text-xl">수집 요청</CardTitle>
-          <CardDescription>앱 ID와 국가 코드를 입력한 뒤 실행합니다.</CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={onSubmit}>
             <AppSearchPicker
               selection={selection}
-              appName={appName}
               onSelect={(next) => {
                 onSelectionChange(next);
                 setAppName(null);
@@ -234,32 +214,39 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
               </div>
             ) : null}
 
-            <Button type="submit" size="lg" className="w-full" disabled={submitting}>
-              {submitting ? (
-                <>
-                  <LoaderCircle className="size-4 animate-spin" />
-                  요청 등록 중...
-                </>
+            <div className="flex gap-2">
+              <Button type="submit" size="lg" className="flex-1" disabled={submitting}>
+                {submitting ? (
+                  <>
+                    <LoaderCircle className="size-4 animate-spin" />
+                    요청 등록 중...
+                  </>
+                ) : (
+                  <>
+                    <Play className="size-4" />
+                    수집 실행
+                  </>
+                )}
+              </Button>
+              {loggedIn ? (
+                <Button variant="outline" size="lg" onClick={onCancelAll} disabled={cancelingAll || cancelableCount === 0}>
+                  <XCircle className="size-4" />
+                  취소
+                </Button>
               ) : (
-                <>
-                  <Play className="size-4" />
-                  수집 실행
-                </>
+                <Button asChild variant="outline" size="lg">
+                  <Link to="/login">로그인</Link>
+                </Button>
               )}
-            </Button>
+            </div>
           </form>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <div className="flex items-end justify-between gap-3">
-            <div>
-              <CardTitle className="text-xl">최근 실행 이력</CardTitle>
-              <CardDescription>내 계정 기준 최근 실행 상태입니다.</CardDescription>
-            </div>
-            <Badge variant="outline">{cancelableCount}건 취소 가능</Badge>
-          </div>
+          <CardTitle className="text-xl">최근 실행 이력</CardTitle>
+          <CardDescription>내 계정 기준 최근 실행 상태입니다.</CardDescription>
         </CardHeader>
         <CardContent>
           {loadingJobs ? (
