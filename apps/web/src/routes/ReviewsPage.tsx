@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Eye, Search } from 'lucide-react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Search } from 'lucide-react';
 import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getCategories, getPrivateReviews } from '@/lib/api';
+import { getCategories, getPrivateReviews, getPublicReviews } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 import type { AppSelection } from '@/lib/appSelection';
 import type { PrivateReviewItem, PrivateReviewSortKey } from '@/types';
@@ -26,16 +24,14 @@ const PRIORITY_VARIANT = {
 } as const;
 
 export function ReviewsPage({ loggedIn, selection }: Props) {
-  const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<PrivateReviewItem[]>([]);
-  const [selectedReview, setSelectedReview] = useState<PrivateReviewItem | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [searchKeyword, setSearchKeyword] = useState(searchParams.get('search') || '');
-  const [debouncedSearch, setDebouncedSearch] = useState(searchParams.get('search') || '');
-  const [ratingFilter, setRatingFilter] = useState<'all' | '1' | '2' | '3' | '4' | '5'>(searchParams.get('rating') as any || 'all');
-  const [priorityFilter, setPriorityFilter] = useState<'all' | PrivateReviewItem['priority']>(searchParams.get('priority') as any || 'all');
-  const [categoryFilter, setCategoryFilter] = useState<string>(searchParams.get('category') || 'all');
+  const [searchKeyword, setSearchKeyword] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [ratingFilter, setRatingFilter] = useState<'all' | '1' | '2' | '3' | '4' | '5'>('all');
+  const [priorityFilter, setPriorityFilter] = useState<'all' | PrivateReviewItem['priority']>('all');
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [categoryOptions, setCategoryOptions] = useState<string[]>([]);
   const [sortKey, setSortKey] = useState<PrivateReviewSortKey>('reviewed_at');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
@@ -48,22 +44,6 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
     const timer = setTimeout(() => setDebouncedSearch(searchKeyword.trim()), 250);
     return () => clearTimeout(timer);
   }, [searchKeyword]);
-
-  useEffect(() => {
-    const next = new URLSearchParams();
-    if (debouncedSearch) next.set('search', debouncedSearch);
-    if (ratingFilter !== 'all') next.set('rating', ratingFilter);
-    if (priorityFilter !== 'all') next.set('priority', priorityFilter);
-    if (categoryFilter !== 'all') next.set('category', categoryFilter);
-    setSearchParams(next, { replace: true });
-  }, [debouncedSearch, ratingFilter, priorityFilter, categoryFilter, setSearchParams]);
-
-  useEffect(() => {
-    const categoryFromQuery = searchParams.get('category');
-    if (categoryFromQuery && categoryFromQuery !== categoryFilter) {
-      setCategoryFilter(categoryFromQuery);
-    }
-  }, [searchParams, categoryFilter]);
 
   useEffect(() => {
     setPage(1);
@@ -92,26 +72,13 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
   useEffect(() => {
     let mounted = true;
 
-    if (!loggedIn) {
-      setItems([]);
-      setLoading(false);
-      setHasNext(false);
-      return () => {
-        mounted = false;
-      };
-    }
-
     const load = async () => {
       setLoading(true);
       setError(null);
       const requestId = latestRequestRef.current + 1;
       latestRequestRef.current = requestId;
       try {
-        const token = await getAccessToken();
-        if (!token) {
-          throw new Error('인증 토큰을 찾을 수 없습니다. 다시 로그인하세요.');
-        }
-        const response = await getPrivateReviews(selection.appId, token, {
+        const options = {
           country: selection.country,
           page,
           limit,
@@ -121,11 +88,22 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
           priority: priorityFilter === 'all' ? undefined : priorityFilter,
           category: categoryFilter === 'all' ? undefined : categoryFilter,
           search: debouncedSearch || undefined,
-        });
+        };
+
+        const response = loggedIn
+          ? await (async () => {
+              const token = await getAccessToken();
+              if (!token) {
+                throw new Error('인증 토큰을 찾을 수 없습니다. 다시 로그인하세요.');
+              }
+              return getPrivateReviews(selection.appId, token, options);
+            })()
+          : await getPublicReviews(selection.appId, options);
 
         if (!mounted || requestId !== latestRequestRef.current) {
           return;
         }
+
         setItems(response.data);
         setHasNext(response.hasNext);
       } catch (err) {
@@ -165,10 +143,6 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
     () => [debouncedSearch, ratingFilter !== 'all', priorityFilter !== 'all', categoryFilter !== 'all'].filter(Boolean).length,
     [debouncedSearch, ratingFilter, priorityFilter, categoryFilter],
   );
-
-  if (!loggedIn) {
-    return <Navigate to="/login" replace />;
-  }
 
   return (
     <div className="space-y-6">
@@ -319,100 +293,53 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-xl">원문 리뷰 목록</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="min-w-[1080px] text-sm">
-              <thead>
-                <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                  <th className="px-3 py-3">유형</th>
-                  <th className="px-3 py-3">별점</th>
-                  <th className="px-3 py-3">좌요약</th>
-                  <th className="px-3 py-3">우원문</th>
-                  <th className="px-3 py-3 text-right">상세</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  Array.from({ length: 6 }).map((_, index) => (
-                    <tr key={index} className="border-b border-border/80">
-                      {Array.from({ length: 5 }).map((__, cellIndex) => (
-                        <td key={cellIndex} className="px-3 py-4">
-                          <div className="h-4 rounded-full bg-muted/70" />
-                        </td>
-                      ))}
-                    </tr>
-                  ))
-                ) : items.length > 0 ? (
-                  items.map((item) => (
-                    <tr key={item.review_id} className="border-b border-border/80 transition-colors hover:bg-accent/50">
-                      <td className="px-3 py-3">
-                        <Badge variant="outline">{item.category}</Badge>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-semibold text-foreground">{item.rating}</span>
-                          <Badge variant={PRIORITY_VARIANT[item.priority]}>{item.priority}</Badge>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3">
-                        <p className="font-medium text-foreground">{item.summary}</p>
-                      </td>
-                      <td className="px-3 py-3">
-                        <p className="line-clamp-3 text-sm text-muted-foreground">{item.content}</p>
-                      </td>
-                      <td className="px-3 py-3 text-right">
-                        <Button variant="outline" size="sm" onClick={() => setSelectedReview(item)}>
-                          <Eye className="size-4" />
-                          보기
-                        </Button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={5} className="px-3 py-12 text-center text-muted-foreground">
-                      조건에 맞는 리뷰가 없습니다.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="grid gap-4">
+        {loading
+          ? Array.from({ length: 4 }).map((_, index) => (
+              <Card key={index}>
+                <CardContent className="space-y-4 p-6">
+                  <div className="h-4 w-28 animate-pulse rounded-full bg-muted/70" />
+                  <div className="h-8 w-48 animate-pulse rounded-full bg-muted/70" />
+                  <div className="h-24 rounded-xl bg-muted/70" />
+                  <div className="h-24 rounded-xl bg-muted/70" />
+                </CardContent>
+              </Card>
+            ))
+          : items.length > 0
+            ? items.map((item) => (
+                <Card key={item.review_id}>
+                  <CardContent className="space-y-4 p-6">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="outline">{item.category}</Badge>
+                      <Badge variant={PRIORITY_VARIANT[item.priority]}>{item.priority}</Badge>
+                      <Badge variant="outline">{item.rating}점</Badge>
+                    </div>
 
-      {selectedReview ? (
-        <Dialog open={Boolean(selectedReview)} onOpenChange={(open) => !open && setSelectedReview(null)}>
-          <DialogContent>
-            <DialogHeader>
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">{selectedReview.category}</Badge>
-                <Badge variant={PRIORITY_VARIANT[selectedReview.priority]}>{selectedReview.priority}</Badge>
-                <Badge variant="outline">{selectedReview.rating}점</Badge>
-              </div>
-              <DialogTitle>{selectedReview.summary}</DialogTitle>
-              <DialogDescription>
-                {new Date(selectedReview.reviewed_at).toLocaleString()} · {selectedReview.author || '작성자 미상'}
-              </DialogDescription>
-            </DialogHeader>
+                    <div className="space-y-1">
+                      <h3 className="text-2xl font-semibold tracking-[-0.03em] text-foreground">{item.summary}</h3>
+                      <p className="text-sm text-muted-foreground">
+                        {new Date(item.reviewed_at).toLocaleString()} · {item.author || '작성자 미상'}
+                      </p>
+                    </div>
 
-            <div className="grid gap-4">
-              <div className="rounded-xl border border-border bg-panel px-4 py-4">
-                <p className="text-xs font-medium text-muted-foreground">요약</p>
-                <p className="mt-2 text-sm text-foreground">{selectedReview.summary}</p>
-              </div>
-              <div className="rounded-xl border border-border bg-panel px-4 py-4">
-                <p className="text-xs font-medium text-muted-foreground">원문 리뷰</p>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">{selectedReview.content}</p>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-      ) : null}
+                    <div className="rounded-xl border border-border bg-panel px-4 py-4">
+                      <p className="text-xs font-medium text-muted-foreground">요약</p>
+                      <p className="mt-2 text-sm text-foreground">{item.summary}</p>
+                    </div>
+
+                    <div className="rounded-xl border border-border bg-panel px-4 py-4">
+                      <p className="text-xs font-medium text-muted-foreground">원문 리뷰</p>
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-foreground">{item.content}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            : (
+              <Card>
+                <CardContent className="p-10 text-center text-sm text-muted-foreground">조건에 맞는 리뷰가 없습니다.</CardContent>
+              </Card>
+            )}
+      </div>
     </div>
   );
 }

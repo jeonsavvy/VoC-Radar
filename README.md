@@ -120,6 +120,7 @@ npm run dev:web
 - `GET /api/public/categories?appId&country&from&to`
 - `GET /api/public/dashboard?appId&country&from&to`
 - `GET /api/public/issues?appId&country&from&to&limit`
+- `GET /api/public/reviews?appId&country&page&limit&sortBy&sortDirection&rating&priority&category&search`
 - `GET /api/public/apps/search?q&limit`
 - `GET /api/public/runs?appId&country&limit`
 

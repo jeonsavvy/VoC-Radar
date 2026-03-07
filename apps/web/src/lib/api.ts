@@ -185,6 +185,39 @@ export async function getPrivateReviews(
   });
 }
 
+export async function getPublicReviews(
+  appId: string,
+  options?: {
+    country?: string;
+    page?: number;
+    limit?: number;
+    sortBy?: PrivateReviewSortKey;
+    sortDirection?: 'asc' | 'desc';
+    rating?: 1 | 2 | 3 | 4 | 5;
+    priority?: Priority;
+    category?: string;
+    search?: string;
+    cursor?: string;
+  },
+) {
+  const params = new URLSearchParams({
+    appId,
+    country: options?.country || 'kr',
+    limit: String(options?.limit ?? 25),
+    page: String(options?.page ?? 1),
+  });
+
+  if (options?.sortBy) params.set('sortBy', options.sortBy);
+  if (options?.sortDirection) params.set('sortDirection', options.sortDirection);
+  if (options?.rating) params.set('rating', String(options.rating));
+  if (options?.priority) params.set('priority', options.priority);
+  if (options?.category?.trim()) params.set('category', options.category.trim());
+  if (options?.search?.trim()) params.set('search', options.search.trim());
+  if (options?.cursor) params.set('cursor', options.cursor);
+
+  return fetchJson<PrivateReviewsResponse>(`/api/public/reviews?${params.toString()}`);
+}
+
 export async function getPublicApps(limit = 20) {
   const params = new URLSearchParams({ limit: String(limit) });
   return fetchJson<{ data: PublicAppItem[] }>(`/api/public/apps?${params.toString()}`);

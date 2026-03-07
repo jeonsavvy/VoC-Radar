@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BellRing, LogIn, LogOut } from 'lucide-react';
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet } from 'react-router-dom';
 import { AppSearchPicker } from '@/components/app-search-picker';
 import { Button } from '@/components/ui/button';
 import { getPublicAppMeta, getPublicApps, getRuns } from '@/lib/api';
@@ -17,8 +17,8 @@ type Props = {
 
 const NAV_ITEMS = [
   { to: '/', label: '대시보드' },
-  { to: '/analyze', label: '수집 실행' },
   { to: '/reviews', label: '원문 리뷰' },
+  { to: '/analyze', label: '수집 실행' },
 ] as const;
 
 function formatRunStatus(run: RunSummaryItem | null) {
@@ -38,7 +38,6 @@ function formatRunStatus(run: RunSummaryItem | null) {
 }
 
 export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Props) {
-  const location = useLocation();
   const [appName, setAppName] = useState<string | null>(null);
   const [recentApps, setRecentApps] = useState<PublicAppItem[]>([]);
   const [latestRun, setLatestRun] = useState<RunSummaryItem | null>(null);

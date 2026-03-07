@@ -1762,6 +1762,138 @@ async function handleInternalJobStatus(env: Env, request: Request, rawBody: stri
   return jsonResponse(env, 200, { ok: true, data });
 }
 
+function buildReviewFeedFilters(input: {
+  appId: string;
+  country: string;
+  limit: number;
+  page: number;
+  sortBy: PrivateReviewSortBy;
+  sortDirection: SortDirection;
+  rating: number | null;
+  priority: string | null;
+  category: string | null;
+  issueLabel: string | null;
+  search: string | null;
+  cursor: string | null;
+}) {
+  const queryLimit = Math.min(input.limit + 1, 101);
+  const offset = Math.max(0, (input.page - 1) * input.limit);
+  const order =
+    input.sortBy === 'reviewed_at' ? `${input.sortBy}.${input.sortDirection}` : `${input.sortBy}.${input.sortDirection},reviewed_at.desc`;
+
+  const filters = new URLSearchParams({
+    app_store_id: `eq.${input.appId}`,
+    country: `eq.${input.country}`,
+    order,
+    limit: String(queryLimit),
+  });
+
+  if (input.cursor) {
+    filters.set('reviewed_at', `lt.${input.cursor}`);
+  } else {
+    filters.set('offset', String(offset));
+  }
+
+  if (input.rating != null) {
+    filters.set('rating', `eq.${input.rating}`);
+  }
+  if (input.priority) {
+    filters.set('priority', `eq.${input.priority}`);
+  }
+  if (input.category) {
+    filters.set('category', `eq.${input.category}`);
+  }
+  if (input.issueLabel) {
+    filters.set('issue_label', `eq.${input.issueLabel}`);
+  }
+  if (input.search) {
+    const pattern = `*${input.search}*`;
+    filters.set(
+      'or',
+      `(author.ilike.${pattern},summary.ilike.${pattern},category.ilike.${pattern},issue_label.ilike.${pattern},reason_summary.ilike.${pattern},action_hint.ilike.${pattern},content.ilike.${pattern})`,
+    );
+  }
+
+  return filters;
+}
+
+function normalizeReviewFeedRows(rows: Array<Record<string, unknown>>, limit: number) {
+  let hasNext = rows.length > limit;
+  let slicedRows = rows;
+  if (hasNext) {
+    slicedRows = rows.slice(0, limit);
+  }
+
+  const normalizedRows = slicedRows.map((row) => {
+    const summary = String(row.summary ?? '');
+    const content = String(row.content ?? '');
+    const normalizedCategory = normalizeVocCategory(row.category, summary, content);
+    const issue_label = normalizeIssueLabel(row.issue_label, normalizedCategory, summary);
+    return {
+      ...row,
+      category: normalizedCategory,
+      issue_label,
+      reason_summary: normalizeReasonSummary(row.reason_summary, summary),
+      action_hint: normalizeActionHint(row.action_hint, normalizedCategory),
+      priority: derivePriorityValue(Number(row.rating || 0), normalizedCategory, row.priority),
+    };
+  });
+
+  const last = normalizedRows[normalizedRows.length - 1] as { reviewed_at?: string } | undefined;
+  return {
+    data: normalizedRows,
+    hasNext,
+    nextCursor: hasNext ? (last?.reviewed_at ?? null) : null,
+  };
+}
+
+async function handlePublicReviews(env: Env, request: Request) {
+  if (!boolFromEnv(env.DETAIL_VIEW_ENABLED, true)) {
+    return jsonResponse(env, 403, { error: 'detail view disabled' });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const appId = normalizeAppStoreId(searchParams.get('appId'));
+  const country = normalizeCountry(searchParams.get('country'));
+  const limit = clampLimit(searchParams.get('limit'));
+  const page = parsePage(searchParams.get('page'));
+  const sortBy = parsePrivateReviewSortBy(searchParams.get('sortBy'));
+  const sortDirection = parseSortDirection(searchParams.get('sortDirection'));
+  const rating = parseRatingFilter(searchParams.get('rating'));
+  const priority = normalizePriorityFilter(searchParams.get('priority'));
+  const category = normalizeOptionalText(searchParams.get('category'), 120);
+  const issueLabel = normalizeOptionalText(searchParams.get('issueLabel'), 120);
+  const search = normalizeSearchKeyword(searchParams.get('search'));
+  const cursor = searchParams.get('cursor');
+
+  if (!appId) {
+    return badRequest(env, 'appId must be numeric');
+  }
+
+  const filters = buildReviewFeedFilters({
+    appId,
+    country,
+    limit,
+    page,
+    sortBy,
+    sortDirection,
+    rating,
+    priority,
+    category,
+    issueLabel,
+    search,
+    cursor,
+  });
+
+  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, `/rest/v1/private_review_feed?${filters.toString()}`, {
+    method: 'GET',
+    idempotent: true,
+  });
+
+  const normalized = normalizeReviewFeedRows(rows, limit);
+  return jsonResponse(env, 200, { data: normalized.data, page, limit, hasNext: normalized.hasNext, nextCursor: normalized.nextCursor });
+}
+
 async function handlePrivateReviews(env: Env, request: Request) {
   if (!boolFromEnv(env.DETAIL_VIEW_ENABLED, true)) {
     return jsonResponse(env, 403, { error: 'detail view disabled' });
@@ -1795,44 +1927,20 @@ async function handlePrivateReviews(env: Env, request: Request) {
     return badRequest(env, 'appId must be numeric');
   }
 
-  const queryLimit = Math.min(limit + 1, 101);
-  const offset = Math.max(0, (page - 1) * limit);
-
-  const order =
-    sortBy === 'reviewed_at' ? `${sortBy}.${sortDirection}` : `${sortBy}.${sortDirection},reviewed_at.desc`;
-
-  const filters = new URLSearchParams({
-    app_store_id: `eq.${appId}`,
-    country: `eq.${country}`,
-    order,
-    limit: String(queryLimit),
+  const filters = buildReviewFeedFilters({
+    appId,
+    country,
+    limit,
+    page,
+    sortBy,
+    sortDirection,
+    rating,
+    priority,
+    category,
+    issueLabel,
+    search,
+    cursor,
   });
-
-  if (cursor) {
-    filters.set('reviewed_at', `lt.${cursor}`);
-  } else {
-    filters.set('offset', String(offset));
-  }
-
-  if (rating != null) {
-    filters.set('rating', `eq.${rating}`);
-  }
-  if (priority) {
-    filters.set('priority', `eq.${priority}`);
-  }
-  if (category) {
-    filters.set('category', `eq.${category}`);
-  }
-  if (issueLabel) {
-    filters.set('issue_label', `eq.${issueLabel}`);
-  }
-  if (search) {
-    const pattern = `*${search}*`;
-    filters.set(
-      'or',
-      `(author.ilike.${pattern},summary.ilike.${pattern},category.ilike.${pattern},issue_label.ilike.${pattern},reason_summary.ilike.${pattern},action_hint.ilike.${pattern},content.ilike.${pattern})`,
-    );
-  }
 
   let data: Array<Record<string, unknown>> = [];
   try {
@@ -1853,32 +1961,14 @@ async function handlePrivateReviews(env: Env, request: Request) {
     throw error;
   }
 
-  let hasNext = false;
-  let rows = data;
-  hasNext = rows.length > limit;
-  if (hasNext) {
-    rows = rows.slice(0, limit);
-  }
-
-  rows = rows.map((row) => {
-    const summary = String(row.summary ?? '');
-    const content = String(row.content ?? '');
-    const normalizedCategory = normalizeVocCategory(row.category, summary, content);
-    const issue_label = normalizeIssueLabel(row.issue_label, normalizedCategory, summary);
-    return {
-      ...row,
-      category: normalizedCategory,
-      issue_label,
-      reason_summary: normalizeReasonSummary(row.reason_summary, summary),
-      action_hint: normalizeActionHint(row.action_hint, normalizedCategory),
-      priority: derivePriorityValue(Number(row.rating || 0), normalizedCategory, row.priority),
-    };
+  const normalized = normalizeReviewFeedRows(data, limit);
+  return jsonResponse(env, 200, {
+    data: normalized.data,
+    page,
+    limit,
+    hasNext: normalized.hasNext,
+    nextCursor: normalized.nextCursor,
   });
-
-  const last = rows[rows.length - 1] as { reviewed_at?: string } | undefined;
-  const nextCursor = hasNext ? (last?.reviewed_at ?? null) : null;
-
-  return jsonResponse(env, 200, { data: rows, page, limit, hasNext, nextCursor });
 }
 
 async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: string) {
@@ -2200,6 +2290,10 @@ export default {
 
       if (request.method === 'GET' && url.pathname === '/api/public/issues') {
         return await handlePublicIssues(env, request);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/public/reviews') {
+        return await handlePublicReviews(env, request);
       }
 
       if (request.method === 'GET' && url.pathname === '/api/public/apps') {
