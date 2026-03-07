@@ -4,16 +4,16 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all duration-200 ease-out outline-none disabled:pointer-events-none disabled:opacity-45 [&_svg]:pointer-events-none [&_svg:not([class*=size-])]:size-4 shrink-0 [&_svg]:shrink-0 focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+  'inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all duration-200 ease-out outline-none disabled:pointer-events-none disabled:opacity-45 [&_svg]:pointer-events-none [&_svg:not([class*=size-])]:size-4 shrink-0 [&_svg]:shrink-0 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
   {
     variants: {
       variant: {
         default:
-          'bg-primary text-primary-foreground shadow-sm hover:bg-primary/92 active:translate-y-px',
+          'bg-primary text-primary-foreground shadow-sm hover:bg-primary/92',
         secondary:
           'bg-secondary text-secondary-foreground hover:bg-secondary/85',
         outline:
-          'border border-border/80 bg-background/60 text-foreground hover:border-primary/40 hover:bg-accent/80',
+          'border border-border bg-background text-foreground hover:border-primary/35 hover:bg-accent/80',
         ghost: 'text-muted-foreground hover:bg-accent/80 hover:text-foreground',
         destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/92',
       },

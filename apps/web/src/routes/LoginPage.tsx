@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from 'react';
-import { KeyRound, MailCheck, ShieldAlert, Sparkles } from 'lucide-react';
+import { KeyRound, MailCheck } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -34,14 +34,12 @@ export function LoginPage({ onSignedIn }: Props) {
 
     try {
       if (!hasSupabaseConfig) {
-        throw new Error(
-          'Supabase 설정(VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)이 필요합니다. Cloudflare Pages > 설정 > 환경 변수에 두 값을 추가하고 재배포하세요.',
-        );
+        throw new Error('Supabase 환경변수가 없어 로그인을 사용할 수 없습니다. Pages 환경변수를 먼저 설정하세요.');
       }
 
       if (mode === 'signup') {
         await signUpWithPassword(email, password);
-        setMessage('회원가입이 완료되었습니다. 이메일 인증 링크를 확인한 뒤 로그인하세요.');
+        setMessage('회원가입이 완료되었습니다. 이메일 인증 후 로그인하세요.');
         setSearchParams({});
         return;
       }
@@ -50,7 +48,7 @@ export function LoginPage({ onSignedIn }: Props) {
       await onSignedIn();
       navigate('/reviews');
     } catch (err) {
-      setError(err instanceof Error ? err.message : mode === 'signup' ? '회원가입 실패' : '로그인 실패');
+      setError(err instanceof Error ? err.message : '로그인 처리 중 오류가 발생했습니다.');
     } finally {
       setLoading(false);
     }
@@ -59,62 +57,49 @@ export function LoginPage({ onSignedIn }: Props) {
   return (
     <div className="space-y-6">
       <PageHeader
-        eyebrow="Access Control"
-        title="상세 리뷰와 분석 요청 권한을 안전하게 엽니다."
-        description="Supabase Auth를 기반으로 비공개 리뷰 피드와 파이프라인 제어 권한을 분리했습니다. 이메일 인증이 완료된 계정만 상세 영역에 접근할 수 있습니다."
-        status={mode === 'signup' ? 'Sign up' : 'Sign in'}
+        eyebrow="로그인"
+        title="상세 리뷰와 실행 권한을 확인합니다."
+        description="공개 대시보드는 로그인 없이 볼 수 있고, 원문 리뷰와 수집 실행은 인증된 계정에서만 사용할 수 있습니다."
+        status={mode === 'signup' ? '회원가입' : '로그인'}
       />
 
-      <div className="grid gap-4 xl:grid-cols-[0.92fr_1.08fr]">
+      <div className="grid gap-4 xl:grid-cols-[0.86fr_1.14fr]">
         <Card>
           <CardHeader>
-            <CardTitle className="text-xl">권한 가이드</CardTitle>
-            <CardDescription>현재 프로젝트의 인증 흐름과 운영상 주의사항입니다.</CardDescription>
+            <CardTitle className="text-xl">권한 안내</CardTitle>
+            <CardDescription>로그인 후 사용할 수 있는 기능을 간단히 정리했습니다.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="rounded-2xl border border-border/70 bg-background/35 p-4">
+            <div className="rounded-xl border border-border bg-panel px-4 py-4">
               <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <KeyRound className="size-4 text-primary" />
-                Private feed는 인증 토큰이 있어야 열립니다.
+                원문 리뷰 / 수집 실행 권한
               </p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                `/api/private/reviews`, `/api/private/jobs`, `/api/private/jobs/cancel`은 모두 access token이 필요합니다.
-              </p>
+              <p className="mt-2 text-sm text-muted-foreground">문제별 원문 리뷰 조회, 수집 실행, 실행 이력 관리는 로그인 후 사용할 수 있습니다.</p>
             </div>
-            <div className="rounded-2xl border border-border/70 bg-background/35 p-4">
+            <div className="rounded-xl border border-border bg-panel px-4 py-4">
               <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
                 <MailCheck className="size-4 text-primary" />
-                이메일 인증 미완료 계정은 자동 로그아웃됩니다.
+                이메일 인증 필요
               </p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                회원가입 직후 반드시 메일함의 인증 링크를 먼저 눌러주세요.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-border/70 bg-background/35 p-4">
-              <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <Sparkles className="size-4 text-primary" />
-                공개 리포트는 로그인 없이도 확인할 수 있습니다.
-              </p>
-              <p className="mt-2 text-sm text-muted-foreground">
-                지표를 먼저 보고, 이상 신호가 보일 때만 로그인해 상세 근거를 읽는 흐름을 권장합니다.
-              </p>
+              <p className="mt-2 text-sm text-muted-foreground">회원가입 후 이메일 인증을 마쳐야 상세 화면 접근이 가능합니다.</p>
             </div>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-3">
               <div>
                 <CardTitle className="text-xl">계정 인증</CardTitle>
-                <CardDescription>로그인/회원가입 모드를 전환하며 같은 폼을 사용합니다.</CardDescription>
+                <CardDescription>같은 폼에서 로그인과 회원가입을 전환합니다.</CardDescription>
               </div>
               <Badge variant={hasSupabaseConfig ? 'success' : 'destructive'}>
-                {hasSupabaseConfig ? 'Supabase ready' : 'Config missing'}
+                {hasSupabaseConfig ? '설정 완료' : '설정 필요'}
               </Badge>
             </div>
           </CardHeader>
-          <CardContent className="space-y-5">
+          <CardContent className="space-y-4">
             <Tabs value={mode} onValueChange={(value) => setSearchParams(value === 'signup' ? { mode: 'signup' } : {})}>
               <TabsList>
                 <TabsTrigger value="login">로그인</TabsTrigger>
@@ -123,60 +108,37 @@ export function LoginPage({ onSignedIn }: Props) {
               <TabsContent value={mode} className="pt-5">
                 <form className="grid gap-4" onSubmit={onSubmit}>
                   <div className="space-y-2">
-                    <Label htmlFor="auth-email">이메일</Label>
+                    <Label htmlFor="login-email">이메일</Label>
                     <Input
-                      id="auth-email"
+                      id="login-email"
                       type="email"
-                      required
                       autoComplete="email"
                       value={email}
                       onChange={(event) => setEmail(event.target.value)}
+                      required
                     />
                   </div>
-
                   <div className="space-y-2">
-                    <Label htmlFor="auth-password">비밀번호</Label>
+                    <Label htmlFor="login-password">비밀번호</Label>
                     <Input
-                      id="auth-password"
+                      id="login-password"
                       type="password"
-                      required
                       autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
                       value={password}
                       onChange={(event) => setPassword(event.target.value)}
+                      required
                     />
                   </div>
 
-                  <Button type="submit" size="lg" disabled={loading}>
-                    {loading ? (mode === 'signup' ? '가입 처리 중...' : '로그인 중...') : mode === 'signup' ? '회원가입' : '로그인'}
+                  <Button type="submit" size="lg" className="w-full" disabled={loading}>
+                    {loading ? (mode === 'signup' ? '회원가입 처리 중...' : '로그인 중...') : mode === 'signup' ? '회원가입' : '로그인'}
                   </Button>
                 </form>
               </TabsContent>
             </Tabs>
 
-            {message ? (
-              <div className="rounded-2xl border border-primary/20 bg-primary/8 p-4 text-sm text-foreground">{message}</div>
-            ) : null}
-
-            {error ? (
-              <div className="rounded-2xl border border-destructive/25 bg-destructive/10 p-4 text-sm text-destructive" role="alert">
-                {error}
-              </div>
-            ) : null}
-
-            {!hasSupabaseConfig ? (
-              <div className="rounded-2xl border border-warning/25 bg-warning/10 p-4 text-sm text-muted-foreground">
-                <p className="flex items-center gap-2 font-semibold text-foreground">
-                  <ShieldAlert className="size-4 text-warning" />
-                  로그인이 비활성화됨: Supabase 환경변수가 누락되었습니다.
-                </p>
-                <ul className="mt-3 list-disc space-y-1 pl-5">
-                  <li>Cloudflare Pages 프로젝트 → 설정 → 환경 변수</li>
-                  <li><code>VITE_SUPABASE_URL</code> 추가</li>
-                  <li><code>VITE_SUPABASE_ANON_KEY</code> 추가</li>
-                  <li>저장 후 재배포</li>
-                </ul>
-              </div>
-            ) : null}
+            {message ? <div className="rounded-xl border border-primary/20 bg-primary/8 px-4 py-3 text-sm text-foreground">{message}</div> : null}
+            {error ? <div className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div> : null}
           </CardContent>
         </Card>
       </div>

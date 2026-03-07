@@ -5,7 +5,7 @@ export function Card({ className, ...props }: React.ComponentProps<'div'>) {
   return (
     <div
       className={cn(
-        'surface-grid noise-mask relative overflow-hidden rounded-xl border border-border/70 bg-card/85 shadow-sm backdrop-blur-sm',
+        'relative overflow-hidden rounded-xl border border-border bg-card shadow-sm',
         className,
       )}
       {...props}

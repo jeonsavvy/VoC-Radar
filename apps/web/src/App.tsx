@@ -12,7 +12,7 @@ const ReviewsPage = lazy(() => import('@/routes/ReviewsPage').then((module) => (
 
 function RouteFallback() {
   return (
-    <div className="rounded-[1.5rem] border border-border/70 bg-card/75 p-6 text-sm text-muted-foreground shadow-sm backdrop-blur-xl">
+    <div className="rounded-[1rem] border border-border bg-card p-6 text-sm text-muted-foreground shadow-sm">
       화면을 준비하는 중입니다...
     </div>
   );

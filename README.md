@@ -48,6 +48,7 @@ npm install
 5. `supabase/migrations/202603050002_critical_rule_and_category_normalization.sql`
 6. `supabase/migrations/202603050003_category_rebucket_5way.sql`
 7. `supabase/migrations/202603050004_llm_autonomous_decision.sql`
+8. `supabase/migrations/202603070001_issue_action_read_models.sql`
 
 ### 3) Worker 환경변수
 
@@ -117,10 +118,14 @@ npm run dev:web
 - `GET /api/public/overview?appId&country&from&to`
 - `GET /api/public/trends?appId&country&from&to`
 - `GET /api/public/categories?appId&country&from&to`
+- `GET /api/public/dashboard?appId&country&from&to`
+- `GET /api/public/issues?appId&country&from&to&limit`
+- `GET /api/public/apps/search?q&limit`
+- `GET /api/public/runs?appId&country&limit`
 
 ### Private (Auth 필요)
 
-- `GET /api/private/reviews?appId&country&page&limit&sortBy&sortDirection&rating&priority&category&search`
+- `GET /api/private/reviews?appId&country&page&limit&sortBy&sortDirection&rating&priority&category&issueLabel&search`
 - `GET /api/private/jobs?limit`
 - `POST /api/private/jobs`
 - `POST /api/private/jobs/cancel`

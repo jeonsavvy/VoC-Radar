@@ -18,6 +18,7 @@
 7. Worker가 Supabase(`reviews`, `review_ai`, `pipeline_runs`)에 upsert한다.
 8. publish 이벤트에서 Worker 캐시 버전을 갱신한다.
 9. 프론트는 공개/비공개 API를 통해 결과를 조회한다.
+10. 공개 대시보드는 문제(issue)·원인(reason)·액션(action) read model을 조합해 보여준다.
 
 ## 보안 기본값
 

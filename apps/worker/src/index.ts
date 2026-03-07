@@ -49,7 +49,7 @@ function getCorsHeaders(env: Env) {
   return {
     'access-control-allow-origin': env.CORS_ORIGIN || '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
-    'access-control-allow-headers': 'content-type,authorization,x-voc-signature,x-voc-timestamp',
+    'access-control-allow-headers': 'content-type,authorization,x-voc-signature,x-voc-timestamp,x-voc-token,x-idempotency-key',
     'access-control-max-age': '86400',
   };
 }
@@ -341,8 +341,18 @@ function parsePage(rawValue: string | null, fallback = 1, max = 1000) {
   return Math.max(1, Math.min(max, Math.floor(parsed)));
 }
 
-type PrivateReviewSortBy = 'reviewed_at' | 'author' | 'rating' | 'priority' | 'category' | 'summary';
+type PrivateReviewSortBy = 'reviewed_at' | 'author' | 'rating' | 'priority' | 'category' | 'issue_label' | 'summary';
 type SortDirection = 'asc' | 'desc';
+type NormalizedPriority = 'Critical' | 'High' | 'Normal';
+type NormalizedCategory = '버그 및 성능' | '계정 및 결제' | '콘텐츠 및 운영 정책' | '기능 및 사용성' | '긍정 리뷰 및 기타';
+
+const ALLOWED_CATEGORIES: NormalizedCategory[] = [
+  '버그 및 성능',
+  '계정 및 결제',
+  '콘텐츠 및 운영 정책',
+  '기능 및 사용성',
+  '긍정 리뷰 및 기타',
+];
 
 function parsePrivateReviewSortBy(rawValue: string | null): PrivateReviewSortBy {
   const normalized = (rawValue || '').trim().toLowerCase();
@@ -352,6 +362,7 @@ function parsePrivateReviewSortBy(rawValue: string | null): PrivateReviewSortBy 
     normalized === 'rating' ||
     normalized === 'priority' ||
     normalized === 'category' ||
+    normalized === 'issue_label' ||
     normalized === 'summary'
   ) {
     return normalized;
@@ -428,15 +439,49 @@ function normalizeOptionalText(rawValue: unknown, maxLength = 120) {
   return normalized.slice(0, maxLength);
 }
 
-function normalizeVocCategory(rawCategory: unknown, _rawSummary?: unknown, _rawContent?: unknown) {
-  const category = String(rawCategory ?? '').trim();
-  if (!category) {
+function normalizeVocCategory(rawCategory: unknown, rawSummary?: unknown, rawContent?: unknown): NormalizedCategory {
+  const source = `${String(rawCategory ?? '')} ${String(rawSummary ?? '')} ${String(rawContent ?? '')}`.trim().toLowerCase();
+
+  if (!source) {
     return '긍정 리뷰 및 기타';
   }
-  return category;
+
+  if (
+    /(버그|오류|에러|튕|크래시|멈춤|먹통|작동.?안|실행.?안|느림|지연|렉|버벅|속도|발열|배터리|프리징|로딩|lag|slow|performance|stability|bug|error|crash|fail)/.test(
+      source,
+    )
+  ) {
+    return '버그 및 성능';
+  }
+
+  if (
+    /(결제|구독|환불|인앱|구매|billing|payment|subscription|refund|로그인|log in|login|계정|인증|회원가입|가입|account|auth|sign in|sign-in|signin)/.test(
+      source,
+    )
+  ) {
+    return '계정 및 결제';
+  }
+
+  if (
+    /(콘텐츠|커뮤니티|운영|정책|약관|규정|신고|정지|제재|차단|검수|게시글|피드|노출|알림|고객센터|문의|응대|content|community|policy|moderation|report|ban|suspend|support)/.test(
+      source,
+    )
+  ) {
+    return '콘텐츠 및 운영 정책';
+  }
+
+  if (
+    /(사용성|불편|ui|ux|디자인|가독성|동선|메뉴|접근성|편의|요청|기능.?추가|추가해|개선해|지원해|원해|feature request|please add|wish)/.test(
+      source,
+    )
+  ) {
+    return '기능 및 사용성';
+  }
+
+  return '긍정 리뷰 및 기타';
 }
 
-function normalizePriorityValue(rawPriority: unknown): 'Critical' | 'High' | 'Normal' {
+function normalizePriorityValue(rawPriority: unknown): NormalizedPriority {
   const normalized = String(rawPriority ?? '')
     .replace(/[🚨⚠️✅]/g, '')
     .trim()
@@ -451,8 +496,79 @@ function normalizePriorityValue(rawPriority: unknown): 'Critical' | 'High' | 'No
   return 'Normal';
 }
 
-function derivePriorityValue(_rating: number, _category: string, rawPriority: unknown): 'Critical' | 'High' | 'Normal' {
-  return normalizePriorityValue(rawPriority);
+function normalizeIssueLabel(rawIssueLabel: unknown, category: NormalizedCategory, summary?: unknown) {
+  const normalized = String(rawIssueLabel ?? '').trim();
+  if (normalized) {
+    return normalized.slice(0, 60);
+  }
+
+  const summaryText = String(summary ?? '').trim();
+  if (summaryText) {
+    return summaryText.slice(0, 60);
+  }
+
+  switch (category) {
+    case '버그 및 성능':
+      return '성능/안정성 점검';
+    case '계정 및 결제':
+      return '계정/결제 불편';
+    case '콘텐츠 및 운영 정책':
+      return '운영 정책 확인';
+    case '기능 및 사용성':
+      return '사용성 개선';
+    default:
+      return '긍정/기타 확인';
+  }
+}
+
+function normalizeReasonSummary(rawReasonSummary: unknown, summary?: unknown) {
+  const normalized = String(rawReasonSummary ?? '').trim();
+  if (normalized) {
+    return normalized.slice(0, 200);
+  }
+
+  const fallback = String(summary ?? '').trim();
+  return fallback ? fallback.slice(0, 200) : '원인 요약 없음';
+}
+
+function defaultActionHint(category: NormalizedCategory) {
+  switch (category) {
+    case '버그 및 성능':
+      return '오류 재현 후 안정화 우선순위를 확인하세요.';
+    case '계정 및 결제':
+      return '로그인·결제 흐름과 고객 문의 로그를 함께 점검하세요.';
+    case '콘텐츠 및 운영 정책':
+      return '운영 정책/고객 응대 문구를 함께 검토하세요.';
+    case '기능 및 사용성':
+      return '불편 구간을 정의하고 개선 우선순위를 정리하세요.';
+    default:
+      return '긍정/일반 의견은 다음 개선 후보로 정리하세요.';
+  }
+}
+
+function normalizeActionHint(rawActionHint: unknown, category: NormalizedCategory) {
+  const normalized = String(rawActionHint ?? '').trim();
+  if (normalized) {
+    return normalized.slice(0, 200);
+  }
+  return defaultActionHint(category);
+}
+
+function derivePriorityValue(rating: number, category: NormalizedCategory, rawPriority: unknown): NormalizedPriority {
+  const normalized = normalizePriorityValue(rawPriority);
+  if (normalized !== 'Normal') {
+    return normalized;
+  }
+
+  if (rating <= 1 && (category === '버그 및 성능' || category === '계정 및 결제')) {
+    return 'Critical';
+  }
+
+  if (rating <= 2 && category !== '긍정 리뷰 및 기타') {
+    return 'High';
+  }
+
+  return normalized;
 }
 
 async function triggerN8nPipeline(
@@ -915,6 +1031,247 @@ async function handlePublicApps(env: Env, request: Request) {
   return jsonResponse(env, 200, { data });
 }
 
+async function handlePublicAppsSearch(env: Env, request: Request) {
+  const { searchParams } = new URL(request.url);
+  const query = normalizeSearchKeyword(searchParams.get('q'), 60);
+  const limit = clampLimit(searchParams.get('limit'), 8, 20);
+
+  if (!query) {
+    return jsonResponse(env, 200, { data: [] });
+  }
+
+  const data = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/apps?select=app_store_id,country,app_name,updated_at&or=(app_name.ilike.*${encodeURIComponent(query)}*,app_store_id.ilike.*${encodeURIComponent(query)}*)&order=updated_at.desc.nullslast&limit=${limit}`,
+    {
+      method: 'GET',
+      idempotent: true,
+    },
+  );
+
+  return jsonResponse(env, 200, { data });
+}
+
+async function getPublicRunsForApp(env: Env, appId: string, country: string, limit = 5) {
+  return supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/pipeline_runs?select=run_id,app_store_id,country,source,status,review_count,executed_at,published_at,updated_at&app_store_id=eq.${encodeURIComponent(appId)}&country=eq.${encodeURIComponent(country)}&order=executed_at.desc&limit=${limit}`,
+    {
+      method: 'GET',
+      idempotent: true,
+    },
+  );
+}
+
+async function handlePublicRuns(env: Env, request: Request) {
+  const { searchParams } = new URL(request.url);
+  const appId = normalizeAppStoreId(searchParams.get('appId'));
+  const country = normalizeCountry(searchParams.get('country'));
+  const limit = clampLimit(searchParams.get('limit'), 5, 20);
+
+  if (!appId) {
+    return badRequest(env, 'appId is required');
+  }
+
+  const data = await getPublicRunsForApp(env, appId, country, limit);
+  return jsonResponse(env, 200, { data });
+}
+
+async function getPublicIssuesForApp(
+  env: Env,
+  params: {
+    appId: string;
+    country: string;
+    from: string | null;
+    to: string | null;
+    limit: number;
+  },
+) {
+  return supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_issues', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_app_store_id: params.appId,
+      p_country: params.country,
+      p_from: params.from,
+      p_to: params.to,
+      p_limit: params.limit,
+    }),
+    idempotent: true,
+  });
+}
+
+async function handlePublicIssues(env: Env, request: Request) {
+  const { searchParams } = new URL(request.url);
+  const appId = normalizeAppStoreId(searchParams.get('appId'));
+  const country = normalizeCountry(searchParams.get('country'));
+  const from = searchParams.get('from');
+  const to = searchParams.get('to');
+  const limit = clampLimit(searchParams.get('limit'), 10, 50);
+
+  if (!appId) {
+    return badRequest(env, 'appId is required');
+  }
+
+  const data = await getPublicIssuesForApp(env, { appId, country, from, to, limit });
+  return jsonResponse(env, 200, { data });
+}
+
+async function getPublicEvidenceForApp(
+  env: Env,
+  params: {
+    appId: string;
+    country: string;
+    from: string | null;
+    to: string | null;
+    limit: number;
+  },
+) {
+  const filters = new URLSearchParams({
+    app_store_id: `eq.${params.appId}`,
+    country: `eq.${params.country}`,
+    select:
+      'review_id,reviewed_at,rating,author,priority,category,issue_label,summary,action_hint,content',
+    order: 'reviewed_at.desc',
+    limit: String(params.limit),
+  });
+
+  if (params.from) {
+    filters.set('reviewed_at', `gte.${params.from}`);
+  }
+  if (params.to) {
+    filters.append('reviewed_at', `lte.${params.to}`);
+  }
+
+  return supabaseRequest<Array<Record<string, unknown>>>(env, `/rest/v1/private_review_feed?${filters.toString()}`, {
+    method: 'GET',
+    idempotent: true,
+  });
+}
+
+async function handlePublicDashboard(env: Env, request: Request) {
+  const { searchParams } = new URL(request.url);
+  const appId = normalizeAppStoreId(searchParams.get('appId'));
+  const country = normalizeCountry(searchParams.get('country'));
+  const from = searchParams.get('from');
+  const to = searchParams.get('to');
+
+  if (!appId) {
+    return badRequest(env, 'appId is required');
+  }
+
+  const version = await getCacheVersion(env);
+  const cacheKey = getPublicCacheKey(request, version);
+  const cache = await getEdgeCache();
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return withCors(env, cached);
+  }
+
+  const [overviewRows, categories, trends, issues, runs, evidence, appMetaRows] = await Promise.all([
+    supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_overview', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_app_store_id: appId,
+        p_country: country,
+        p_from: from,
+        p_to: to,
+      }),
+      idempotent: true,
+    }),
+    supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_categories', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_app_store_id: appId,
+        p_country: country,
+        p_from: from,
+        p_to: to,
+      }),
+      idempotent: true,
+    }),
+    supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_trends', {
+      method: 'POST',
+      body: JSON.stringify({
+        p_app_store_id: appId,
+        p_country: country,
+        p_from: from,
+        p_to: to,
+      }),
+      idempotent: true,
+    }),
+    getPublicIssuesForApp(env, { appId, country, from, to, limit: 12 }),
+    getPublicRunsForApp(env, appId, country, 5),
+    getPublicEvidenceForApp(env, { appId, country, from, to, limit: 6 }),
+    supabaseRequest<Array<Record<string, unknown>>>(
+      env,
+      `/rest/v1/apps?select=app_store_id,country,app_name&app_store_id=eq.${encodeURIComponent(appId)}&country=eq.${encodeURIComponent(country)}&limit=1`,
+      {
+        method: 'GET',
+        idempotent: true,
+      },
+    ),
+  ]);
+
+  const overview = overviewRows[0] || {
+    app_store_id: appId,
+    country,
+    total_reviews: 0,
+    critical_count: 0,
+    low_rating_count: 0,
+    average_rating: 0,
+    positive_ratio: 0,
+    last_review_at: null,
+  };
+  const latestRun = runs[0] || null;
+  const lowRatingCount = Number(overview.low_rating_count || 0);
+  const totalReviews = Number(overview.total_reviews || 0);
+  const summary = {
+    app_store_id: appId,
+    country,
+    app_name: String(appMetaRows[0]?.app_name || '').trim() || null,
+    total_reviews: totalReviews,
+    issue_count: issues.length,
+    critical_count: Number(overview.critical_count || 0),
+    low_rating_count: lowRatingCount,
+    low_rating_ratio: totalReviews > 0 ? Number(((lowRatingCount / totalReviews) * 100).toFixed(1)) : 0,
+    average_rating: Number(overview.average_rating || 0),
+    positive_ratio: Number(overview.positive_ratio || 0),
+    last_review_at: overview.last_review_at || null,
+    last_published_at: latestRun?.published_at || null,
+    latest_run_status: (latestRun?.status as string | undefined) || 'idle',
+  };
+
+  const data = {
+    summary,
+    categories,
+    trends,
+    issues: issues.map((row) => ({
+      ...row,
+      category: normalizeVocCategory(row.category, row.reason_summary, ''),
+    })),
+    evidence: evidence.map((row) => ({
+      ...row,
+      category: normalizeVocCategory(row.category, row.summary, row.content),
+      issue_label: normalizeIssueLabel(row.issue_label, normalizeVocCategory(row.category, row.summary, row.content), row.summary),
+      action_hint: normalizeActionHint(row.action_hint, normalizeVocCategory(row.category, row.summary, row.content)),
+      priority: derivePriorityValue(Number(row.rating || 0), normalizeVocCategory(row.category, row.summary, row.content), row.priority),
+    })),
+    runs,
+  };
+
+  const finalResponse = withCors(
+    env,
+    new Response(JSON.stringify({ data }), {
+      headers: {
+        ...JSON_HEADERS,
+        'cache-control': 'public, max-age=120, s-maxage=120',
+      },
+    }),
+  );
+
+  await cache.put(cacheKey, finalResponse.clone());
+  return finalResponse;
+}
+
 async function handlePublicAppMeta(env: Env, request: Request) {
   const { searchParams } = new URL(request.url);
   const appId = normalizeAppStoreId(searchParams.get('appId'));
@@ -983,6 +1340,24 @@ async function handlePublicAppMeta(env: Env, request: Request) {
     if (typeof rawName === 'string' && rawName.trim()) {
       appNameFromItunes = rawName.trim();
     }
+  }
+
+  if (appNameFromItunes) {
+    await supabaseRequest(env, '/rest/v1/apps?on_conflict=app_store_id,country', {
+      method: 'POST',
+      headers: {
+        Prefer: 'resolution=merge-duplicates,return=minimal',
+      },
+      body: JSON.stringify([
+        {
+          app_store_id: appId,
+          country,
+          app_name: appNameFromItunes,
+          updated_at: new Date().toISOString(),
+        },
+      ]),
+      idempotent: true,
+    });
   }
 
   const response = withCors(
@@ -1412,6 +1787,7 @@ async function handlePrivateReviews(env: Env, request: Request) {
   const rating = parseRatingFilter(searchParams.get('rating'));
   const priority = normalizePriorityFilter(searchParams.get('priority'));
   const category = normalizeOptionalText(searchParams.get('category'), 120);
+  const issueLabel = normalizeOptionalText(searchParams.get('issueLabel'), 120);
   const search = normalizeSearchKeyword(searchParams.get('search'));
   const cursor = searchParams.get('cursor');
 
@@ -1447,9 +1823,15 @@ async function handlePrivateReviews(env: Env, request: Request) {
   if (category) {
     filters.set('category', `eq.${category}`);
   }
+  if (issueLabel) {
+    filters.set('issue_label', `eq.${issueLabel}`);
+  }
   if (search) {
     const pattern = `*${search}*`;
-    filters.set('or', `(author.ilike.${pattern},summary.ilike.${pattern},category.ilike.${pattern},content.ilike.${pattern})`);
+    filters.set(
+      'or',
+      `(author.ilike.${pattern},summary.ilike.${pattern},category.ilike.${pattern},issue_label.ilike.${pattern},reason_summary.ilike.${pattern},action_hint.ilike.${pattern},content.ilike.${pattern})`,
+    );
   }
 
   let data: Array<Record<string, unknown>> = [];
@@ -1482,9 +1864,14 @@ async function handlePrivateReviews(env: Env, request: Request) {
     const summary = String(row.summary ?? '');
     const content = String(row.content ?? '');
     const normalizedCategory = normalizeVocCategory(row.category, summary, content);
+    const issue_label = normalizeIssueLabel(row.issue_label, normalizedCategory, summary);
     return {
       ...row,
       category: normalizedCategory,
+      issue_label,
+      reason_summary: normalizeReasonSummary(row.reason_summary, summary),
+      action_hint: normalizeActionHint(row.action_hint, normalizedCategory),
+      priority: derivePriorityValue(Number(row.rating || 0), normalizedCategory, row.priority),
     };
   });
 
@@ -1556,11 +1943,17 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
       const content = review.content || '';
       const normalizedCategory = normalizeVocCategory(review.category || '긍정 리뷰 및 기타', summary, content);
       const normalizedPriority = derivePriorityValue(review.rating, normalizedCategory, review.priority || 'Normal');
+      const issueLabel = normalizeIssueLabel(review.issueLabel, normalizedCategory, summary);
+      const reasonSummary = normalizeReasonSummary(review.reasonSummary, summary);
+      const actionHint = normalizeActionHint(review.actionHint, normalizedCategory);
 
       return {
         review_id: review.reviewId,
         priority: normalizedPriority,
         category: normalizedCategory,
+        issue_label: issueLabel,
+        reason_summary: reasonSummary,
+        action_hint: actionHint,
         summary,
         confidence: review.confidence ?? null,
         model_version: review.modelVersion ?? 'gemini',
@@ -1801,12 +2194,28 @@ export default {
         return await handlePublicCategories(env, request);
       }
 
+      if (request.method === 'GET' && url.pathname === '/api/public/dashboard') {
+        return await handlePublicDashboard(env, request);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/public/issues') {
+        return await handlePublicIssues(env, request);
+      }
+
       if (request.method === 'GET' && url.pathname === '/api/public/apps') {
         return await handlePublicApps(env, request);
       }
 
+      if (request.method === 'GET' && url.pathname === '/api/public/apps/search') {
+        return await handlePublicAppsSearch(env, request);
+      }
+
       if (request.method === 'GET' && url.pathname === '/api/public/app-meta') {
         return await handlePublicAppMeta(env, request);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/public/runs') {
+        return await handlePublicRuns(env, request);
       }
 
       // Private API: 로그인 사용자 전용 데이터/작업 제어

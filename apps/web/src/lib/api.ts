@@ -1,6 +1,9 @@
 import type {
+  AppSearchItem,
   CancelPipelineJobsResponse,
   CreatePipelineJobResponse,
+  DashboardResponse,
+  IssuePriorityItem,
   PipelineJobItem,
   Priority,
   PrivateReviewSortKey,
@@ -10,6 +13,7 @@ import type {
   PublicCategoryPoint,
   PublicOverview,
   PublicTrendPoint,
+  RunSummaryItem,
 } from '@/types';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
@@ -102,6 +106,30 @@ export async function getOverview(appId: string, country = 'kr', from?: string, 
   return fetchJson<{ data: PublicOverview }>(`/api/public/overview?${params.toString()}`);
 }
 
+export async function getDashboard(appId: string, country = 'kr', from?: string, to?: string) {
+  const params = new URLSearchParams({ appId, country });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  return fetchJson<{ data: DashboardResponse }>(`/api/public/dashboard?${params.toString()}`);
+}
+
+export async function getIssues(appId: string, country = 'kr', limit = 10, from?: string, to?: string) {
+  const params = new URLSearchParams({ appId, country, limit: String(limit) });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  return fetchJson<{ data: IssuePriorityItem[] }>(`/api/public/issues?${params.toString()}`);
+}
+
+export async function searchApps(query: string, limit = 8) {
+  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  return fetchJson<{ data: AppSearchItem[] }>(`/api/public/apps/search?${params.toString()}`);
+}
+
+export async function getRuns(appId: string, country = 'kr', limit = 5) {
+  const params = new URLSearchParams({ appId, country, limit: String(limit) });
+  return fetchJson<{ data: RunSummaryItem[] }>(`/api/public/runs?${params.toString()}`);
+}
+
 export async function getTrends(appId: string, country = 'kr', from?: string, to?: string) {
   const params = new URLSearchParams({ appId, country });
   if (from) params.set('from', from);
@@ -128,6 +156,7 @@ export async function getPrivateReviews(
     rating?: 1 | 2 | 3 | 4 | 5;
     priority?: Priority;
     category?: string;
+    issueLabel?: string;
     search?: string;
     cursor?: string;
   },
@@ -144,6 +173,7 @@ export async function getPrivateReviews(
   if (options?.rating) params.set('rating', String(options.rating));
   if (options?.priority) params.set('priority', options.priority);
   if (options?.category?.trim()) params.set('category', options.category.trim());
+  if (options?.issueLabel?.trim()) params.set('issueLabel', options.issueLabel.trim());
   if (options?.search?.trim()) params.set('search', options.search.trim());
   if (options?.cursor) params.set('cursor', options.cursor);
 

@@ -19,7 +19,16 @@ curl -fsS "${WORKER_BASE_URL}/api/public/overview?appId=${APP_ID}&country=${COUN
 echo "[3/4] public trends"
 curl -fsS "${WORKER_BASE_URL}/api/public/trends?appId=${APP_ID}&country=${COUNTRY}" | head -c 300; echo
 
-echo "[4/4] public categories"
+echo "[4/7] public categories"
 curl -fsS "${WORKER_BASE_URL}/api/public/categories?appId=${APP_ID}&country=${COUNTRY}" | head -c 300; echo
+
+echo "[5/7] public dashboard"
+curl -fsS "${WORKER_BASE_URL}/api/public/dashboard?appId=${APP_ID}&country=${COUNTRY}" | head -c 400; echo
+
+echo "[6/7] public issues"
+curl -fsS "${WORKER_BASE_URL}/api/public/issues?appId=${APP_ID}&country=${COUNTRY}&limit=5" | head -c 400; echo
+
+echo "[7/7] public runs"
+curl -fsS "${WORKER_BASE_URL}/api/public/runs?appId=${APP_ID}&country=${COUNTRY}&limit=3" | head -c 300; echo
 
 echo "[OK] public smoke checks passed"

@@ -29,6 +29,9 @@ export interface UpsertReviewRequest {
     reviewedAt: string;
     priority: string;
     category: string;
+    issueLabel?: string | null;
+    reasonSummary?: string | null;
+    actionHint?: string | null;
     summary: string;
     confidence?: number | null;
     modelVersion?: string | null;
