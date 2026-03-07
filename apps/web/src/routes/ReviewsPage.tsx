@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { getCategories, getPrivateReviews, getPublicReviews } from '@/lib/api';
+import { getCategories, getDashboard, getPrivateReviews, getPublicReviews } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 import type { AppSelection } from '@/lib/appSelection';
 import type { PrivateReviewItem, PrivateReviewSortKey } from '@/types';
@@ -98,7 +98,44 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
               }
               return getPrivateReviews(selection.appId, token, options);
             })()
-          : await getPublicReviews(selection.appId, options);
+          : await (async () => {
+              try {
+                return await getPublicReviews(selection.appId, options);
+              } catch (error) {
+                if (error instanceof Error && error.message.includes('404')) {
+                  const to = new Date();
+                  const from = new Date();
+                  from.setDate(from.getDate() - 30);
+                  const dashboard = await getDashboard(selection.appId, selection.country, from.toISOString(), to.toISOString());
+                  const fallbackData: PrivateReviewItem[] = dashboard.data.evidence.map((item) => ({
+                    review_id: item.review_id,
+                    app_store_id: selection.appId,
+                    country: selection.country,
+                    rating: item.rating,
+                    author: item.author,
+                    content: item.content,
+                    reviewed_at: item.reviewed_at,
+                    priority: item.priority,
+                    category: item.category,
+                    issue_label: item.issue_label,
+                    reason_summary: item.summary,
+                    action_hint: '',
+                    summary: item.summary,
+                    confidence: null,
+                  }));
+
+                  return {
+                    data: fallbackData,
+                    page: 1,
+                    limit,
+                    hasNext: false,
+                    nextCursor: null,
+                  };
+                }
+
+                throw error;
+              }
+            })();
 
         if (!mounted || requestId !== latestRequestRef.current) {
           return;
@@ -320,11 +357,6 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
                       <p className="text-sm text-muted-foreground">
                         {new Date(item.reviewed_at).toLocaleString()} · {item.author || '작성자 미상'}
                       </p>
-                    </div>
-
-                    <div className="rounded-xl border border-border bg-panel px-4 py-4">
-                      <p className="text-xs font-medium text-muted-foreground">요약</p>
-                      <p className="mt-2 text-sm text-foreground">{item.summary}</p>
                     </div>
 
                     <div className="rounded-xl border border-border bg-panel px-4 py-4">
