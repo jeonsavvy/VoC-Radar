@@ -77,10 +77,22 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
   useEffect(() => {
     let mounted = true;
 
-    getPublicApps(6)
-      .then((response) => {
+    getPublicApps(20)
+      .then(async (response) => {
+        const candidates = response.data.slice(0, 20);
+        const withRuns = await Promise.all(
+          candidates.map(async (item) => {
+            try {
+              const runsResponse = await getRuns(item.app_store_id, item.country, 1);
+              return runsResponse.data.length > 0 ? item : null;
+            } catch {
+              return null;
+            }
+          }),
+        );
+
         if (mounted) {
-          setRecentAnalyzedApps(response.data);
+          setRecentAnalyzedApps(withRuns.filter((item): item is PublicAppItem => item !== null).slice(0, 6));
         }
       })
       .catch(() => {
