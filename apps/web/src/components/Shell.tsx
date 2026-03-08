@@ -39,7 +39,7 @@ function formatRunStatus(run: RunSummaryItem | null) {
 
 export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Props) {
   const [appName, setAppName] = useState<string | null>(null);
-  const [recentApps, setRecentApps] = useState<PublicAppItem[]>([]);
+  const [recentAnalyzedApps, setRecentAnalyzedApps] = useState<PublicAppItem[]>([]);
   const [latestRun, setLatestRun] = useState<RunSummaryItem | null>(null);
 
   useEffect(() => {
@@ -80,12 +80,12 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
     getPublicApps(6)
       .then((response) => {
         if (mounted) {
-          setRecentApps(response.data);
+          setRecentAnalyzedApps(response.data);
         }
       })
       .catch(() => {
         if (mounted) {
-          setRecentApps([]);
+          setRecentAnalyzedApps([]);
         }
       });
 
@@ -148,28 +148,37 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
                 }}
               />
 
-              <div className="flex flex-wrap gap-2">
-                {recentApps.map((item) => {
-                  const isSelected = item.app_store_id === selection.appId && item.country === selection.country;
-                  return (
-                    <button
-                      key={`${item.app_store_id}-${item.country}`}
-                      type="button"
-                      onClick={() =>
-                        onSelectionChange({
-                          appId: item.app_store_id,
-                          country: item.country,
-                        })
-                      }
-                      className={cn(
-                        'rounded-full border px-3 py-2 text-xs font-medium transition-colors',
-                        isSelected ? 'border-primary bg-primary/8 text-primary' : 'border-border bg-background hover:bg-accent',
-                      )}
-                    >
-                      {(item.app_name || `앱 ${item.app_store_id}`).slice(0, 18)}
-                    </button>
-                  );
-                })}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">최근 분석된 앱</p>
+                {recentAnalyzedApps.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {recentAnalyzedApps.map((item) => {
+                      const isSelected = item.app_store_id === selection.appId && item.country === selection.country;
+                      return (
+                        <button
+                          key={`${item.app_store_id}-${item.country}`}
+                          type="button"
+                          onClick={() =>
+                            onSelectionChange({
+                              appId: item.app_store_id,
+                              country: item.country,
+                            })
+                          }
+                          className={cn(
+                            'rounded-full border px-3 py-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                            isSelected
+                              ? 'border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/92'
+                              : 'border-border bg-background text-foreground hover:border-primary/35 hover:bg-accent',
+                          )}
+                        >
+                          {(item.app_name || `앱 ${item.app_store_id}`).slice(0, 18)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">최근 분석 완료된 앱이 아직 없습니다.</p>
+                )}
               </div>
             </div>
 

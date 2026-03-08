@@ -3,8 +3,6 @@ export interface AppSelection {
   country: string;
 }
 
-const STORAGE_KEY = 'voc-radar.selection.v1';
-
 const fallbackAppId = import.meta.env.VITE_DEFAULT_APP_ID || '1018769995';
 const fallbackCountry = (import.meta.env.VITE_DEFAULT_COUNTRY || 'kr').toLowerCase();
 
@@ -26,36 +24,7 @@ export function normalizeCountry(value: string) {
 }
 
 export function readSelection(): AppSelection {
-  if (typeof window === 'undefined') {
-    return defaultSelection;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return defaultSelection;
-    }
-
-    const parsed = JSON.parse(raw) as Partial<AppSelection>;
-    const appId = parsed.appId && isValidAppId(parsed.appId) ? parsed.appId : defaultSelection.appId;
-    const country = parsed.country ? normalizeCountry(parsed.country) : defaultSelection.country;
-
-    return { appId, country };
-  } catch {
-    return defaultSelection;
-  }
+  return defaultSelection;
 }
 
-export function persistSelection(selection: AppSelection) {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  window.localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      appId: selection.appId,
-      country: selection.country,
-    }),
-  );
-}
+export function persistSelection(_selection: AppSelection) {}

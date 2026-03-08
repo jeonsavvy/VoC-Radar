@@ -27,7 +27,7 @@ VoC-Radar는 App Store 리뷰를 수집하고, 유형별로 정리해 공개 대
 - `apps/web`: React 프론트엔드
 - `apps/worker`: Cloudflare Worker API
 - `n8n/workflow.supabase-only.json`: 운영 워크플로우
-- `supabase/bootstrap`: 신규 설치용 단일 SQL
+- `supabase/20260307_voc_radar_bootstrap.sql`: 신규 설치용 단일 SQL
 - `supabase/migrations`: 변경 이력 SQL
 - `supabase/README.md`: Supabase SQL 사용 가이드
 - `docs`: 배포/아키텍처 문서
@@ -47,7 +47,7 @@ npm install
 신규 Supabase 프로젝트면 아래 **1개 파일만** 실행하세요.
 
 ```sql
-supabase/bootstrap/20260307_voc_radar_bootstrap.sql
+supabase/20260307_voc_radar_bootstrap.sql
 ```
 
 `supabase/migrations/`는 누적 변경 이력입니다.

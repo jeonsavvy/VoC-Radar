@@ -4,7 +4,7 @@
 
 신규 Supabase 프로젝트면 SQL Editor에서 아래 파일 **1개만** 실행합니다.
 
-1. `supabase/bootstrap/20260307_voc_radar_bootstrap.sql`
+1. `supabase/20260307_voc_radar_bootstrap.sql`
 
 `supabase/migrations/`는 변경 이력 보존용입니다.
 운영 DB에서 기존 테이블/함수/뷰를 전부 지우고 bootstrap을 다시 실행하는 방식은 권장하지 않습니다.

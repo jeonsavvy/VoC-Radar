@@ -38,16 +38,22 @@ export function AppSearchPicker({ selection, onSelect, className, compact = fals
         <div className="relative">
           <Hash className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            name="appStoreId"
             value={appId}
             onChange={(event) => setAppId(event.target.value)}
-            placeholder="App Store ID"
+            autoComplete="off"
+            inputMode="numeric"
+            spellCheck={false}
+            placeholder="App Store ID 예: 123456789"
             className="pl-9"
             aria-label="App Store ID"
           />
         </div>
         <Input
+          name="country"
           value={country}
           onChange={(event) => setCountry(event.target.value)}
+          autoComplete="off"
           maxLength={2}
           placeholder="국가"
           aria-label="국가 코드"
@@ -56,7 +62,7 @@ export function AppSearchPicker({ selection, onSelect, className, compact = fals
           적용
         </Button>
       </div>
-      <p className="text-xs text-muted-foreground">분석할 App Store ID를 입력하세요.</p>
+      <p className="text-xs text-muted-foreground">App Store ID를 직접 입력하거나 최근 분석된 앱을 선택하세요.</p>
     </div>
   );
 }

@@ -1018,15 +1018,62 @@ async function handlePublicCategories(env: Env, request: Request) {
 async function handlePublicApps(env: Env, request: Request) {
   const { searchParams } = new URL(request.url);
   const limit = clampLimit(searchParams.get('limit'), 20, 100);
-
-  const data = await supabaseRequest<Array<Record<string, unknown>>>(
+  const runLimit = Math.min(Math.max(limit * 10, limit), 200);
+  const recentRuns = await supabaseRequest<Array<Record<string, unknown>>>(
     env,
-    `/rest/v1/apps?select=app_store_id,country,app_name,updated_at&order=updated_at.desc&limit=${limit}`,
+    `/rest/v1/pipeline_runs?select=app_store_id,country,executed_at,published_at,updated_at,review_count,status&status=in.(upserted,published)&review_count=gt.0&order=executed_at.desc&limit=${runLimit}`,
     {
       method: 'GET',
       idempotent: true,
     },
   );
+
+  const recentApps: Array<{ app_store_id: string; country: string; updated_at: string }> = [];
+  const seen = new Set<string>();
+
+  for (const row of recentRuns) {
+    const appStoreId = normalizeAppStoreId(String(row.app_store_id ?? ''));
+    const country = normalizeCountry(String(row.country ?? ''));
+    if (!appStoreId) {
+      continue;
+    }
+
+    const key = `${appStoreId}:${country}`;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    recentApps.push({
+      app_store_id: appStoreId,
+      country,
+      updated_at: String(row.published_at || row.executed_at || row.updated_at || new Date().toISOString()),
+    });
+
+    if (recentApps.length >= limit) {
+      break;
+    }
+  }
+
+  const appsMeta = await Promise.all(
+    recentApps.map(async (item) => {
+      const rows = await supabaseRequest<Array<Record<string, unknown>>>(
+        env,
+        `/rest/v1/apps?select=app_name&app_store_id=eq.${encodeURIComponent(item.app_store_id)}&country=eq.${encodeURIComponent(item.country)}&limit=1`,
+        {
+          method: 'GET',
+          idempotent: true,
+        },
+      );
+
+      return {
+        ...item,
+        app_name: String(rows[0]?.app_name || '').trim() || null,
+      };
+    }),
+  );
+
+  const data = appsMeta.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 
   return jsonResponse(env, 200, { data });
 }

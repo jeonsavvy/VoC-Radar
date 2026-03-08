@@ -2,7 +2,6 @@ import { FormEvent, useMemo, useState } from 'react';
 import { MailCheck } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/page-header';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -60,14 +59,9 @@ export function LoginPage({ onSignedIn }: Props) {
 
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <CardTitle className="text-xl">계정 인증</CardTitle>
-              <CardDescription>수집 실행을 위해 로그인하거나 계정을 만듭니다.</CardDescription>
-            </div>
-            <Badge variant={hasSupabaseConfig ? 'success' : 'destructive'}>
-              {hasSupabaseConfig ? '설정 완료' : '설정 필요'}
-            </Badge>
+          <div>
+            <CardTitle className="text-xl">계정 인증</CardTitle>
+            <CardDescription>수집 실행을 위해 로그인하거나 계정을 만듭니다.</CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -116,8 +110,16 @@ export function LoginPage({ onSignedIn }: Props) {
             </TabsContent>
           </Tabs>
 
-          {message ? <div className="rounded-xl border border-primary/20 bg-primary/8 px-4 py-3 text-sm text-foreground">{message}</div> : null}
-          {error ? <div className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div> : null}
+          {message ? (
+            <div aria-live="polite" className="rounded-xl border border-primary/20 bg-primary/8 px-4 py-3 text-sm text-foreground">
+              {message}
+            </div>
+          ) : null}
+          {error ? (
+            <div aria-live="polite" className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+              {error}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>

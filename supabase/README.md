@@ -7,7 +7,7 @@ VoC-Radar의 Supabase SQL은 **히스토리용 migration**과 **신규 설치용
 - `migrations/`
   - 개발/운영 중 누적된 변경 이력
   - 기존 프로젝트가 어떻게 현재 스키마에 도달했는지 보존하는 용도
-- `bootstrap/20260307_voc_radar_bootstrap.sql`
+- `20260307_voc_radar_bootstrap.sql`
   - **신규 환경 / 빈 프로젝트용 단일 SQL**
   - 지금 기준 최신 스키마/함수/뷰를 한 번에 생성
 
@@ -17,7 +17,7 @@ VoC-Radar의 Supabase SQL은 **히스토리용 migration**과 **신규 설치용
 아래 파일 **하나만** 실행하면 됩니다.
 
 ```sql
-supabase/bootstrap/20260307_voc_radar_bootstrap.sql
+supabase/20260307_voc_radar_bootstrap.sql
 ```
 
 ### 2) 이미 운영 중인 Supabase 프로젝트를 유지하는 경우
@@ -56,6 +56,6 @@ supabase/bootstrap/20260307_voc_radar_bootstrap.sql
 
 ## 추천 운영 방식
 
-- **신규 설치/초기 세팅**: `bootstrap/20260307_voc_radar_bootstrap.sql`
+- **신규 설치/초기 세팅**: `supabase/20260307_voc_radar_bootstrap.sql`
 - **기존 운영 환경 유지**: 기존 migration 이력 유지
 - **향후 추가 변경**: 새 migration 추가 + 필요하면 bootstrap 갱신
