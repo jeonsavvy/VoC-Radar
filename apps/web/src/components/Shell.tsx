@@ -131,7 +131,9 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
                     className={({ isActive }) =>
                       cn(
                         'rounded-full px-3 py-2 text-sm font-medium transition-colors',
-                        isActive ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-accent',
+                        isActive
+                          ? 'bg-primary text-white shadow-sm'
+                          : 'bg-secondary text-secondary-foreground hover:bg-accent',
                       )
                     }
                   >
@@ -167,7 +169,7 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
                           className={cn(
                             'rounded-full border px-3 py-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
                             isSelected
-                              ? 'border-primary bg-primary text-primary-foreground shadow-sm hover:bg-primary/92'
+                              ? 'border-primary bg-primary text-white shadow-sm hover:bg-primary/92'
                               : 'border-border bg-background text-foreground hover:border-primary/35 hover:bg-accent',
                           )}
                         >
