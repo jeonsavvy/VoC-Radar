@@ -1,20 +1,16 @@
 # VoC-Radar 배포 런북
 
-## 1) Supabase 설정
+## 1) Supabase 준비
 
-신규 Supabase 프로젝트면 SQL Editor에서 아래 파일 **1개만** 실행합니다.
+신규 프로젝트라면 SQL Editor에서 아래 파일을 실행한다.
 
-1. `supabase/20260307_voc_radar_bootstrap.sql`
+```sql
+supabase/20260307_voc_radar_bootstrap.sql
+```
 
-`supabase/migrations/`는 변경 이력 보존용입니다.
-운영 DB에서 기존 테이블/함수/뷰를 전부 지우고 bootstrap을 다시 실행하는 방식은 권장하지 않습니다.
+운영 중인 환경은 `supabase/migrations/` 이력을 유지한다.
 
-추가 확인:
-
-- Auth > Users에서 테스트 계정 1개 생성
-- Authentication > Email에서 이메일 확인 정책 설정 점검
-
-검증 SQL:
+점검 SQL:
 
 ```sql
 select count(*) from public.reviews;
@@ -23,12 +19,9 @@ select count(*) from public.pipeline_runs;
 select count(*) from public.pipeline_jobs;
 ```
 
----
-
 ## 2) Worker 배포
 
-이 저장소는 npm workspace 구조입니다.  
-루트에서 `npx wrangler deploy`를 직접 실행하지 말고 아래 명령을 사용합니다.
+루트에서 아래 명령을 사용한다.
 
 ```bash
 npm run deploy:worker
@@ -42,37 +35,38 @@ npm run deploy:worker
 - `PIPELINE_WEBHOOK_SECRET`
 - `CORS_ORIGIN`
 
-운영 권장값:
+권장 예시:
 
-- `CORS_ORIGIN=https://voc-radar.pages.dev`
+- `CORS_ORIGIN=https://<your-pages-domain>`
 
 선택 환경변수:
 
 - `N8N_PIPELINE_TRIGGER_URL`
 - `N8N_PIPELINE_TRIGGER_SECRET`
 - `DETAIL_VIEW_ENABLED`
+- `API_TIMEOUT_MS`
+- `API_RETRY_COUNT`
 
 헬스체크:
 
 ```bash
-curl https://<worker-domain>/api/health
+curl https://<your-worker-domain>/api/health
 ```
-
----
 
 ## 3) Pages 배포
 
-`apps/web` 환경변수:
+필수 환경변수:
 
 - `VITE_API_BASE_URL`
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
+
+선택 환경변수:
+
 - `VITE_DEFAULT_APP_ID`
 - `VITE_DEFAULT_COUNTRY`
-
-운영 권장값:
-
-- `VITE_API_BASE_URL=https://voc-radar-api.jeonsavvy.workers.dev`
+- `VITE_API_TIMEOUT_MS`
+- `VITE_API_RETRY_COUNT`
 
 빌드:
 
@@ -80,63 +74,43 @@ curl https://<worker-domain>/api/health
 npm run build:web
 ```
 
-Build output directory:
+산출물 디렉터리:
 
 ```bash
 apps/web/dist
 ```
 
-주의:
-
-- Pages deploy command에 `wrangler deploy`를 넣지 않습니다.
-- Pages는 정적 산출물(`apps/web/dist`)만 배포합니다.
-
----
-
 ## 4) n8n 설정
 
 1. `n8n/workflow.supabase-only.json` import
-2. Gemini credential 연결
+2. LLM credential 연결
 3. 아래 환경변수 입력
 
-- `VOC_BFF_BASE_URL`
-- `PIPELINE_WEBHOOK_SECRET`
+- `VOC_BFF_BASE_URL=https://<your-worker-domain>`
+- `PIPELINE_WEBHOOK_SECRET=<strong-secret>`
 - `VOC_FETCH_WINDOW_DAYS=30`
 - `VOC_FETCH_MAX_PAGES=120`
 - `VOC_LLM_BATCH_LIMIT=50`
-- `VOC_MODEL_VERSION`
-- `VOC_ALERT_MAX_RATING`
-- `N8N_PIPELINE_TRIGGER_SECRET` (선택)
-
-운영 권장값:
-
-- `VOC_BFF_BASE_URL=https://voc-radar-api.jeonsavvy.workers.dev`
-
-4. 워크플로우 Active ON
-5. webhook URL 사용 시 Worker의 `N8N_PIPELINE_TRIGGER_URL`에 등록
-
-webhook을 쓰지 않아도, 워크플로우의 1분 폴링 트리거로 큐 처리가 가능합니다.
+- `VOC_MODEL_VERSION=<model-version>`
+- `VOC_ALERT_MAX_RATING=2`
+- `N8N_PIPELINE_TRIGGER_SECRET=<optional-secret>`
 
 중요 점검:
 
-- `Basic LLM Chain` 노드의 `executeOnce`가 `false`인지 확인 (true면 첫 배치만 처리됨)
-
----
+- `Basic LLM Chain.executeOnce = false`
 
 ## 5) 운영 점검
 
-- [ ] `GET /api/public/overview` 200
-- [ ] `GET /api/public/trends` 200
-- [ ] `GET /api/public/categories` 200
+- [ ] `GET /api/health` 200
+- [ ] `GET /api/public/dashboard` 200
+- [ ] `GET /api/public/runs` 200
 - [ ] 비로그인 `GET /api/private/reviews` = 401
 - [ ] 로그인 `GET /api/private/reviews` = 200
 - [ ] 로그인 `POST /api/private/jobs` = 201
 - [ ] 로그인 `POST /api/private/jobs/cancel` = 200
 - [ ] n8n 실행 시 `queued -> running -> completed/failed` 상태 전이 확인
-- [ ] parse 오류 시 `parse_errors` 적재 확인
 - [ ] publish 후 `pipeline_runs.status='published'` 확인
-
----
+- [ ] parse 오류 시 `parse_errors` 적재 확인
 
 ## 6) 롤백
 
@@ -146,8 +120,8 @@ webhook을 쓰지 않아도, 워크플로우의 1분 폴링 트리거로 큐 처
 
 파이프라인 롤백:
 
-- 이전 워크플로우 JSON 재import 후 publish
+- 이전 워크플로우 JSON 재import 후 다시 publish
 
-데이터 롤백:
+데이터 복구:
 
-- Supabase 백업/PITR 기준으로 복구
+- Supabase 백업 또는 PITR 기준으로 복구

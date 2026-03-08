@@ -40,7 +40,7 @@ using (requested_by = auth.uid());
 grant insert, select on table public.pipeline_jobs to authenticated;
 
 create or replace function public.claim_pipeline_job(
-  p_default_app_store_id text default '1018769995',
+  p_default_app_store_id text default '1234567890',
   p_default_country text default 'kr',
   p_default_app_name text default null
 )
@@ -90,7 +90,7 @@ begin
   return query
   select
     null::uuid,
-    coalesce(nullif(trim(p_default_app_store_id), ''), '1018769995'),
+    coalesce(nullif(trim(p_default_app_store_id), ''), '1234567890'),
     coalesce(nullif(trim(p_default_country), ''), 'kr'),
     nullif(trim(coalesce(p_default_app_name, '')), ''),
     'fallback'::text,

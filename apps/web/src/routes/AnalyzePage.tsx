@@ -14,6 +14,8 @@ import { getAccessToken } from '@/lib/auth';
 import type { AppSelection } from '@/lib/appSelection';
 import type { PipelineJobItem } from '@/types';
 
+// AnalyzePage는 로그인 사용자가 수집 작업을 생성하고 취소하는 화면이다.
+// 수집 자체는 n8n이 수행하고, 이 화면은 queue 등록과 상태 조회만 담당한다.
 type Props = {
   loggedIn: boolean;
   selection: AppSelection;
@@ -58,6 +60,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     };
   }, [selection.appId, selection.country]);
 
+  // 내 계정으로 생성한 최근 작업만 조회한다.
   const loadJobs = async () => {
     if (!loggedIn) {
       setJobs([]);
@@ -85,6 +88,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
 
   const cancelableCount = useMemo(() => jobs.filter((item) => item.status === 'queued' || item.status === 'running').length, [jobs]);
 
+  // 수집 요청은 appId, country, 선택 메모를 묶어 비공개 API에 등록한다.
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
@@ -119,6 +123,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     }
   };
 
+  // 단일 작업 취소는 queued/running 상태에만 허용한다.
   const onCancelJob = async (jobId: string) => {
     if (!loggedIn) {
       return;
@@ -142,6 +147,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
     }
   };
 
+  // 현재 선택 앱 기준의 진행 중 요청을 일괄 취소한다.
   const onCancelAll = async () => {
     if (!loggedIn) {
       return;

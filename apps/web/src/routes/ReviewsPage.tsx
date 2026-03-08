@@ -12,6 +12,8 @@ import { getAccessToken } from '@/lib/auth';
 import type { AppSelection } from '@/lib/appSelection';
 import type { PrivateReviewItem, PrivateReviewSortKey } from '@/types';
 
+// ReviewsPage는 선택한 앱의 리뷰 원문과 AI 분류 결과를 함께 조회하는 화면이다.
+// 로그인 여부에 따라 private/public API를 나눠 호출한다.
 type Props = {
   loggedIn: boolean;
   selection: AppSelection;
@@ -40,6 +42,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
   const [hasNext, setHasNext] = useState(false);
   const latestRequestRef = useRef(0);
 
+  // 검색 입력은 짧은 지연을 둬서 과도한 요청을 막는다.
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(searchKeyword.trim()), 250);
     return () => clearTimeout(timer);
@@ -52,6 +55,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
   useEffect(() => {
     let mounted = true;
 
+    // 카테고리 필터 옵션은 대시보드 집계 기준으로 먼저 채운다.
     getCategories(selection.appId, selection.country)
       .then((response) => {
         if (mounted) {
@@ -72,6 +76,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
   useEffect(() => {
     let mounted = true;
 
+    // 가장 최근 요청만 화면 상태를 갱신하도록 request id를 비교한다.
     const load = async () => {
       setLoading(true);
       setError(null);
@@ -102,6 +107,7 @@ export function ReviewsPage({ loggedIn, selection }: Props) {
               try {
                 return await getPublicReviews(selection.appId, options);
               } catch (error) {
+                // 공개 상세 리뷰 엔드포인트가 비활성화된 환경에선 대시보드 evidence로 대체한다.
                 if (error instanceof Error && error.message.includes('404')) {
                   const to = new Date();
                   const from = new Date();

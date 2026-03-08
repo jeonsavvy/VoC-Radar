@@ -10,6 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { signInWithPassword, signUpWithPassword } from '@/lib/auth';
 import { hasSupabaseConfig } from '@/lib/supabase';
 
+// LoginPage는 수집 실행에 필요한 계정 인증 화면이다.
+// 이메일 인증이 끝난 사용자만 실제 수집 기능에 접근할 수 있다.
 type Props = {
   onSignedIn: () => Promise<void>;
 };
@@ -25,6 +27,7 @@ export function LoginPage({ onSignedIn }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  // 로그인과 회원가입은 같은 폼을 공유하고, mode에 따라 동작만 바꾼다.
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setMessage(null);

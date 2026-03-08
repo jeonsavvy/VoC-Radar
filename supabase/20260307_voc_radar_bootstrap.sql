@@ -1,5 +1,11 @@
+-- -----------------------------------------------------------------------------
+-- extension
+-- -----------------------------------------------------------------------------
 create extension if not exists pgcrypto;
 
+-- -----------------------------------------------------------------------------
+-- table: 앱 메타 / 리뷰 원문 / AI 분류 / 실행 이력
+-- -----------------------------------------------------------------------------
 create table if not exists public.apps (
   id uuid primary key default gen_random_uuid(),
   app_store_id text not null,
@@ -95,6 +101,9 @@ create table if not exists public.pipeline_jobs (
   updated_at timestamptz not null default now()
 );
 
+-- -----------------------------------------------------------------------------
+-- index
+-- -----------------------------------------------------------------------------
 create index if not exists idx_reviews_app_country_reviewed_at on public.reviews(app_store_id, country, reviewed_at desc);
 create index if not exists idx_reviews_rating on public.reviews(rating);
 create index if not exists idx_review_ai_priority on public.review_ai(priority);
@@ -104,6 +113,9 @@ create index if not exists idx_alert_events_run_id on public.alert_events(run_id
 create index if not exists idx_pipeline_jobs_status_requested_at on public.pipeline_jobs(status, requested_at asc);
 create index if not exists idx_pipeline_jobs_requested_by_created_at on public.pipeline_jobs(requested_by, created_at desc);
 
+-- -----------------------------------------------------------------------------
+-- constraint
+-- -----------------------------------------------------------------------------
 alter table public.review_ai drop constraint if exists review_ai_priority_check;
 alter table public.review_ai add constraint review_ai_priority_check
   check (priority in ('Critical', 'High', 'Normal'));
@@ -112,6 +124,9 @@ alter table public.review_ai drop constraint if exists review_ai_category_check;
 alter table public.review_ai add constraint review_ai_category_check
   check (category in ('버그 및 성능', '계정 및 결제', '콘텐츠 및 운영 정책', '기능 및 사용성', '긍정 리뷰 및 기타'));
 
+-- -----------------------------------------------------------------------------
+-- RLS / policy
+-- -----------------------------------------------------------------------------
 alter table public.apps enable row level security;
 alter table public.reviews enable row level security;
 alter table public.review_ai enable row level security;
@@ -151,6 +166,9 @@ using (requested_by = auth.uid());
 
 grant insert, select on table public.pipeline_jobs to authenticated;
 
+-- -----------------------------------------------------------------------------
+-- public function: 표시용 유형 정규화
+-- -----------------------------------------------------------------------------
 create or replace function public.normalize_review_category(
   p_category text,
   p_summary text default '',
@@ -175,6 +193,9 @@ as $$
   from src;
 $$;
 
+-- -----------------------------------------------------------------------------
+-- view: 인증 사용자 리뷰 피드
+-- -----------------------------------------------------------------------------
 drop view if exists public.private_review_feed;
 create view public.private_review_feed as
 select
@@ -198,6 +219,9 @@ join public.review_ai ai using (review_id);
 revoke all on table public.private_review_feed from anon;
 grant select on table public.private_review_feed to authenticated;
 
+-- -----------------------------------------------------------------------------
+-- public rpc: 대시보드 집계
+-- -----------------------------------------------------------------------------
 create or replace function public.get_public_overview(
   p_app_store_id text,
   p_country text default 'kr',
@@ -441,6 +465,9 @@ as $$
   limit (select row_limit from params);
 $$;
 
+-- -----------------------------------------------------------------------------
+-- internal/public function: 신규 리뷰 필터링과 queue 제어
+-- -----------------------------------------------------------------------------
 create or replace function public.get_existing_review_ids(
   p_app_store_id text,
   p_country text default 'kr',
@@ -589,6 +616,9 @@ begin
 end;
 $$;
 
+-- -----------------------------------------------------------------------------
+-- function execute grant
+-- -----------------------------------------------------------------------------
 grant execute on function public.get_public_overview(text, text, timestamptz, timestamptz) to anon, authenticated;
 grant execute on function public.get_public_trends(text, text, timestamptz, timestamptz) to anon, authenticated;
 grant execute on function public.get_public_categories(text, text, timestamptz, timestamptz) to anon, authenticated;

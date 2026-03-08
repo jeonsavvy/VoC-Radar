@@ -11,10 +11,13 @@ import type { AppSelection } from '@/lib/appSelection';
 import type { DashboardResponse } from '@/types';
 import { MessageSquareText, Shapes, Star } from 'lucide-react';
 
+// HomePage는 공개 대시보드의 첫 화면이다.
+// 최근 30일 기준 요약 수치, 유형 분포, 대표 리뷰를 보여준다.
 type Props = {
   selection: AppSelection;
 };
 
+// 대시보드는 항상 최근 30일을 기본 조회 구간으로 사용한다.
 function getLast30DaysRange() {
   const to = new Date();
   const from = new Date();
@@ -63,6 +66,7 @@ export function HomePage({ selection }: Props) {
   const issues = dashboard?.issues ?? [];
   const evidence = dashboard?.evidence ?? [];
 
+  // 유형 표에는 issue 목록에서 대표 요약 한 줄만 매핑해 보여준다.
   const categorySummaryMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const issue of issues) {

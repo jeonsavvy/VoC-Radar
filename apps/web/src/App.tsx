@@ -1,10 +1,12 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { Shell } from '@/components/Shell';
-import { defaultSelection, persistSelection, readSelection } from '@/lib/appSelection';
+import { defaultSelection, readSelection } from '@/lib/appSelection';
 import { signOut } from '@/lib/auth';
 import { supabase } from '@/lib/supabase';
 
+// App.tsx는 Web 앱의 라우팅과 인증 상태를 한곳에서 관리한다.
+// 각 페이지는 selection(appId, country)을 공유하며, API 호출은 페이지별로 나눈다.
 const HomePage = lazy(() => import('@/routes/HomePage').then((module) => ({ default: module.HomePage })));
 const AnalyzePage = lazy(() => import('@/routes/AnalyzePage').then((module) => ({ default: module.AnalyzePage })));
 const LoginPage = lazy(() => import('@/routes/LoginPage').then((module) => ({ default: module.LoginPage })));
@@ -22,6 +24,7 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [selection, setSelection] = useState(readSelection);
 
+  // 현재 브라우저 세션에 유효한 Supabase access token이 있는지 확인한다.
   const refreshSession = async () => {
     if (!supabase) {
       setLoggedIn(false);
@@ -50,10 +53,6 @@ export default function App() {
 
     return () => subscription.unsubscribe();
   }, []);
-
-  useEffect(() => {
-    persistSelection(selection);
-  }, [selection]);
 
   return (
     <BrowserRouter>

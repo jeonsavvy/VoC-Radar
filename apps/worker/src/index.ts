@@ -12,7 +12,12 @@ import type {
   UpsertReviewRequest,
 } from './types';
 
-// 공통 응답/타임아웃 기본값
+// index.ts는 VoC-Radar의 단일 API 진입점이다.
+// 공개 조회, 로그인 사용자 작업 제어, n8n 내부 파이프라인 호출을 한 파일에서 나눈다.
+
+// -----------------------------------------------------------------------------
+// 공통 응답 / 외부 호출 기본값
+// -----------------------------------------------------------------------------
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
 };
@@ -44,7 +49,7 @@ const boolFromEnv = (value: string | undefined, fallback: boolean) => {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 };
 
-// 모든 응답에 CORS 헤더를 통일해서 붙인다.
+// 모든 응답은 같은 CORS 정책을 사용한다.
 function getCorsHeaders(env: Env) {
   return {
     'access-control-allow-origin': env.CORS_ORIGIN || '*',
@@ -76,8 +81,10 @@ function jsonResponse(env: Env, status: number, payload: JsonValue) {
   );
 }
 
-// 외부 호출용 공통 fetch 래퍼:
-// timeout + retry를 기본 적용한다.
+// fetchWithRetry는 Worker가 외부 시스템과 통신할 때 지키는 기본 규칙이다.
+// - timeout을 강제한다.
+// - GET 계열만 재시도한다.
+// - 재시도 여부는 idempotent 플래그로 제어한다.
 async function fetchWithRetry(
   env: Env,
   url: string,
@@ -114,6 +121,10 @@ async function fetchWithRetry(
 
   throw new Error('Fetch retry exceeded');
 }
+
+// -----------------------------------------------------------------------------
+// Supabase 호출 래퍼
+// -----------------------------------------------------------------------------
 
 // 서비스 권한(service_role)으로 Supabase를 호출한다.
 async function supabaseRequest<T>(
@@ -153,7 +164,8 @@ async function supabaseRequest<T>(
   }
 }
 
-// 사용자 토큰 기반으로 Supabase를 호출한다(RLS 적용).
+// 사용자 토큰 기반으로 Supabase를 호출한다.
+// RLS가 걸린 비공개 테이블은 이 경로로만 접근한다.
 async function supabaseUserRequest<T>(
   env: Env,
   path: string,
@@ -191,6 +203,10 @@ async function supabaseUserRequest<T>(
     throw new Error(`Supabase user response parse failed (${response.status}) on ${path}: ${message}`);
   }
 }
+
+// -----------------------------------------------------------------------------
+// 인증 / 서명 검증
+// -----------------------------------------------------------------------------
 
 // Bearer 토큰에서 사용자 ID를 확인한다.
 async function getAuthUser(env: Env, authorization: string | null): Promise<{ id: string } | null> {
@@ -241,7 +257,7 @@ function unauthorized(env: Env, message = 'unauthorized') {
   return jsonResponse(env, 401, { error: message });
 }
 
-// 내부 API 인증: x-voc-token(기본) + HMAC(레거시 호환)
+// 내부 API는 x-voc-token 또는 HMAC 서명으로만 허용한다.
 async function signMessage(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, [
     'sign',
@@ -345,6 +361,10 @@ type PrivateReviewSortBy = 'reviewed_at' | 'author' | 'rating' | 'priority' | 'c
 type SortDirection = 'asc' | 'desc';
 type NormalizedPriority = 'Critical' | 'High' | 'Normal';
 type NormalizedCategory = '버그 및 성능' | '계정 및 결제' | '콘텐츠 및 운영 정책' | '기능 및 사용성' | '긍정 리뷰 및 기타';
+
+// -----------------------------------------------------------------------------
+// 입력 정규화 / 표시용 파생 값
+// -----------------------------------------------------------------------------
 
 const ALLOWED_CATEGORIES: NormalizedCategory[] = [
   '버그 및 성능',
@@ -867,6 +887,10 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
     },
   });
 }
+
+// -----------------------------------------------------------------------------
+// Public API: 로그인 없이 읽는 집계/목록/리뷰 조회
+// -----------------------------------------------------------------------------
 
 async function handlePublicOverview(env: Env, request: Request) {
   const { searchParams } = new URL(request.url);
@@ -1529,6 +1553,10 @@ async function handlePrivateCreateJob(env: Env, request: Request) {
   });
 }
 
+// -----------------------------------------------------------------------------
+// Private API: 로그인 사용자 작업 제어
+// -----------------------------------------------------------------------------
+
 async function handlePrivateJobs(env: Env, request: Request) {
   const authorization = request.headers.get('authorization');
   if (!authorization || !authorization.startsWith('Bearer ')) {
@@ -1726,6 +1754,10 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
   });
 }
 
+// -----------------------------------------------------------------------------
+// Internal API: n8n 파이프라인 전용
+// -----------------------------------------------------------------------------
+
 async function handleInternalClaimJob(env: Env, request: Request, rawBody: string) {
   const verified = await verifySignedRequest(env, request, rawBody);
   if (!verified) {
@@ -1864,6 +1896,7 @@ function buildReviewFeedFilters(input: {
   return filters;
 }
 
+// 리뷰 피드는 검색/정렬/커서 조건을 Worker에서 한 번 더 정규화한다.
 function normalizeReviewFeedRows(rows: Array<Record<string, unknown>>, limit: number) {
   let hasNext = rows.length > limit;
   let slicedRows = rows;
@@ -2294,6 +2327,10 @@ async function handleInternalAlertEvents(env: Env, request: Request, rawBody: st
 
   return jsonResponse(env, 200, { ok: true, inserted: rows.length });
 }
+
+// -----------------------------------------------------------------------------
+// Request router
+// -----------------------------------------------------------------------------
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

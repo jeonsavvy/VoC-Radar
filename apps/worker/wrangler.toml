@@ -7,4 +7,4 @@ workers_dev = true
 DETAIL_VIEW_ENABLED = "true"
 API_TIMEOUT_MS = "10000"
 API_RETRY_COUNT = "2"
-CORS_ORIGIN = "https://voc-radar.pages.dev"
+CORS_ORIGIN = "https://example.pages.dev"

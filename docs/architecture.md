@@ -1,33 +1,62 @@
 # VoC-Radar 아키텍처
 
-## 핵심 원칙
+## 시스템 역할
 
-1. 파이프라인 실행은 n8n이 담당한다.
-2. 데이터 원본은 Supabase로 통일한다.
-3. API 진입점은 Cloudflare Worker 하나로 통일한다.
-4. 프론트엔드는 Worker API만 호출한다.
+- **Web**: 공개 대시보드, 리뷰 조회, 로그인, 수집 요청 등록
+- **Worker**: 공개/비공개/내부 API 단일 진입점, 캐시 갱신, 인증 검증
+- **Supabase**: Auth, 테이블, RLS, 집계 함수
+- **n8n**: queue claim, 리뷰 수집, AI 분석, 내부 API 호출
 
 ## 처리 흐름
 
-1. 사용자가 웹에서 분석 요청을 등록한다. (`pipeline_jobs`)
-2. Worker가 n8n webhook을 호출하거나, n8n 1분 폴링이 요청을 가져간다.
-3. n8n이 Worker 내부 API로 최근 리뷰를 수집한다. (기본 30일/120페이지, 페이지당 50건, 상한 10,000건)
-4. n8n이 기존 `review_id`를 조회해 신규 리뷰만 남긴다.
-5. n8n이 신규 리뷰를 최대 50개씩 LLM에 전달해 분석한다.
-6. 분석 결과를 Worker 내부 API로 전송한다.
-7. Worker가 Supabase(`reviews`, `review_ai`, `pipeline_runs`)에 upsert한다.
-8. publish 이벤트에서 Worker 캐시 버전을 갱신한다.
-9. 프론트는 공개/비공개 API를 통해 결과를 조회한다.
-10. 공개 대시보드는 문제(issue)·원인(reason)·액션(action) read model을 조합해 보여준다.
+1. 사용자가 Web에서 App Store ID와 국가를 선택한다.
+2. 로그인 사용자가 수집 요청을 만들면 `pipeline_jobs`에 queue가 생성된다.
+3. n8n이 queue를 claim하고 실행 컨텍스트를 만든다.
+4. n8n이 App Store RSS에서 최근 리뷰를 읽는다.
+5. Worker가 `get_existing_review_ids`로 이미 저장된 리뷰를 제거한다.
+6. n8n이 신규 리뷰를 AI에 전달해 우선순위, 유형, 요약을 만든다.
+7. Worker가 `reviews`, `review_ai`, `pipeline_runs`를 upsert한다.
+8. publish 단계에서 Worker가 공개 캐시 버전을 갱신한다.
+9. Web은 Worker의 public/private API만 호출해 결과를 보여준다.
 
-## 보안 기본값
+## API 경계
 
-- 내부 API는 `x-voc-token` 또는 서명 헤더를 검증한다.
+### Public API
+로그인 없이 읽는 데이터다.
+
+- 앱 메타
+- 대시보드 요약
+- 유형/이슈/트렌드
+- 공개 리뷰 목록
+- 최근 실행 이력
+
+### Private API
+로그인 사용자만 접근한다.
+
+- 수집 요청 생성
+- 내 작업 이력 조회
+- 작업 취소
+- 비공개 리뷰 조회
+
+### Internal API
+n8n 전용이다.
+
+- queue claim
+- 리뷰 fetch/filter
+- upsert
+- parse error 기록
+- publish
+- alert event 기록
+
+## 보안 기준
+
+- 내부 API는 `x-voc-token` 또는 HMAC 서명을 검증한다.
 - 비공개 API는 Supabase access token을 검증한다.
-- `DETAIL_VIEW_ENABLED`로 상세 화면 접근을 즉시 차단할 수 있다.
+- 상세 리뷰 접근은 `DETAIL_VIEW_ENABLED`로 즉시 차단할 수 있다.
 
-## 장애 대응
+## 운영 기준
 
-- 파싱 실패 데이터는 `parse_errors`에 기록한다.
-- 작업 취소 API로 대기/실행중 요청을 정리할 수 있다.
-- 필요 시 이전 워크플로우 JSON 재배포로 즉시 롤백한다.
+- Web은 Worker만 호출한다.
+- Worker는 Supabase와 외부 App Store RSS만 호출한다.
+- DB 스키마의 최신 기준은 bootstrap SQL에 유지한다.
+- 변경 이력은 migration SQL로 보존한다.

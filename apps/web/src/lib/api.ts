@@ -16,6 +16,8 @@ import type {
   RunSummaryItem,
 } from '@/types';
 
+// api.ts는 Web에서 Worker API를 호출할 때 사용하는 공용 클라이언트다.
+// 모든 요청은 timeout, retry, JSON 파싱 검증을 같은 규칙으로 처리한다.
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || '10000');
 const REQUEST_RETRY_COUNT = Number(import.meta.env.VITE_API_RETRY_COUNT || '2');
@@ -36,6 +38,10 @@ const isHtmlPayload = (contentType: string | null, body: string) => {
   return lowerType.includes('text/html') || trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html');
 };
 
+// fetchJson은 Web이 Worker와 통신할 때 지키는 기본 계약이다.
+// - JSON 응답만 허용한다.
+// - GET 계열 요청만 재시도한다.
+// - HTML이 오면 잘못된 API_BASE_URL로 판단한다.
 async function fetchJson<T>(
   path: string,
   options: {
@@ -232,6 +238,7 @@ export async function createPipelineJob(
   accessToken: string,
   payload: { appStoreId: string; country: string; appName?: string; note?: string },
 ) {
+  // 수집 요청 생성은 비공개 API이므로 access token이 필요하다.
   return fetchJson<CreatePipelineJobResponse>(`/api/private/jobs`, {
     method: 'POST',
     headers: {
