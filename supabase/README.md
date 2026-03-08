@@ -1,13 +1,15 @@
 # Supabase 가이드
 
-VoC-Radar의 Supabase SQL은 두 층으로 관리한다.
+VoC-Radar의 Supabase SQL은 두 층으로 관리합니다.
 
-- `20260307_voc_radar_bootstrap.sql`: 신규 설치용 최신 스키마
-- `migrations/`: 변경 이력 보존용 SQL
+- `20260307_voc_radar_bootstrap.sql`: 신규 설치용 최신 스키마입니다.
+- `migrations/`: 변경 이력 보존용 SQL입니다.
 
-## 어떤 파일을 실행해야 하나
+## 어떤 파일을 실행해야 하나요
 
 ### 신규 프로젝트
+
+아래 파일을 실행해 주시면 됩니다.
 
 ```sql
 supabase/20260307_voc_radar_bootstrap.sql
@@ -15,8 +17,8 @@ supabase/20260307_voc_radar_bootstrap.sql
 
 ### 운영 중인 프로젝트
 
-- 기존 migration 체인을 유지한다.
-- 운영 DB를 비운 뒤 bootstrap만 다시 적용하는 방식은 사용하지 않는다.
+- 기존 migration 체인을 유지해 주셔야 합니다.
+- 운영 DB를 비운 뒤 bootstrap만 다시 적용하는 방식은 사용하지 않습니다.
 
 ## bootstrap SQL에 포함된 것
 
@@ -36,10 +38,10 @@ supabase/20260307_voc_radar_bootstrap.sql
 
 ## 운영 원칙
 
-- 최신 기준은 bootstrap SQL에 반영한다.
-- 변경 이유와 순서는 migration SQL에 남긴다.
-- 신규 설치자는 bootstrap 하나만 본다.
-- 운영 유지자는 migration 이력을 기준으로 추적한다.
+- 최신 기준은 bootstrap SQL에 반영합니다.
+- 변경 이유와 순서는 migration SQL에 남깁니다.
+- 신규 설치자는 bootstrap 하나만 보시면 됩니다.
+- 운영 유지자는 migration 이력을 기준으로 추적하셔야 합니다.
 
 ## 점검 포인트
 
