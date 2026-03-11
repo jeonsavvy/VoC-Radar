@@ -2022,24 +2022,12 @@ async function handlePrivateReviews(env: Env, request: Request) {
     cursor,
   });
 
-  let data: Array<Record<string, unknown>> = [];
-  try {
-    data = await supabaseUserRequest<Array<Record<string, unknown>>>(
-      env,
-      `/rest/v1/private_review_feed?${filters.toString()}`,
-      authorization,
-      {
-        method: 'GET',
-        idempotent: true,
-      },
-    );
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'private review request failed';
-    if (message.includes('(401)') || message.includes('(403)')) {
-      return unauthorized(env, 'insufficient access');
-    }
-    throw error;
-  }
+  // private reviews는 Worker에서 access token만 검증하고, 실제 조회는 service_role로 수행한다.
+  // 이렇게 하면 view를 authenticated에 직접 노출하지 않아도 된다.
+  const data = await supabaseRequest<Array<Record<string, unknown>>>(env, `/rest/v1/private_review_feed?${filters.toString()}`, {
+    method: 'GET',
+    idempotent: true,
+  });
 
   const normalized = normalizeReviewFeedRows(data, limit);
   return jsonResponse(env, 200, {

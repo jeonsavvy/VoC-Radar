@@ -194,10 +194,12 @@ as $$
 $$;
 
 -- -----------------------------------------------------------------------------
--- view: 인증 사용자 리뷰 피드
+-- view: 리뷰 상세 read model
+-- security_invoker=true로 실행자 권한/RLS를 따르게 해 Supabase Security Definer 경고를 피한다.
+-- 직접 DB 노출은 막고 Worker가 서비스 권한으로 조회한다.
 -- -----------------------------------------------------------------------------
 drop view if exists public.private_review_feed;
-create view public.private_review_feed as
+create view public.private_review_feed with (security_invoker = true) as
 select
   r.review_id,
   r.app_store_id,
@@ -216,8 +218,8 @@ select
 from public.reviews r
 join public.review_ai ai using (review_id);
 
-revoke all on table public.private_review_feed from anon;
-grant select on table public.private_review_feed to authenticated;
+revoke all on table public.private_review_feed from anon, authenticated;
+grant select on table public.private_review_feed to service_role;
 
 -- -----------------------------------------------------------------------------
 -- public rpc: 대시보드 집계
