@@ -41,3 +41,5 @@ apps/worker/.dev.vars
 
 # Local env per app
 apps/web/.env.local
+
+apps/web/.test-dist/

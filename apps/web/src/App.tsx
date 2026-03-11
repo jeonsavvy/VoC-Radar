@@ -22,12 +22,14 @@ function RouteFallback() {
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [selection, setSelection] = useState(readSelection);
 
   // 현재 브라우저 세션에 유효한 Supabase access token이 있는지 확인한다.
   const refreshSession = async () => {
     if (!supabase) {
       setLoggedIn(false);
+      setUserEmail(null);
       return;
     }
 
@@ -35,7 +37,9 @@ export default function App() {
       data: { session },
     } = await supabase.auth.getSession();
 
-    setLoggedIn(Boolean(session?.access_token));
+    const isLoggedIn = Boolean(session?.access_token);
+    setLoggedIn(isLoggedIn);
+    setUserEmail(isLoggedIn ? session?.user?.email ?? null : null);
   };
 
   useEffect(() => {
@@ -62,6 +66,7 @@ export default function App() {
           element={
             <Shell
               loggedIn={loggedIn}
+              userEmail={userEmail}
               selection={selection}
               onSelectionChange={setSelection}
               onSignOut={() => {

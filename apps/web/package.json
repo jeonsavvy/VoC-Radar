@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "node ./scripts/run-tests.mjs"
   },
   "dependencies": {
     "@radix-ui/react-label": "^2.1.8",

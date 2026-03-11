@@ -10,6 +10,7 @@ import type { PublicAppItem, RunSummaryItem } from '@/types';
 
 type Props = {
   loggedIn: boolean;
+  userEmail?: string | null;
   onSignOut: () => void;
   selection: AppSelection;
   onSelectionChange: (next: AppSelection) => void;
@@ -37,7 +38,7 @@ function formatRunStatus(run: RunSummaryItem | null) {
   return `최근 실행 ${new Date(run.updated_at).toLocaleString()}`;
 }
 
-export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Props) {
+export function Shell({ loggedIn, userEmail, onSignOut, selection, onSelectionChange }: Props) {
   const [appName, setAppName] = useState<string | null>(null);
   const [recentAnalyzedApps, setRecentAnalyzedApps] = useState<PublicAppItem[]>([]);
   const [latestRun, setLatestRun] = useState<RunSummaryItem | null>(null);
@@ -118,10 +119,17 @@ export function Shell({ loggedIn, onSignOut, selection, onSelectionChange }: Pro
 
             <div className="flex flex-wrap items-center gap-2">
               {loggedIn ? (
-                <Button variant="outline" onClick={onSignOut}>
-                  <LogOut className="size-4" />
-                  로그아웃
-                </Button>
+                <>
+                  <div className="inline-flex max-w-full items-center rounded-full border border-border bg-panel px-3 py-2 text-sm font-medium text-foreground">
+                    <span className="truncate" title={userEmail || undefined}>
+                      {userEmail || '로그인됨'}
+                    </span>
+                  </div>
+                  <Button variant="outline" onClick={onSignOut}>
+                    <LogOut className="size-4" />
+                    로그아웃
+                  </Button>
+                </>
               ) : (
                 <Button asChild>
                   <NavLink to="/login">

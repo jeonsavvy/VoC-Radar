@@ -16,6 +16,10 @@ type Props = {
   onSignedIn: () => Promise<void>;
 };
 
+export function validateSignupPasswords(password: string, confirmPassword: string) {
+  return password === confirmPassword ? null : '비밀번호가 일치하지 않습니다.';
+}
+
 export function LoginPage({ onSignedIn }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -23,6 +27,7 @@ export function LoginPage({ onSignedIn }: Props) {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -32,6 +37,15 @@ export function LoginPage({ onSignedIn }: Props) {
     event.preventDefault();
     setMessage(null);
     setError(null);
+
+    if (mode === 'signup') {
+      const passwordError = validateSignupPasswords(password, confirmPassword);
+      if (passwordError) {
+        setError(passwordError);
+        return;
+      }
+    }
+
     setLoading(true);
 
     try {
@@ -41,6 +55,7 @@ export function LoginPage({ onSignedIn }: Props) {
 
       if (mode === 'signup') {
         await signUpWithPassword(email, password);
+        setConfirmPassword('');
         setMessage('회원가입이 완료되었습니다. 이메일 인증 후 로그인하세요.');
         setSearchParams({});
         return;
@@ -76,7 +91,15 @@ export function LoginPage({ onSignedIn }: Props) {
             <p className="mt-2 text-sm text-muted-foreground">회원가입 후 이메일 인증을 마쳐야 수집 실행을 사용할 수 있습니다.</p>
           </div>
 
-          <Tabs value={mode} onValueChange={(value) => setSearchParams(value === 'signup' ? { mode: 'signup' } : {})}>
+          <Tabs
+            value={mode}
+            onValueChange={(value) => {
+              setMessage(null);
+              setError(null);
+              setConfirmPassword('');
+              setSearchParams(value === 'signup' ? { mode: 'signup' } : {});
+            }}
+          >
             <TabsList>
               <TabsTrigger value="login">로그인</TabsTrigger>
               <TabsTrigger value="signup">회원가입</TabsTrigger>
@@ -105,6 +128,19 @@ export function LoginPage({ onSignedIn }: Props) {
                     required
                   />
                 </div>
+                {mode === 'signup' ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="signup-password-confirm">비밀번호 재확인</Label>
+                    <Input
+                      id="signup-password-confirm"
+                      type="password"
+                      autoComplete="new-password"
+                      value={confirmPassword}
+                      onChange={(event) => setConfirmPassword(event.target.value)}
+                      required={mode === 'signup'}
+                    />
+                  </div>
+                ) : null}
 
                 <Button type="submit" size="lg" className="w-full" disabled={loading}>
                   {loading ? (mode === 'signup' ? '회원가입 처리 중...' : '로그인 중...') : mode === 'signup' ? '회원가입' : '로그인'}
