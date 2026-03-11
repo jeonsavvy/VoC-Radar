@@ -52,6 +52,7 @@ n8n 전용입니다.
 
 - 내부 API는 `x-voc-token` 또는 HMAC 서명을 검증합니다.
 - 비공개 API는 Supabase access token을 검증합니다.
+- 리뷰 상세 read model(`private_review_feed`)은 `security_invoker=true`를 사용하며 직접 `authenticated`에 노출하지 않습니다. Worker가 서버 권한으로 조회합니다.
 - 상세 리뷰 접근은 `DETAIL_VIEW_ENABLED`로 즉시 차단할 수 있습니다.
 
 ## 운영 기준

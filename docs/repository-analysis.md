@@ -80,7 +80,7 @@ VoC-Radar는 App Store 리뷰를 수집해 AI 분류 결과와 함께 공개 대
 - `pipeline_jobs`: Web 수집 요청 queue입니다.
 
 ### view
-- `private_review_feed`: 리뷰 원문과 AI 분류를 합친 조회용 view입니다.
+- `private_review_feed`: 리뷰 원문과 AI 분류를 합친 상세 조회용 read model view입니다. `security_invoker=true`이며 Worker가 service_role로 조회합니다.
 
 ### 함수
 - `normalize_review_category`: 표시용 유형 정규화 함수입니다.

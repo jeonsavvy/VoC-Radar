@@ -41,6 +41,12 @@ supabase/20260307_voc_radar_bootstrap.sql
 
 기존 운영 환경이라면 `supabase/migrations/` 이력을 유지해 주셔야 합니다.
 
+최근 권한/보안 정리 기준에는 아래 migration이 포함됩니다.
+
+```sql
+supabase/migrations/202603110001_private_review_feed_security_invoker.sql
+```
+
 ### 3) Worker 환경변수 준비
 
 `apps/worker/.dev.vars` 또는 Cloudflare Worker 환경변수 예시는 아래와 같습니다.
@@ -142,7 +148,7 @@ npm run dev:web
 6. AI가 리뷰를 우선순위·유형·요약으로 분류합니다.
 7. Worker가 `reviews`, `review_ai`, `pipeline_runs`를 갱신합니다.
 8. publish 단계에서 공개 캐시 버전을 갱신합니다.
-9. Web이 공개/비공개 API를 호출해 결과를 보여드립니다.
+9. Web이 공개/비공개 API를 호출해 결과를 보여드립니다. 비공개 리뷰 상세는 Worker가 access token을 검증한 뒤 서버 권한으로 조회합니다.
 
 ## 검증
 
