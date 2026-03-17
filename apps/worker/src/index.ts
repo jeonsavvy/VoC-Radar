@@ -204,6 +204,17 @@ async function supabaseUserRequest<T>(
   }
 }
 
+async function runSupabaseKeepalive(env: Env): Promise<void> {
+  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY || !env.SUPABASE_ANON_KEY) {
+    return;
+  }
+
+  await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/apps?select=app_store_id&limit=1', {
+    method: 'GET',
+    idempotent: true,
+  });
+}
+
 // -----------------------------------------------------------------------------
 // 인증 / 서명 검증
 // -----------------------------------------------------------------------------
@@ -2321,6 +2332,10 @@ async function handleInternalAlertEvents(env: Env, request: Request, rawBody: st
 // -----------------------------------------------------------------------------
 
 export default {
+  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(runSupabaseKeepalive(env));
+  },
+
   async fetch(request: Request, env: Env): Promise<Response> {
     if (request.method === 'OPTIONS') {
       return withCors(env, new Response(null, { status: 204 }));
