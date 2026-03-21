@@ -116,6 +116,8 @@ npm run dev:web
 
 ## API 개요
 
+운영 Worker에서 `CORS_ORIGIN`을 비워두면 `*` fallback이 적용됩니다. 빠른 복구에는 유용하지만, 운영 배포에서는 실제 Web 도메인을 명시해 두는 편이 안전합니다.
+
 ### Public
 
 - `GET /api/health`

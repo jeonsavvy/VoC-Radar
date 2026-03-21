@@ -1,24 +1,17 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { Shell } from '@/components/Shell';
 import { defaultSelection, readSelection } from '@/lib/appSelection';
 import { signOut } from '@/lib/auth';
+import { HomePage } from '@/routes/HomePage';
+import { AnalyzePage } from '@/routes/AnalyzePage';
+import { LoginPage } from '@/routes/LoginPage';
+import { ReviewsPage } from '@/routes/ReviewsPage';
 import { supabase } from '@/lib/supabase';
 
 // App.tsx는 Web 앱의 라우팅과 인증 상태를 한곳에서 관리한다.
 // 각 페이지는 selection(appId, country)을 공유하며, API 호출은 페이지별로 나눈다.
-const HomePage = lazy(() => import('@/routes/HomePage').then((module) => ({ default: module.HomePage })));
-const AnalyzePage = lazy(() => import('@/routes/AnalyzePage').then((module) => ({ default: module.AnalyzePage })));
-const LoginPage = lazy(() => import('@/routes/LoginPage').then((module) => ({ default: module.LoginPage })));
-const ReviewsPage = lazy(() => import('@/routes/ReviewsPage').then((module) => ({ default: module.ReviewsPage })));
-
-function RouteFallback() {
-  return (
-    <div className="rounded-[1rem] border border-border bg-card p-6 text-sm text-muted-foreground shadow-sm">
-      화면을 준비하는 중입니다...
-    </div>
-  );
-}
+// 운영 배포 중 새 릴리스가 나가도 route chunk mismatch가 나지 않도록 페이지 코드는 eager import로 유지한다.
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -80,39 +73,31 @@ export default function App() {
           <Route
             index
             element={
-              <Suspense fallback={<RouteFallback />}>
-                <HomePage selection={selection} />
-              </Suspense>
+              <HomePage selection={selection} />
             }
           />
           <Route
             path="analyze"
             element={
-              <Suspense fallback={<RouteFallback />}>
-                <AnalyzePage
-                  loggedIn={loggedIn}
-                  selection={selection}
-                  onSelectionChange={(next) => {
-                    setSelection(next || defaultSelection);
-                  }}
-                />
-              </Suspense>
+              <AnalyzePage
+                loggedIn={loggedIn}
+                selection={selection}
+                onSelectionChange={(next) => {
+                  setSelection(next || defaultSelection);
+                }}
+              />
             }
           />
           <Route
             path="login"
             element={
-              <Suspense fallback={<RouteFallback />}>
-                <LoginPage onSignedIn={refreshSession} />
-              </Suspense>
+              <LoginPage onSignedIn={refreshSession} />
             }
           />
           <Route
             path="reviews"
             element={
-              <Suspense fallback={<RouteFallback />}>
-                <ReviewsPage loggedIn={loggedIn} selection={selection} />
-              </Suspense>
+              <ReviewsPage loggedIn={loggedIn} selection={selection} />
             }
           />
         </Route>

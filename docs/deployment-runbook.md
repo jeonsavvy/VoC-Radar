@@ -47,6 +47,8 @@ npm run deploy:worker
 
 - `CORS_ORIGIN=https://<your-pages-domain>`
 
+비워두면 Worker는 `*`로 응답합니다. 긴급 복구에는 도움이 되지만, 운영 환경에서는 실제 Web 도메인을 명시하는 편이 안전합니다.
+
 선택 환경변수는 아래와 같습니다.
 
 - `N8N_PIPELINE_TRIGGER_URL`
