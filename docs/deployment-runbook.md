@@ -27,12 +27,12 @@ select count(*) from public.pipeline_jobs;
 npm run deploy:worker
 ```
 
-이 Worker는 `apps/worker/wrangler.toml`의 cron 설정으로 **12시간마다 Supabase keepalive 조회**를 실행합니다. Supabase Free 플랜의 저활동 자동 pause 경고를 줄이기 위한 용도입니다.
+이 Worker는 `apps/worker/wrangler.toml`의 cron 설정으로 **1시간마다 Supabase keepalive 조회 2회**를 실행합니다. Supabase Free 플랜의 저활동 자동 pause 경고를 줄이기 위한 용도입니다.
 
 주의 사항은 아래와 같습니다.
 
 - `/api/health`는 Supabase를 직접 조회하지 않으므로 keepalive 경로가 아닙니다.
-- 실제 keepalive는 Worker의 scheduled handler가 `apps` 테이블에 `limit=1` 조회를 보내는 방식입니다.
+- 실제 keepalive는 Worker의 scheduled handler가 `apps`, `pipeline_runs`에 각각 `limit=1` 조회를 보내는 방식입니다.
 - n8n의 `Schedule Trigger (Queue Polling)`를 함께 활성화하면 추가 완충 장치가 됩니다.
 
 필수 환경변수는 아래와 같습니다.

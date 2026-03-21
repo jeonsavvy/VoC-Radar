@@ -209,10 +209,16 @@ async function runSupabaseKeepalive(env: Env): Promise<void> {
     return;
   }
 
-  await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/apps?select=app_store_id&limit=1', {
-    method: 'GET',
-    idempotent: true,
-  });
+  await Promise.all([
+    supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/apps?select=app_store_id&limit=1', {
+      method: 'GET',
+      idempotent: true,
+    }),
+    supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/pipeline_runs?select=run_id&limit=1', {
+      method: 'GET',
+      idempotent: true,
+    }),
+  ]);
 }
 
 // -----------------------------------------------------------------------------
@@ -2332,8 +2338,20 @@ async function handleInternalAlertEvents(env: Env, request: Request, rawBody: st
 // -----------------------------------------------------------------------------
 
 export default {
-  async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runSupabaseKeepalive(env));
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    ctx.waitUntil(
+      runSupabaseKeepalive(env)
+        .then(() => {
+          console.log(`[keepalive] success cron=${controller.cron} at=${new Date(controller.scheduledTime).toISOString()}`);
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : 'unknown error';
+          console.error(
+            `[keepalive] failed cron=${controller.cron} at=${new Date(controller.scheduledTime).toISOString()} error=${message}`,
+          );
+          throw error;
+        }),
+    );
   },
 
   async fetch(request: Request, env: Env): Promise<Response> {

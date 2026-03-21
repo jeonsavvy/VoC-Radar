@@ -33,7 +33,7 @@ test.after(async () => {
   }
 });
 
-test('scheduled keepalive queries Supabase with a cheap GET request', async () => {
+test('scheduled keepalive performs multiple cheap Supabase GET probes', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
 
@@ -80,9 +80,13 @@ test('scheduled keepalive queries Supabase with a cheap GET request', async () =
 
     await Promise.all(pending);
 
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].method, 'GET');
+    assert.equal(calls.length, 2);
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['GET', 'GET'],
+    );
     assert.match(calls[0].url, /\/rest\/v1\/apps\?select=app_store_id&limit=1$/);
+    assert.match(calls[1].url, /\/rest\/v1\/pipeline_runs\?select=run_id&limit=1$/);
   } finally {
     globalThis.fetch = originalFetch;
   }

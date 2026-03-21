@@ -4,7 +4,7 @@ compatibility_date = "2026-02-25"
 workers_dev = true
 
 [triggers]
-crons = ["0 */12 * * *"]
+crons = ["0 * * * *"]
 
 [vars]
 DETAIL_VIEW_ENABLED = "true"
