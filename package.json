@@ -16,5 +16,8 @@
     "dev:web": "npm run dev --workspace @voc-radar/web",
     "dev:worker": "npm run dev --workspace @voc-radar/worker",
     "deploy:worker": "npm run deploy --workspace @voc-radar/worker"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.7"
   }
 }
