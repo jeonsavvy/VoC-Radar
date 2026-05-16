@@ -173,7 +173,7 @@ export function HomePage({ selection }: Props) {
           <div className="flex items-end justify-between gap-3">
             <CardTitle className="text-xl">대표 리뷰</CardTitle>
             <Button asChild variant="outline">
-              <Link to="/reviews">전체 보기</Link>
+              <Link to="/reviews">전체 리뷰 보기</Link>
             </Button>
           </div>
         </CardHeader>
