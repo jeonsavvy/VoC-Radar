@@ -12,7 +12,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cancelPipelineJobs, createPipelineJob, getMyPipelineJobs, getPublicAppMeta } from '@/lib/api';
 import { getAccessToken } from '@/lib/auth';
 import type { AppSelection } from '@/lib/appSelection';
-import type { PipelineJobItem } from '@/types';
+import type { CreatePipelineJobResponse, PipelineJobItem, PipelineTriggerResult } from '@/types';
 
 // AnalyzePage는 로그인 사용자가 수집 작업을 생성하고 취소하는 화면이다.
 // 수집 자체는 n8n이 수행하고, 이 화면은 queue 등록과 상태 조회만 담당한다.
@@ -29,6 +29,33 @@ const STATUS_BADGE: Record<PipelineJobItem['status'], 'secondary' | 'warning' | 
   failed: 'destructive',
   canceled: 'outline',
 };
+
+export function describePipelineTrigger(trigger?: PipelineTriggerResult) {
+  if (!trigger) {
+    return null;
+  }
+
+  if (trigger.dispatched) {
+    return 'n8n 트리거 호출까지 완료되었습니다.';
+  }
+
+  if (trigger.reason === 'trigger_webhook_not_configured') {
+    return 'Worker의 N8N_PIPELINE_TRIGGER_URL이 설정되지 않아 즉시 실행 트리거는 생략되었습니다. n8n 폴링 워크플로우가 꺼져 있으면 queued 상태로 남습니다.';
+  }
+
+  if (trigger.reason === 'trigger_webhook_failed') {
+    const status = trigger.statusCode ? ` HTTP ${trigger.statusCode}` : '';
+    return `n8n webhook 호출에 실패했습니다.${status} n8n workflow 활성화, webhook URL, trigger secret을 확인하세요.`;
+  }
+
+  return `n8n 즉시 실행 트리거가 처리되지 않았습니다. reason=${trigger.reason || 'unknown'}`;
+}
+
+export function formatCreateJobMessage(response: CreatePipelineJobResponse) {
+  const base = `수집 요청이 등록되었습니다. (${response.data.id})`;
+  const triggerMessage = describePipelineTrigger(response.trigger);
+  return triggerMessage ? `${base} ${triggerMessage}` : base;
+}
 
 export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
   const [note, setNote] = useState('');
@@ -113,7 +140,7 @@ export function AnalyzePage({ loggedIn, selection, onSelectionChange }: Props) {
         note: note.trim() || undefined,
       });
 
-      setMessage(`수집 요청이 등록되었습니다. (${response.data.id})`);
+      setMessage(formatCreateJobMessage(response));
       setNote('');
       await loadJobs();
     } catch (err) {

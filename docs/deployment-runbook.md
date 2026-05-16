@@ -95,6 +95,7 @@ apps/web/dist
 1. `n8n/workflow.supabase-only.json`을 import합니다.
 2. LLM credential을 연결합니다.
 3. 아래 환경변수를 입력합니다.
+4. Workflow를 **Active**로 전환합니다. 이 저장소의 export 파일은 안전한 재import를 위해 `active: false` 상태입니다. Active 전환 전에는 Web에서 queue를 등록해도 webhook trigger와 1분 polling trigger가 실행되지 않아 작업이 `queued`에 머물 수 있습니다.
 
 - `VOC_BFF_BASE_URL=https://<your-worker-domain>`
 - `PIPELINE_WEBHOOK_SECRET=<strong-secret>`
@@ -108,6 +109,10 @@ apps/web/dist
 중요 점검 항목은 아래와 같습니다.
 
 - `Basic LLM Chain.executeOnce = false`
+- `Webhook Trigger (Queue Event)`가 production webhook URL(`/webhook/voc-radar-queue-trigger`)로 접근 가능한지 확인
+- `Schedule Trigger (Queue Polling)`가 workflow Active 상태에서 1분마다 실행되는지 확인
+- `PIPELINE_WEBHOOK_SECRET` 값이 Worker의 `PIPELINE_WEBHOOK_SECRET`과 동일한지 확인
+- `N8N_PIPELINE_TRIGGER_SECRET`을 사용하는 경우 Worker와 n8n 양쪽 값이 동일한지 확인
 
 ## 5) 운영 점검
 
