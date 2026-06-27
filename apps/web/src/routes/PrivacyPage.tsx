@@ -80,7 +80,7 @@ export function PrivacyPage() {
             <CardTitle>기본 정보</CardTitle>
             <CardDescription>본 방침은 VoC-Radar 서비스에 적용됩니다.</CardDescription>
           </CardHeader>
-          <CardContent className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-3">
+          <CardContent className="grid gap-4 px-6 pb-6 pt-4 text-sm text-muted-foreground sm:grid-cols-[repeat(3,max-content)] sm:gap-x-12">
             <div>
               <p className="font-semibold text-foreground">개인정보처리자</p>
               <p className="mt-1">전찬혁</p>

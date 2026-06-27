@@ -18,7 +18,10 @@ import type {
 
 // api.ts는 Web에서 Worker API를 호출할 때 사용하는 공용 클라이언트다.
 // 모든 요청은 timeout, retry, JSON 파싱 검증을 같은 규칙으로 처리한다.
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const DEFAULT_PRODUCTION_API_BASE_URL = 'https://voc-radar-api.jeonsavvy.workers.dev';
+const configuredApiBaseUrl =
+  import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? DEFAULT_PRODUCTION_API_BASE_URL : '');
+const API_BASE_URL = configuredApiBaseUrl.replace(/\/$/, '');
 const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || '10000');
 const REQUEST_RETRY_COUNT = Number(import.meta.env.VITE_API_RETRY_COUNT || '2');
 

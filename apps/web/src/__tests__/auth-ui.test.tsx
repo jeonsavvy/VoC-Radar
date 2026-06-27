@@ -69,6 +69,14 @@ async function main() {
     assert.doesNotMatch(html, /App Store ID를 직접 입력/);
   });
 
+  await test('API client keeps a production Worker fallback when Pages build env is missing', () => {
+    const source = readFileSync('src/lib/api.ts', 'utf8');
+
+    assert.match(source, /DEFAULT_PRODUCTION_API_BASE_URL/);
+    assert.match(source, /https:\/\/voc-radar-api\.jeonsavvy\.workers\.dev/);
+    assert.match(source, /import\.meta\.env\.PROD/);
+  });
+
   await test('App keeps privacy route outside the dashboard shell', () => {
     const source = readFileSync('src/App.tsx', 'utf8');
     const privacyRouteIndex = source.indexOf('path="/privacy"');

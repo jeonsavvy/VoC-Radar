@@ -10,6 +10,8 @@ VoC-Radar는 App Store 리뷰를 수집하고 분류해 공개 대시보드와 �
 - 공개 대시보드 조회
 - 공개/비공개 리뷰 조회
 - 로그인 사용자 기준 작업 이력 조회 및 취소
+- 로그인 사용자 계정 탈퇴 및 본인 작업 이력 정리
+- 공개 개인정보처리방침 페이지 제공
 - n8n 파이프라인과 Worker 내부 API 연동
 
 ## 구조 요약
@@ -25,9 +27,10 @@ VoC-Radar는 App Store 리뷰를 수집하고 분류해 공개 대시보드와 �
 ## 운영 URL
 
 - Web: `https://voc-radar.pages.dev/`
+- 개인정보처리방침: `https://voc-radar.pages.dev/privacy`
 - API: Cloudflare Worker `voc-radar-api`가 담당합니다. 실제 Worker route/base URL은 Cloudflare 환경변수와 배포 런북 기준으로 확인합니다.
 
-운영 smoke check는 Web 홈 진입, `GET /api/health`, 공개 대시보드 조회, 로그인 사용자 작업 생성/취소 흐름을 순서대로 확인합니다.
+운영 smoke check는 Web 홈 진입, 개인정보처리방침 진입, `GET /api/health`, 공개 대시보드 조회, 로그인 사용자 작업 생성/취소/탈퇴 흐름을 순서대로 확인합니다.
 
 ## 빠른 시작
 
@@ -85,6 +88,8 @@ VITE_DEFAULT_COUNTRY=kr
 # VITE_API_RETRY_COUNT=2
 ```
 
+`VITE_API_BASE_URL`이 빠진 상태로 production Pages를 직접 배포해도 기본값은 `https://voc-radar-api.jeonsavvy.workers.dev`입니다. 다른 Worker 도메인으로 배포하는 환경에서는 반드시 이 값을 명시해 주세요.
+
 ### 5) n8n 환경변수 준비
 
 `.env.example`와 `docs/deployment-runbook.md`를 기준으로 설정해 주시면 됩니다.
@@ -133,6 +138,7 @@ npm run dev:web
 - `GET /api/private/jobs?limit`
 - `POST /api/private/jobs`
 - `POST /api/private/jobs/cancel`
+- `DELETE /api/private/account`
 - `GET /api/private/reviews?...`
 
 ### Internal

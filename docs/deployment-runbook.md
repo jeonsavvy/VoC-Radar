@@ -84,6 +84,12 @@ curl https://<your-worker-domain>/api/health
 npm run build:web
 ```
 
+운영 Pages를 로컬 산출물로 직접 배포할 때는 build-time 값이 번들에 고정됩니다. 기본 production fallback은 `https://voc-radar-api.jeonsavvy.workers.dev`이지만, 다른 Worker 도메인을 쓰면 아래처럼 명시해서 빌드합니다.
+
+```bash
+$env:VITE_API_BASE_URL="https://<your-worker-domain>"; npm run build:web
+```
+
 산출물 디렉터리는 아래와 같습니다.
 
 ```bash
@@ -120,6 +126,7 @@ apps/web/dist
 - [ ] `GET /api/public/dashboard`가 200을 반환하는지 확인합니다.
 - [ ] `GET /api/public/runs`가 200을 반환하는지 확인합니다.
 - [ ] 비로그인 `GET /api/private/reviews`가 401을 반환하는지 확인합니다.
+- [ ] 비로그인 `DELETE /api/private/account`가 401을 반환하는지 확인합니다.
 - [ ] 로그인 `GET /api/private/reviews`가 200을 반환하는지 확인합니다.
 - [ ] 로그인 `POST /api/private/jobs`가 201을 반환하는지 확인합니다.
 - [ ] 로그인 `POST /api/private/jobs/cancel`가 200을 반환하는지 확인합니다.
