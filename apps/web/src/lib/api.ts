@@ -270,3 +270,12 @@ export async function cancelPipelineJobs(
     body: JSON.stringify(payload),
   });
 }
+
+export async function deleteAccount(accessToken: string) {
+  return fetchJson<{ ok: boolean; data: { deleted: boolean; canceledJobs: number } }>(`/api/private/account`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+}

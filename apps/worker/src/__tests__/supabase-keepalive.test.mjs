@@ -174,3 +174,83 @@ test('review fetch falls back to the Apple storefront review-row endpoint', asyn
     globalThis.fetch = originalFetch;
   }
 });
+
+test('private account deletion cancels running jobs before deleting the auth user', async () => {
+  const originalFetch = globalThis.fetch;
+  const userId = '11111111-1111-4111-8111-111111111111';
+  const calls = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({
+      url,
+      method: init.method ?? 'GET',
+      headers: new Headers(init.headers),
+      body: init.body ? String(init.body) : '',
+    });
+
+    if (url.endsWith('/auth/v1/user')) {
+      return new Response(JSON.stringify({ id: userId }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    if (url.includes('/rest/v1/pipeline_jobs?')) {
+      return new Response(JSON.stringify([{ id: 'job-1' }]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    if (url.endsWith(`/auth/v1/admin/users/${userId}`)) {
+      return new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ error: 'unexpected url' }), {
+      status: 500,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/private/account', {
+        method: 'DELETE',
+        headers: {
+          Authorization: 'Bearer user-token',
+        },
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key',
+        PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+        API_TIMEOUT_MS: '50',
+        API_RETRY_COUNT: '0',
+      },
+    );
+
+    const responsePayload = await response.json();
+    assert.equal(response.status, 200);
+    assert.deepEqual(responsePayload, {
+      ok: true,
+      data: {
+        deleted: true,
+        canceledJobs: 1,
+      },
+    });
+    assert.equal(calls[0].url, 'https://example.supabase.co/auth/v1/user');
+    assert.equal(calls[1].method, 'PATCH');
+    assert.match(calls[1].url, /\/rest\/v1\/pipeline_jobs\?/);
+    assert.match(calls[1].url, new RegExp(`requested_by=eq\\.${userId}`));
+    assert.equal(JSON.parse(calls[1].body).status, 'canceled');
+    assert.equal(calls[2].method, 'DELETE');
+    assert.equal(calls[2].url, `https://example.supabase.co/auth/v1/admin/users/${userId}`);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

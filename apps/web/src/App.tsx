@@ -75,10 +75,9 @@ export default function App() {
               userEmail={userEmail}
               selection={selection}
               onSelectionChange={setSelection}
-              onSignOut={() => {
-                signOut().finally(() => {
-                  void refreshSession();
-                });
+              onSignOut={async () => {
+                await signOut();
+                await refreshSession();
               }}
             />
           }

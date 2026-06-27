@@ -1,17 +1,18 @@
 import { useEffect, useState } from 'react';
-import { BellRing, LogIn, LogOut } from 'lucide-react';
+import { BellRing, LogIn, LogOut, Trash2 } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { AppSearchPicker } from '@/components/app-search-picker';
 import { Button } from '@/components/ui/button';
-import { getPublicAppMeta, getPublicApps, getRuns } from '@/lib/api';
+import { deleteAccount, getPublicAppMeta, getPublicApps, getRuns } from '@/lib/api';
 import type { AppSelection } from '@/lib/appSelection';
+import { getAccessToken } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import type { PublicAppItem, RunSummaryItem } from '@/types';
 
 type Props = {
   loggedIn: boolean;
   userEmail?: string | null;
-  onSignOut: () => void;
+  onSignOut: () => void | Promise<void>;
   selection: AppSelection;
   onSelectionChange: (next: AppSelection) => void;
 };
@@ -21,6 +22,8 @@ const NAV_ITEMS = [
   { to: '/reviews', label: '리뷰' },
   { to: '/analyze', label: '수집 실행' },
 ] as const;
+
+const ACCOUNT_DELETE_CONFIRMATION = '탈퇴';
 
 function formatRunStatus(run: RunSummaryItem | null) {
   if (!run) {
@@ -42,6 +45,10 @@ export function Shell({ loggedIn, userEmail, onSignOut, selection, onSelectionCh
   const [appName, setAppName] = useState<string | null>(null);
   const [recentAnalyzedApps, setRecentAnalyzedApps] = useState<PublicAppItem[]>([]);
   const [latestRun, setLatestRun] = useState<RunSummaryItem | null>(null);
+  const [isDeletePanelOpen, setIsDeletePanelOpen] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -107,6 +114,31 @@ export function Shell({ loggedIn, userEmail, onSignOut, selection, onSelectionCh
     };
   }, []);
 
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmation !== ACCOUNT_DELETE_CONFIRMATION || isDeletingAccount) {
+      return;
+    }
+
+    setIsDeletingAccount(true);
+    setDeleteError(null);
+
+    try {
+      const accessToken = await getAccessToken();
+      if (!accessToken) {
+        throw new Error('로그인이 필요합니다.');
+      }
+
+      await deleteAccount(accessToken);
+      await Promise.resolve(onSignOut()).catch(() => undefined);
+      window.location.assign('/');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '계정 탈퇴 처리에 실패했습니다.';
+      setDeleteError(message);
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-border bg-background/90 backdrop-blur-sm">
@@ -129,6 +161,18 @@ export function Shell({ loggedIn, userEmail, onSignOut, selection, onSelectionCh
                     <LogOut className="size-4" />
                     로그아웃
                   </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      setIsDeletePanelOpen((prev) => !prev);
+                      setDeleteError(null);
+                    }}
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    <Trash2 className="size-4" />
+                    계정 탈퇴
+                  </Button>
                 </>
               ) : (
                 <Button asChild>
@@ -140,6 +184,54 @@ export function Shell({ loggedIn, userEmail, onSignOut, selection, onSelectionCh
               )}
             </div>
           </div>
+
+          {loggedIn && isDeletePanelOpen ? (
+            <div className="rounded-2xl border border-destructive/25 bg-destructive/5 p-4 text-sm text-foreground">
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(220px,0.45fr)] md:items-end">
+                <div className="space-y-1">
+                  <p className="font-semibold text-destructive">계정 탈퇴</p>
+                  <p className="leading-6 text-muted-foreground">
+                    현재 로그인 계정을 삭제하고 진행 중인 수집 작업을 취소합니다. App Store 공개 리뷰와 분석 결과는 서비스 공용 데이터로 유지됩니다.
+                    계속하려면 입력창에 <strong className="text-foreground">{ACCOUNT_DELETE_CONFIRMATION}</strong>를 입력하세요.
+                  </p>
+                  {deleteError ? <p className="text-destructive">{deleteError}</p> : null}
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row md:flex-col">
+                  <input
+                    type="text"
+                    value={deleteConfirmation}
+                    onChange={(event) => setDeleteConfirmation(event.target.value)}
+                    aria-label="계정 탈퇴 확인 문구"
+                    placeholder={ACCOUNT_DELETE_CONFIRMATION}
+                    className="h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => {
+                        setIsDeletePanelOpen(false);
+                        setDeleteConfirmation('');
+                        setDeleteError(null);
+                      }}
+                      className="flex-1"
+                    >
+                      취소
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      disabled={deleteConfirmation !== ACCOUNT_DELETE_CONFIRMATION || isDeletingAccount}
+                      onClick={handleDeleteAccount}
+                      className="flex-1"
+                    >
+                      {isDeletingAccount ? '처리 중...' : '영구 탈퇴'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.7fr)]">
             <div className="space-y-3">

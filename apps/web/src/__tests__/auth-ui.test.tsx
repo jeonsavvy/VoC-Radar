@@ -48,6 +48,7 @@ async function main() {
 
     assert.match(html, /owner@example\.com/);
     assert.match(html, /로그아웃/);
+    assert.match(html, /계정 탈퇴/);
     assert.match(html, /개인정보처리방침/);
     assert.match(html, /href="\/privacy"/);
   });

@@ -53,7 +53,7 @@ const boolFromEnv = (value: string | undefined, fallback: boolean) => {
 function getCorsHeaders(env: Env) {
   return {
     'access-control-allow-origin': env.CORS_ORIGIN || '*',
-    'access-control-allow-methods': 'GET,POST,OPTIONS',
+    'access-control-allow-methods': 'GET,POST,DELETE,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization,x-voc-signature,x-voc-timestamp,x-voc-token,x-idempotency-key',
     'access-control-max-age': '86400',
   };
@@ -219,6 +219,23 @@ async function runSupabaseKeepalive(env: Env): Promise<void> {
       idempotent: true,
     }),
   ]);
+}
+
+async function deleteSupabaseAuthUser(env: Env, userId: string): Promise<void> {
+  const response = await fetchWithRetry(env, `${env.SUPABASE_URL}/auth/v1/admin/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    headers: {
+      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+      'content-type': 'application/json',
+    },
+    idempotent: false,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Supabase auth delete failed (${response.status}): ${text || response.statusText}`);
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -1762,6 +1779,43 @@ async function handlePrivateCancelJobs(env: Env, request: Request) {
   });
 }
 
+async function handlePrivateDeleteAccount(env: Env, request: Request) {
+  const authorization = request.headers.get('authorization');
+  const user = await getAuthUser(env, authorization);
+  if (!user) {
+    return unauthorized(env, 'invalid access token');
+  }
+
+  const now = new Date().toISOString();
+  const updatedRows = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/pipeline_jobs?requested_by=eq.${encodeURIComponent(user.id)}&status=in.(queued,running)`,
+    {
+      method: 'PATCH',
+      headers: {
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify({
+        status: 'canceled',
+        error_message: 'Canceled by account deletion',
+        finished_at: now,
+        updated_at: now,
+      }),
+      idempotent: true,
+    },
+  );
+
+  await deleteSupabaseAuthUser(env, user.id);
+
+  return jsonResponse(env, 200, {
+    ok: true,
+    data: {
+      deleted: true,
+      canceledJobs: updatedRows.length,
+    },
+  });
+}
+
 async function handleInternalFilterNewReviews(env: Env, request: Request, rawBody: string) {
   const verified = await verifySignedRequest(env, request, rawBody);
   if (!verified) {
@@ -2506,6 +2560,10 @@ export default {
       // Private API: 로그인 사용자 전용 데이터/작업 제어
       if (request.method === 'GET' && url.pathname === '/api/private/jobs') {
         return await handlePrivateJobs(env, request);
+      }
+
+      if (request.method === 'DELETE' && url.pathname === '/api/private/account') {
+        return await handlePrivateDeleteAccount(env, request);
       }
 
       if (request.method === 'POST' && url.pathname === '/api/private/jobs/cancel') {
