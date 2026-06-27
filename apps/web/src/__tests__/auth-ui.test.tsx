@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { Shell } from '@/components/Shell';
@@ -51,13 +52,31 @@ async function main() {
     assert.match(html, /href="\/privacy"/);
   });
 
-  await test('PrivacyPage renders operator contact and effective date', () => {
-    const html = renderToStaticMarkup(<PrivacyPage />);
+  await test('PrivacyPage renders as a standalone public page with return navigation', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <PrivacyPage />
+      </MemoryRouter>,
+    );
 
     assert.match(html, /개인정보처리자/);
     assert.match(html, /전찬혁/);
     assert.match(html, /jeonsavvy@gmail\.com/);
     assert.match(html, /2026년 3월 1일/);
+    assert.match(html, /대시보드로 돌아가기/);
+    assert.match(html, /href="\/"/);
+    assert.doesNotMatch(html, /App Store ID를 직접 입력/);
+  });
+
+  await test('App keeps privacy route outside the dashboard shell', () => {
+    const source = readFileSync('src/App.tsx', 'utf8');
+    const privacyRouteIndex = source.indexOf('path="/privacy"');
+    const shellRouteIndex = source.indexOf('<Shell');
+
+    assert.ok(privacyRouteIndex > -1, 'privacy route should be registered');
+    assert.ok(shellRouteIndex > -1, 'dashboard shell should still be registered');
+    assert.ok(privacyRouteIndex < shellRouteIndex, 'privacy route should be a sibling before the shell route');
+    assert.doesNotMatch(source.slice(shellRouteIndex), /path="privacy"/);
   });
 
   await test('LoginPage shows a password confirmation field in signup mode', () => {

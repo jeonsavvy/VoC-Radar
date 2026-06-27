@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/page-header';
 
@@ -51,48 +52,72 @@ const PRIVACY_SECTIONS = [
 
 export function PrivacyPage() {
   return (
-    <div className="space-y-6">
-      <PageHeader
-        eyebrow="Privacy"
-        title="개인정보처리방침"
-        description="VoC-Radar는 서비스 제공에 필요한 최소한의 개인정보를 처리합니다."
-      />
+    <div className="min-h-screen bg-background">
+      <header className="border-b border-border bg-background/95 backdrop-blur-sm">
+        <div className="mx-auto flex w-full max-w-[960px] flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6">
+          <Link to="/" className="inline-flex items-center gap-3 text-foreground">
+            <img src="/assets/voc-radar-mark.svg" alt="" className="size-10 rounded-xl border border-border bg-card p-1.5" />
+            <span className="text-sm font-semibold">VoC-Radar</span>
+          </Link>
+          <Link
+            to="/"
+            className="rounded-full border border-border bg-card px-4 py-2 text-sm font-medium text-foreground transition-colors hover:border-primary/40 hover:bg-accent"
+          >
+            대시보드로 돌아가기
+          </Link>
+        </div>
+      </header>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>기본 정보</CardTitle>
-          <CardDescription>본 방침은 VoC-Radar 서비스에 적용됩니다.</CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-3">
-          <div>
-            <p className="font-semibold text-foreground">개인정보처리자</p>
-            <p className="mt-1">전찬혁</p>
-          </div>
-          <div>
-            <p className="font-semibold text-foreground">개인정보 문의</p>
-            <p className="mt-1">jeonsavvy@gmail.com</p>
-          </div>
-          <div>
-            <p className="font-semibold text-foreground">시행일</p>
-            <p className="mt-1">2026년 3월 1일</p>
-          </div>
-        </CardContent>
-      </Card>
+      <main className="mx-auto w-full max-w-[960px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
+        <PageHeader
+          eyebrow="Privacy"
+          title="개인정보처리방침"
+          description="VoC-Radar는 서비스 제공에 필요한 최소한의 개인정보를 처리합니다."
+        />
 
-      {PRIVACY_SECTIONS.map((section) => (
-        <Card key={section.title}>
+        <Card>
           <CardHeader>
-            <CardTitle>{section.title}</CardTitle>
+            <CardTitle>기본 정보</CardTitle>
+            <CardDescription>본 방침은 VoC-Radar 서비스에 적용됩니다.</CardDescription>
           </CardHeader>
-          <CardContent>
-            <ul className="list-disc space-y-2 pl-5 text-sm leading-7 text-muted-foreground">
-              {section.body.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
+          <CardContent className="grid gap-3 text-sm text-muted-foreground sm:grid-cols-3">
+            <div>
+              <p className="font-semibold text-foreground">개인정보처리자</p>
+              <p className="mt-1">전찬혁</p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">개인정보 문의</p>
+              <p className="mt-1">jeonsavvy@gmail.com</p>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground">시행일</p>
+              <p className="mt-1">2026년 3월 1일</p>
+            </div>
           </CardContent>
         </Card>
-      ))}
+
+        {PRIVACY_SECTIONS.map((section) => (
+          <Card key={section.title}>
+            <CardHeader>
+              <CardTitle>{section.title}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="list-disc space-y-2 pl-5 text-sm leading-7 text-muted-foreground">
+                {section.body.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        ))}
+      </main>
+
+      <footer className="mx-auto flex w-full max-w-[960px] flex-wrap items-center justify-center gap-x-3 gap-y-2 px-4 pb-8 text-center text-sm text-muted-foreground sm:px-6">
+        <span>© VoC-Radar</span>
+        <Link to="/" className="font-medium underline-offset-4 hover:text-foreground hover:underline">
+          대시보드
+        </Link>
+      </footer>
     </div>
   );
 }
