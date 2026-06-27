@@ -229,7 +229,12 @@ export function Shell({ loggedIn, userEmail, onSignOut, selection, onSelectionCh
         <main className="pb-10">
           <Outlet />
         </main>
-        <footer className="pt-5 text-center text-sm text-muted-foreground">© VoC-Radar</footer>
+        <footer className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 pt-5 text-center text-sm text-muted-foreground">
+          <span>© VoC-Radar</span>
+          <NavLink to="/privacy" className="font-medium underline-offset-4 hover:text-foreground hover:underline">
+            개인정보처리방침
+          </NavLink>
+        </footer>
       </div>
     </div>
   );

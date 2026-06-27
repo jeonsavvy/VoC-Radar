@@ -5,6 +5,7 @@ import { Shell } from '@/components/Shell';
 import { formatCreateJobMessage } from '@/routes/AnalyzePage';
 import * as LoginPageModule from '@/routes/LoginPage';
 import { LoginPage } from '@/routes/LoginPage';
+import { PrivacyPage } from '@/routes/PrivacyPage';
 
 async function test(name: string, fn: () => void | Promise<void>) {
   try {
@@ -46,6 +47,17 @@ async function main() {
 
     assert.match(html, /owner@example\.com/);
     assert.match(html, /로그아웃/);
+    assert.match(html, /개인정보처리방침/);
+    assert.match(html, /href="\/privacy"/);
+  });
+
+  await test('PrivacyPage renders operator contact and effective date', () => {
+    const html = renderToStaticMarkup(<PrivacyPage />);
+
+    assert.match(html, /개인정보처리자/);
+    assert.match(html, /전찬혁/);
+    assert.match(html, /jeonsavvy@gmail\.com/);
+    assert.match(html, /2026년 3월 1일/);
   });
 
   await test('LoginPage shows a password confirmation field in signup mode', () => {

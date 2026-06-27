@@ -6,6 +6,7 @@ import { signOut } from '@/lib/auth';
 import { HomePage } from '@/routes/HomePage';
 import { AnalyzePage } from '@/routes/AnalyzePage';
 import { LoginPage } from '@/routes/LoginPage';
+import { PrivacyPage } from '@/routes/PrivacyPage';
 import { ReviewsPage } from '@/routes/ReviewsPage';
 import { supabase } from '@/lib/supabase';
 
@@ -98,6 +99,12 @@ export default function App() {
             path="reviews"
             element={
               <ReviewsPage loggedIn={loggedIn} selection={selection} />
+            }
+          />
+          <Route
+            path="privacy"
+            element={
+              <PrivacyPage />
             }
           />
         </Route>
