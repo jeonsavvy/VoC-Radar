@@ -25,12 +25,12 @@ const JSON_HEADERS = {
 const DEFAULT_TIMEOUT_MS = 10000;
 const DEFAULT_RETRY_COUNT = 2;
 const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
-const ITUNES_REVIEWS_PER_PAGE = 50;
 const DEFAULT_FETCH_WINDOW_DAYS = 30;
 const MAX_FETCH_WINDOW_DAYS = 90;
 const DEFAULT_FETCH_MAX_PAGES = 120;
 const MAX_FETCH_MAX_PAGES = 200;
 const MAX_FETCH_REVIEW_CAP = 10000;
+const ITUNES_USER_REVIEW_PAGE_SIZE = 10;
 
 type JsonValue = Record<string, unknown> | unknown[];
 
@@ -803,11 +803,18 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
   const seenIds = new Set<string>();
   let pagesFetched = 0;
   let truncated = false;
+  let rssFirstPageError: string | null = null;
 
   for (let page = 1; page <= maxPages && reviews.length < limitCap; page += 1) {
-    const url = `https://itunes.apple.com/${country}/rss/customerreviews/page=${page}/limit=${ITUNES_REVIEWS_PER_PAGE}/id=${appStoreId}/sortBy=mostRecent/json`;
+    // Apple RSS currently returns the standard 50-review page without a limit segment.
+    // Keeping /limit=50/ in this path can yield an incomplete feed or a 403 from edge networks.
+    const url = `https://itunes.apple.com/${country}/rss/customerreviews/page=${page}/id=${appStoreId}/sortby=mostrecent/json`;
     const response = await fetchWithRetry(env, url, {
       method: 'GET',
+      headers: {
+        accept: 'application/json',
+        'user-agent': 'VoC-Radar/0.2',
+      },
       timeoutMs: 30000,
       retries: 2,
       idempotent: true,
@@ -816,7 +823,7 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
     if (!response.ok) {
       const text = await response.text();
       if (page === 1) {
-        throw new Error(`iTunes fetch failed (${response.status}): ${text}`);
+        rssFirstPageError = `iTunes RSS fetch failed (${response.status}): ${text}`;
       }
       break;
     }
@@ -887,6 +894,85 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
     if (addedInPage === 0) {
       break;
     }
+  }
+
+  // Some apps or Apple edge locations return an empty/blocked RSS feed.
+  // The storefront review-row endpoint is the current fallback for the KR storefront.
+  if (reviews.length === 0 && country === 'kr') {
+    for (let page = 0; page < maxPages && reviews.length < limitCap; page += 1) {
+      const startIndex = page * ITUNES_USER_REVIEW_PAGE_SIZE;
+      const endIndex = startIndex + ITUNES_USER_REVIEW_PAGE_SIZE - 1;
+      const url =
+        'https://itunes.apple.com/WebObjects/MZStore.woa/wa/userReviewsRow' +
+        `?cc=${country}&id=${appStoreId}&displayable-kind=11&startIndex=${startIndex}&endIndex=${endIndex}&sort=4`;
+      const response = await fetchWithRetry(env, url, {
+        method: 'GET',
+        headers: {
+          accept: 'application/json',
+          referer: `https://apps.apple.com/${country}/app/id${appStoreId}`,
+          'user-agent':
+            'iTunes/12.12.10 (Windows; Microsoft Windows 10 x64 Business Edition (Build 19045); x64) AppleWebKit/7613.300.10.1',
+          'x-apple-store-front': '143466-13,29',
+        },
+        timeoutMs: 30000,
+        retries: 2,
+        idempotent: true,
+      });
+
+      if (!response.ok) {
+        if (page === 0 && rssFirstPageError) {
+          throw new Error(rssFirstPageError);
+        }
+        break;
+      }
+
+      const payload = (await response.json()) as {
+        userReviewList?: Array<Record<string, unknown>>;
+      };
+      const entries = Array.isArray(payload.userReviewList) ? payload.userReviewList : [];
+      if (entries.length === 0) {
+        break;
+      }
+
+      pagesFetched += 1;
+      let reachedOlderReviews = false;
+      for (const entry of entries) {
+        const reviewId = String(entry.userReviewId || '').trim();
+        const rating = normalizeRating(entry.rating);
+        const reviewedAt = normalizeReviewedAt(entry.date);
+        const reviewedAtMs = new Date(reviewedAt).getTime();
+
+        if (!reviewId || rating <= 0 || seenIds.has(reviewId)) {
+          continue;
+        }
+        if (!Number.isFinite(reviewedAtMs) || reviewedAtMs < cutoff) {
+          reachedOlderReviews = true;
+          continue;
+        }
+
+        seenIds.add(reviewId);
+        reviews.push({
+          reviewId,
+          author: String(entry.name || 'unknown').trim(),
+          content: String(entry.body || '').trim(),
+          rating,
+          reviewedAt,
+        });
+
+        if (reviews.length >= limitCap) {
+          truncated = true;
+          break;
+        }
+      }
+
+      if (reachedOlderReviews) {
+        break;
+      }
+    }
+  }
+
+  if (reviews.length === 0 && rssFirstPageError) {
+    throw new Error(rssFirstPageError);
   }
 
   return jsonResponse(env, 200, {

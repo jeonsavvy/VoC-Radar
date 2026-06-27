@@ -91,3 +91,86 @@ test('scheduled keepalive performs multiple cheap Supabase GET probes', async ()
     globalThis.fetch = originalFetch;
   }
 });
+
+test('review fetch falls back to the Apple storefront review-row endpoint', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({
+      url,
+      headers: new Headers(init.headers),
+    });
+
+    if (url.includes('/rss/customerreviews/')) {
+      return new Response('', {
+        status: 403,
+      });
+    }
+
+    return new Response(
+      JSON.stringify({
+        userReviewList: [
+          {
+            userReviewId: 'review-1',
+            body: '새 리뷰',
+            date: new Date().toISOString(),
+            name: 'reviewer',
+            rating: 5,
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+        },
+      },
+    );
+  };
+
+  try {
+    const body = JSON.stringify({
+      appStoreId: '1018769995',
+      country: 'kr',
+      windowDays: 30,
+      maxPages: 1,
+    });
+    const request = new Request('https://worker.example/api/internal/pipeline/fetch-reviews', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-voc-token': 'pipeline-secret',
+      },
+      body,
+    });
+
+    const response = await workerModule.default.fetch(request, {
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      SUPABASE_ANON_KEY: 'anon-key',
+      PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      API_TIMEOUT_MS: '50',
+      API_RETRY_COUNT: '0',
+    });
+
+    const responseText = await response.clone().text();
+    assert.equal(response.status, 200, responseText);
+    assert.equal(calls.length, 2);
+    assert.equal(
+      calls[0].url,
+      'https://itunes.apple.com/kr/rss/customerreviews/page=1/id=1018769995/sortby=mostrecent/json',
+    );
+    assert.equal(calls[0].headers.get('accept'), 'application/json');
+    assert.equal(calls[0].headers.get('user-agent'), 'VoC-Radar/0.2');
+    assert.match(calls[1].url, /\/WebObjects\/MZStore\.woa\/wa\/userReviewsRow\?/);
+    assert.equal(calls[1].headers.get('x-apple-store-front'), '143466-13,29');
+
+    const responsePayload = JSON.parse(responseText);
+    assert.equal(responsePayload.data.totalFetched, 1);
+    assert.equal(responsePayload.data.reviews[0].reviewId, 'review-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
