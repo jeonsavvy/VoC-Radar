@@ -4,7 +4,7 @@ import { hasSupabaseConfig, supabase } from './supabase';
 // 로그인/회원가입 후 추가 화면 분기 없이 바로 사용할 수 있는 상태인지 확인한다.
 export async function signInWithPassword(email: string, password: string) {
   if (!hasSupabaseConfig || !supabase) {
-    throw new Error('Supabase 설정(VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)이 필요합니다.');
+    throw new Error('로그인을 사용할 수 없습니다.');
   }
 
   const { error } = await supabase.auth.signInWithPassword({
@@ -27,14 +27,14 @@ export async function signInWithPassword(email: string, password: string) {
 
   if (!user?.email_confirmed_at) {
     await supabase.auth.signOut();
-    throw new Error('이메일 인증 완료 후 로그인 가능합니다. 메일함의 인증 링크를 먼저 눌러주세요.');
+    throw new Error('이메일 인증 후 로그인하세요.');
   }
 }
 
 // 회원가입은 계정을 생성하고, 이메일 확인이 끝나야 실제 로그인 단계로 넘어가게 한다.
 export async function signUpWithPassword(email: string, password: string) {
   if (!hasSupabaseConfig || !supabase) {
-    throw new Error('Supabase 설정(VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY)이 필요합니다.');
+    throw new Error('회원가입을 사용할 수 없습니다.');
   }
 
   const { data, error } = await supabase.auth.signUp({
@@ -48,9 +48,7 @@ export async function signUpWithPassword(email: string, password: string) {
 
   if (data.session?.access_token) {
     await supabase.auth.signOut();
-    throw new Error(
-      '현재 Supabase Email 인증이 비활성화되어 있습니다. Supabase Dashboard > Authentication > Email 설정에서 Confirm email을 활성화하세요.',
-    );
+    throw new Error('이메일 회원가입을 사용할 수 없습니다.');
   }
 
   return {

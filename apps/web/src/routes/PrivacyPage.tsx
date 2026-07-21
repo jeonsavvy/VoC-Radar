@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { PageHeader } from '@/components/page-header';
 
 const PRIVACY_SECTIONS = [
@@ -68,16 +68,11 @@ export function PrivacyPage() {
       </header>
 
       <main className="mx-auto w-full max-w-[960px] space-y-6 px-4 py-6 sm:px-6 sm:py-8">
-        <PageHeader
-          eyebrow="Privacy"
-          title="개인정보처리방침"
-          description="VoC Radar는 서비스 제공에 필요한 최소한의 개인정보를 처리합니다."
-        />
+        <PageHeader title="개인정보처리방침" />
 
         <Card>
           <CardHeader>
             <CardTitle>기본 정보</CardTitle>
-            <CardDescription>본 방침은 VoC Radar 서비스에 적용됩니다.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4 px-6 pb-6 pt-4 text-sm text-muted-foreground sm:grid-cols-[repeat(3,max-content)] sm:gap-x-12">
             <div>

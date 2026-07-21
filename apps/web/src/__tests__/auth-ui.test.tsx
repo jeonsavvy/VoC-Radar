@@ -77,16 +77,16 @@ async function main() {
     assert.doesNotMatch(source, /DEFAULT_PRODUCTION_API_BASE_URL/);
   });
 
-  await test('Explore page presents inventory as recent public reports, not required examples', () => {
+  await test('Explore page presents recent analyses without recommendation commentary', () => {
     const source = readFileSync('src/routes/ExplorePage.tsx', 'utf8');
-    assert.match(source, /최근 공개 리포트/);
-    assert.match(source, /고정 추천이 아니라 실제 분석이 최근 게시된 앱/);
-    assert.doesNotMatch(source, /필수 앱|추천 앱/);
+    assert.match(source, /최근 분석/);
+    assert.doesNotMatch(source, /고정 추천|실제 분석|필수 앱|추천 앱|APP DIRECTORY|PUBLIC REPORTS/);
   });
 
   await test('App registers public report and request-history routes', () => {
     const source = readFileSync('src/App.tsx', 'utf8');
     assert.match(source, /path="apps\/:country\/:appId\/:tab"/);
+    assert.match(source, /Navigate to="overview"/);
     assert.match(source, /path="requests"/);
     assert.match(source, /path="privacy"/);
   });
@@ -122,7 +122,7 @@ async function main() {
       country: 'us',
     });
     assert.equal(parseAppIdentity('not an id', 'kr'), null);
-    assert.equal(reportPath('123456789', 'kr'), '/apps/kr/123456789/issues');
+    assert.equal(reportPath('123456789', 'kr'), '/apps/kr/123456789/overview');
     assert.doesNotMatch(readFileSync('src/lib/appIdentity.ts', 'utf8'), /1234567890/);
   });
 
@@ -135,6 +135,22 @@ async function main() {
     const css = readFileSync('src/styles.css', 'utf8');
     assert.match(css, /@media \(max-width: 640px\)/);
     assert.match(css, /\.issue-dialog \{ width: 100vw;/);
+  });
+
+  await test('user-facing routes omit portfolio-style explanatory labels', () => {
+    const source = [
+      'src/routes/ExplorePage.tsx',
+      'src/routes/AppReportPage.tsx',
+      'src/routes/RequestsPage.tsx',
+      'src/routes/LoginPage.tsx',
+      'src/routes/PrivacyPage.tsx',
+      'src/lib/api.ts',
+      'src/lib/auth.ts',
+    ].map((path) => readFileSync(path, 'utf8')).join('\n');
+
+    assert.doesNotMatch(source, /APP DIRECTORY|PUBLIC REPORTS|MY ANALYSIS REQUESTS|NO ANALYSIS YET/);
+    assert.doesNotMatch(source, /고정 추천이 아니라|리포트 열람은 공개되며|요청이 게시되기까지의 처리 상태를 확인합니다/);
+    assert.doesNotMatch(source, /Supabase 환경변수|Supabase Dashboard|Worker\/API 상태를 확인|VITE_SUPABASE_URL \/ VITE_SUPABASE_ANON_KEY/);
   });
 }
 

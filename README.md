@@ -5,8 +5,8 @@ VoC Radar는 앱 이름, App Store URL 또는 ID로 공개 분석 리포트를 �
 ## 제품 흐름
 
 - `/`: 앱 탐색
-- `/apps/:country/:appId/issues`: 기본 공개 리포트
-- `/apps/:country/:appId/overview`: 요약 지표와 유형·추이
+- `/apps/:country/:appId/overview`: 기본 공개 리포트
+- `/apps/:country/:appId/issues`: 이슈 목록과 근거 리뷰
 - `/apps/:country/:appId/reviews`: 공개 리뷰
 - `/requests`: 로그인 사용자의 분석 요청 진행 내역
 

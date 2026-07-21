@@ -3,7 +3,7 @@ import { MailCheck } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/page-header';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -54,7 +54,7 @@ export function LoginPage({ onSignedIn }: Props) {
 
     try {
       if (!hasSupabaseConfig) {
-        throw new Error('Supabase 환경변수가 없어 로그인을 사용할 수 없습니다. Web 빌드 환경변수를 먼저 설정하세요.');
+        throw new Error('로그인을 사용할 수 없습니다.');
       }
 
       if (mode === 'signup') {
@@ -77,13 +77,12 @@ export function LoginPage({ onSignedIn }: Props) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="로그인" description="신규 분석과 새로고침 요청은 로그인 후 사용할 수 있습니다." />
+      <PageHeader title="로그인" />
 
       <Card>
         <CardHeader>
           <div>
-            <CardTitle className="text-xl">계정 인증</CardTitle>
-            <CardDescription>분석 요청을 위해 로그인하거나 계정을 만듭니다.</CardDescription>
+            <CardTitle className="text-xl">계정</CardTitle>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">

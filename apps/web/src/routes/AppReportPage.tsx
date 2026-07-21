@@ -171,7 +171,7 @@ function ReviewsView({ appId, country }: { appId: string; country: string }) {
 type Props = { loggedIn: boolean };
 
 export function AppReportPage({ loggedIn }: Props) {
-  const { appId = '', country = 'kr', tab = 'issues' } = useParams();
+  const { appId = '', country = 'kr', tab = 'overview' } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
   const [report, setReport] = useState<PublicReport | null>(null);
@@ -211,7 +211,7 @@ export function AppReportPage({ loggedIn }: Props) {
       if (!token) throw new Error('로그인이 필요합니다.');
       const response = await requestAnalysis(token, { appStoreId: appId, country, appName: report?.app.appName || undefined });
       setRequestMessage(response.result === 'fresh'
-        ? `최근 분석이 있어 기존 결과를 유지합니다. 다음 요청 가능: ${formatDate(response.data.nextAllowedAt, true)}`
+        ? `재분석 가능: ${formatDate(response.data.nextAllowedAt, true)}`
         : response.result === 'existing' ? '이미 진행 중인 분석 요청이 있습니다.' : '분석 요청을 대기열에 등록했습니다.');
     } catch (err) {
       setRequestMessage(err instanceof Error ? err.message : '분석 요청에 실패했습니다.');
@@ -232,7 +232,7 @@ export function AppReportPage({ loggedIn }: Props) {
           </button>
         </div>
       </header>
-      {report.analysis.stale ? <div className="stale-banner">이 리포트는 24시간 이상 지난 분석입니다. 새로고침을 요청할 수 있습니다.</div> : null}
+      {report.analysis.stale ? <div className="stale-banner">마지막 분석 후 24시간이 지났습니다.</div> : null}
       {requestMessage ? <div className="request-banner" role="status">{requestMessage}<Link to="/requests">요청 내역 <ArrowRight /></Link></div> : null}
 
       <nav className="report-tabs" aria-label="리포트 보기">
@@ -242,8 +242,7 @@ export function AppReportPage({ loggedIn }: Props) {
       </nav>
 
       {report.analysis.status === 'not_analyzed' ? <section className="not-analyzed">
-        <p className="eyebrow">NO ANALYSIS YET</p><h2>아직 분석된 리뷰가 없습니다.</h2>
-        <p>로그인 후 첫 분석을 요청하면 완료된 공개 리포트로 이동할 수 있습니다.</p>
+        <h2>분석 결과 없음</h2>
         <button type="button" onClick={requestRefresh}><RefreshCw /> 분석 요청</button>
       </section> : <section className="report-content">
         {activeTab === 'issues' ? <IssuesView issues={report.issues} onSelect={setSelectedIssue} /> : null}

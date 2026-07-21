@@ -42,7 +42,7 @@ export default function App() {
     <Routes>
       <Route element={<Shell loggedIn={loggedIn} userEmail={userEmail} onSignOut={handleSignOut} />}>
         <Route index element={<ExplorePage />} />
-        <Route path="apps/:country/:appId" element={<Navigate to="issues" replace />} />
+        <Route path="apps/:country/:appId" element={<Navigate to="overview" replace />} />
         <Route path="apps/:country/:appId/:tab" element={<AppReportPage loggedIn={loggedIn} />} />
         <Route path="requests" element={<RequestsPage loggedIn={loggedIn} />} />
         <Route path="login" element={<LoginPage onSignedIn={refreshSession} />} />

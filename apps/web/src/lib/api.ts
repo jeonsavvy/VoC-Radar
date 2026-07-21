@@ -18,8 +18,7 @@ const API_BASE_URL = configuredApiBaseUrl.replace(/\/$/, '');
 const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || '10000');
 const REQUEST_RETRY_COUNT = Number(import.meta.env.VITE_API_RETRY_COUNT || '2');
 
-const CONFIG_HINT =
-  'API 응답이 JSON이 아닙니다. 통합 Worker의 /api 경로 또는 VITE_API_BASE_URL 설정을 확인하세요.';
+const SERVICE_RESPONSE_ERROR = '서비스 응답을 처리하지 못했습니다.';
 
 const shouldRetry = (method: string, status?: number) => {
   const upper = method.toUpperCase();
@@ -71,7 +70,7 @@ async function fetchJson<T>(
         }
 
         if (isHtmlPayload(response.headers.get('content-type'), text)) {
-          throw new Error(CONFIG_HINT);
+          throw new Error(SERVICE_RESPONSE_ERROR);
         }
 
         throw new Error(`API ${response.status}: ${text || response.statusText}`);
@@ -81,13 +80,13 @@ async function fetchJson<T>(
       const text = await response.text();
 
       if (isHtmlPayload(contentType, text)) {
-        throw new Error(CONFIG_HINT);
+        throw new Error(SERVICE_RESPONSE_ERROR);
       }
 
       try {
         return JSON.parse(text) as T;
       } catch {
-        throw new Error('API 응답 파싱에 실패했습니다. Worker/API 상태를 확인하세요.');
+        throw new Error(SERVICE_RESPONSE_ERROR);
       }
     } catch (error) {
       if (attempt >= retries || !shouldRetry(method)) {
@@ -98,7 +97,7 @@ async function fetchJson<T>(
     }
   }
 
-  throw new Error('요청 재시도 한도를 초과했습니다.');
+  throw new Error('요청에 실패했습니다.');
 }
 
 export async function getPublicReviews(

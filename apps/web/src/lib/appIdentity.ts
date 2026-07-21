@@ -6,6 +6,6 @@ export function parseAppIdentity(value: string, fallbackCountry = 'kr') {
   return id ? { appId: id, country: storefront || fallbackCountry.toLowerCase() } : null;
 }
 
-export function reportPath(appId: string, country = 'kr', tab = 'issues') {
+export function reportPath(appId: string, country = 'kr', tab = 'overview') {
   return `/apps/${country.toLowerCase()}/${appId}/${tab}`;
 }

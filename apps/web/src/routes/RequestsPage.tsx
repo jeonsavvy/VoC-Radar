@@ -42,10 +42,10 @@ export function RequestsPage({ loggedIn }: Props) {
     } catch (err) { setMessage(err instanceof Error ? err.message : '재시도에 실패했습니다.'); }
   };
 
-  if (!loggedIn) return <div className="auth-gate"><h1>분석 요청 내역</h1><p>로그인한 계정의 요청 상태만 확인할 수 있습니다.</p><Link to="/login?returnTo=%2Frequests">로그인 <ArrowRight /></Link></div>;
+  if (!loggedIn) return <div className="auth-gate"><h1>분석 요청 내역</h1><p>로그인이 필요합니다.</p><Link to="/login?returnTo=%2Frequests">로그인 <ArrowRight /></Link></div>;
 
   return <div className="requests-page">
-    <header className="page-title"><p className="eyebrow">MY ANALYSIS REQUESTS</p><h1>분석 요청 내역</h1><p>요청이 게시되기까지의 처리 상태를 확인합니다.</p></header>
+    <header className="page-title"><h1>분석 요청 내역</h1></header>
     {message ? <div className="request-banner" role="status">{message}</div> : null}
     {loading ? <div className="request-loading"><LoaderCircle className="is-spinning" /> 요청 내역 불러오는 중</div> : jobs.length ? <div className="job-list">
       {jobs.map((job) => {
@@ -70,7 +70,7 @@ export function RequestsPage({ loggedIn }: Props) {
           </div>
         </article>;
       })}
-    </div> : <div className="quiet-empty">아직 분석 요청 내역이 없습니다.</div>}
+    </div> : <div className="quiet-empty">요청 내역이 없습니다.</div>}
 
   </div>;
 }

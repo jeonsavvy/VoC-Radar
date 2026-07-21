@@ -17,7 +17,7 @@ Status: provisional implementation contract for the public self-service rebuild.
 ## Interaction rules
 
 - A name, App Store URL, or numeric ID uses one search field.
-- An analyzed app opens the default `issues` route in no more than two interactions.
+- An analyzed app opens the default `overview` route in no more than two interactions.
 - Public report URLs are stable: `/apps/:country/:appId/{overview|issues|reviews}`.
 - Mobile keeps the product header compact, turns issue rows into separated list items, and opens issue evidence in a full-screen sheet.
 - Every severity label comes from the cluster snapshot canonical value: `high`, `medium`, or `low`.
