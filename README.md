@@ -95,15 +95,3 @@ npm run test --workspace @voc-radar/worker
 npm run build
 npm run verify:workflow
 ```
-
-Supabase project transfer·migration, n8n import/activation, 재분석, 통합 Worker 배포와 기존 Pages 제거 절차 및 롤백은 [배포 런북](./docs/deployment-runbook.md)에 기록합니다.
-
-## 문서
-
-- [아키텍처](./docs/architecture.md)
-- [배포 런북](./docs/deployment-runbook.md)
-- [Supabase 가이드](./supabase/README.md)
-
-## 라이선스
-
-MIT
