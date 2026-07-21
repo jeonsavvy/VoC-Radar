@@ -1278,12 +1278,85 @@ async function handlePublicAppsSearch(env: Env, request: Request) {
 }
 
 type AppleCatalogItem = {
-  trackId?: number;
+  trackId?: number | string;
   trackName?: string;
   artworkUrl100?: string;
   bundleId?: string;
   sellerName?: string;
 };
+
+function decodeHtmlMetadata(value: string) {
+  return value.replace(/&(amp|quot|apos|lt|gt|nbsp|#\d+|#x[\da-f]+);/gi, (match, entity: string) => {
+    const normalized = entity.toLowerCase();
+    if (normalized === 'amp') return '&';
+    if (normalized === 'quot') return '"';
+    if (normalized === 'apos') return "'";
+    if (normalized === 'lt') return '<';
+    if (normalized === 'gt') return '>';
+    if (normalized === 'nbsp') return ' ';
+    const radix = normalized.startsWith('#x') ? 16 : 10;
+    const codePoint = Number.parseInt(normalized.replace(/^#x?/, ''), radix);
+    return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff
+      ? String.fromCodePoint(codePoint)
+      : match;
+  });
+}
+
+function extractOpenGraphContent(html: string, property: 'og:image' | 'og:title') {
+  const escapedProperty = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const propertyFirst = new RegExp(
+    `<meta[^>]+property=["']${escapedProperty}["'][^>]+content=["']([^"']+)`,
+    'i',
+  );
+  const contentFirst = new RegExp(
+    `<meta[^>]+content=["']([^"']+)["'][^>]+property=["']${escapedProperty}["']`,
+    'i',
+  );
+  const value = propertyFirst.exec(html)?.[1] || contentFirst.exec(html)?.[1] || '';
+  return decodeHtmlMetadata(value.trim());
+}
+
+function normalizeAppStoreArtworkUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || (url.hostname !== 'mzstatic.com' && !url.hostname.endsWith('.mzstatic.com'))) {
+      return null;
+    }
+    url.pathname = url.pathname.replace(/\/[^/]+$/, '/100x100bb.jpg');
+    url.search = '';
+    url.hash = '';
+    return normalizeOptionalText(url.toString(), 500);
+  } catch {
+    return null;
+  }
+}
+
+async function fetchAppStorePageMetadata(
+  env: Env,
+  appId: string,
+  country: string,
+  options: { timeoutMs?: number; retries?: number } = {},
+) {
+  const response = await fetchWithRetry(env, `https://apps.apple.com/${country}/app/id${encodeURIComponent(appId)}`, {
+    method: 'GET',
+    headers: {
+      accept: 'text/html',
+      range: 'bytes=0-16383',
+      'user-agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/136.0.0.0 Safari/537.36',
+    },
+    timeoutMs: options.timeoutMs ?? 5000,
+    retries: options.retries ?? 0,
+    idempotent: true,
+  });
+  if (!response.ok) return null;
+
+  const html = (await response.text()).slice(0, 65536);
+  const artworkUrl100 = normalizeAppStoreArtworkUrl(extractOpenGraphContent(html, 'og:image'));
+  const title = extractOpenGraphContent(html, 'og:title');
+  const trackName = normalizeOptionalText(title.replace(/\s+(?:앱\s*)?-\s*App Store.*$/i, ''), 120);
+  return artworkUrl100 || trackName ? { artworkUrl100, trackName } : null;
+}
 
 async function requestAppleCatalog(
   env: Env,
@@ -1317,11 +1390,46 @@ async function fetchAppleCatalogByIds(
   if (normalizedIds.length === 0) return [];
 
   const ids = normalizedIds.map(encodeURIComponent).join(',');
-  return requestAppleCatalog(
-    env,
-    `https://itunes.apple.com/lookup?id=${ids}&country=${country.toUpperCase()}`,
-    options,
+  let catalog: AppleCatalogItem[] = [];
+  try {
+    catalog = await requestAppleCatalog(
+      env,
+      `https://itunes.apple.com/lookup?id=${ids}&country=${country.toUpperCase()}`,
+      options,
+    );
+  } catch {
+    // App Store HTML below remains available when an edge network cannot reach the legacy lookup API.
+  }
+
+  const catalogById = new Map<string, AppleCatalogItem>();
+  for (const app of catalog) {
+    const appId = normalizeAppStoreId(String(app.trackId || ''));
+    if (appId) catalogById.set(appId, app);
+  }
+  const missingArtworkIds = normalizedIds.filter((appId) => !catalogById.get(appId)?.artworkUrl100);
+  const pageMetadata = await Promise.all(
+    missingArtworkIds.map(async (appId) => ({
+      appId,
+      metadata: await fetchAppStorePageMetadata(env, appId, country, options).catch(() => null),
+    })),
   );
+  for (const { appId, metadata } of pageMetadata) {
+    if (!metadata) continue;
+    const existing = catalogById.get(appId);
+    if (existing) {
+      existing.artworkUrl100 ||= metadata.artworkUrl100 || undefined;
+      existing.trackName ||= metadata.trackName || undefined;
+      continue;
+    }
+    const fallback: AppleCatalogItem = {
+      trackId: appId,
+      artworkUrl100: metadata.artworkUrl100 || undefined,
+      trackName: metadata.trackName || undefined,
+    };
+    catalog.push(fallback);
+    catalogById.set(appId, fallback);
+  }
+  return catalog;
 }
 
 function extractAppStoreId(value: string) {

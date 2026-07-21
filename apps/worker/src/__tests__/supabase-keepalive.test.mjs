@@ -135,7 +135,7 @@ test('public discovery batches app metadata and reuses the edge cache', async ()
 
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
-    calls.push({ url, method: init.method || 'GET' });
+    calls.push({ url, method: init.method || 'GET', headers: new Headers(init.headers) });
 
     if (url.includes('/rest/v1/pipeline_runs?')) {
       return Response.json([
@@ -150,12 +150,19 @@ test('public discovery batches app metadata and reuses the edge cache', async ()
       ]);
     }
     if (url.includes('itunes.apple.com/lookup?')) {
-      return Response.json({
-        results: [
-          { trackId: 1018769995, trackName: '당근', artworkUrl100: 'https://example.test/carrot.jpg' },
-          { trackId: 1585915174, trackName: '승리의 여신: 니케', artworkUrl100: 'https://example.test/nikke.jpg' },
-        ],
-      });
+      return new Response(null, { status: 403 });
+    }
+    if (url.includes('apps.apple.com/kr/app/id1018769995')) {
+      return new Response(
+        '<meta property="og:title" content="당근 앱 - App Store"><meta property="og:image" content="https://is1-ssl.mzstatic.com/image/thumb/Purple/carrot/AppIcon/1200x630wa.jpg">',
+        { status: 206, headers: { 'content-type': 'text/html' } },
+      );
+    }
+    if (url.includes('apps.apple.com/kr/app/id1585915174')) {
+      return new Response(
+        '<meta property="og:title" content="승리의 여신: 니케 앱 - App Store"><meta property="og:image" content="https://is1-ssl.mzstatic.com/image/thumb/Purple/nikke/AppIcon/1200x630wa.jpg">',
+        { status: 206, headers: { 'content-type': 'text/html' } },
+      );
     }
     return Response.json({ error: `unexpected ${url}` }, { status: 500 });
   };
@@ -176,19 +183,22 @@ test('public discovery batches app metadata and reuses the edge cache', async ()
     assert.equal(firstResponse.headers.get('cache-control'), 'public, max-age=120, s-maxage=120');
     assert.deepEqual(firstPayload.data.map((app) => app.appName), ['당근', '승리의 여신: 니케']);
     assert.deepEqual(firstPayload.data.map((app) => app.artworkUrl), [
-      'https://example.test/carrot.jpg',
-      'https://example.test/nikke.jpg',
+      'https://is1-ssl.mzstatic.com/image/thumb/Purple/carrot/AppIcon/100x100bb.jpg',
+      'https://is1-ssl.mzstatic.com/image/thumb/Purple/nikke/AppIcon/100x100bb.jpg',
     ]);
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 5);
     const appsCall = calls.find((call) => call.url.includes('/rest/v1/apps?'));
     const catalogCall = calls.find((call) => call.url.includes('itunes.apple.com/lookup?'));
+    const appStoreCalls = calls.filter((call) => call.url.includes('apps.apple.com/kr/app/id'));
     assert.match(appsCall.url, /app_store_id=in\.\(1018769995,1585915174\)/);
     assert.doesNotMatch(appsCall.url, /app_store_id=eq\./);
     assert.match(catalogCall.url, /id=1018769995,1585915174&country=KR/);
+    assert.equal(appStoreCalls.length, 2);
+    assert.ok(appStoreCalls.every((call) => call.headers.get('range') === 'bytes=0-16383'));
 
     const secondResponse = await workerModule.default.fetch(new Request(requestUrl), env);
     assert.equal(secondResponse.status, 200);
-    assert.equal(calls.length, 3);
+    assert.equal(calls.length, 5);
   } finally {
     globalThis.fetch = originalFetch;
     restoreCaches();
