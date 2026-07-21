@@ -117,6 +117,14 @@ if (!String(clusterUpsert?.parameters?.url || '').includes('/api/internal/pipeli
 
 const prepareUpsert = nodes.find((node) => node.name === 'Prepare Upsert Payload');
 const prepareClusterUpsert = nodes.find((node) => node.name === 'Prepare Cluster Upsert');
+const prepareClusterContext = nodes.find((node) => node.name === 'Prepare Cluster Context');
+if (
+  !String(prepareClusterContext?.parameters?.jsCode || '').includes(
+    'forceReanalysis: runContext.forceReanalysis === true',
+  )
+) {
+  fail('cluster context must preserve the reanalysis boundary');
+}
 if (!String(prepareUpsert?.parameters?.jsCode || '').includes('comparisonEligible: context.forceReanalysis !== true')) {
   fail('reanalysis must disable non-comparable change metrics');
 }

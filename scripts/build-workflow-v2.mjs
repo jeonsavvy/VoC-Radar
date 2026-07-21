@@ -160,6 +160,7 @@ return [{ json: { ...$json, payload, timestamp: Date.now().toString(), token } }
 
 setNode({
   parameters: { jsCode: `const freshReviews = $input.all().map((item) => ({ ...(item.json || {}), isExisting: false }));
+const runContext = $('Prepare Run Context').first().json || {};
 const preflight = $('Filter New Reviews via BFF').first().json?.data || {};
 const existingReviews = Array.isArray(preflight.existingExtractions) ? preflight.existingExtractions : [];
 const seen = new Set();
@@ -171,7 +172,10 @@ const reviews = [...freshReviews, ...existingReviews].filter((item) => {
 if (reviews.length === 0) return [];
 const first = freshReviews[0] || reviews[0];
 return [{ json: {
-  runId: first.runId, jobId: first.jobId || null, reviewItems: reviews,
+  runId: first.runId, jobId: first.jobId || null,
+  source: runContext.source || '',
+  forceReanalysis: runContext.forceReanalysis === true,
+  reviewItems: reviews,
   payload: { appStoreId: first.appStoreId, country: first.country || 'kr' }
 } }];` },
   type: 'n8n-nodes-base.code', typeVersion: 2, position: [3280, 0],
@@ -395,6 +399,64 @@ workflow.connections['Upsert Reviews to BFF'] = { main: [[{ node: 'Prepare Clust
 workflow.connections['Prepare Cluster Upsert'] = { main: [[{ node: 'Sign Cluster Upsert', type: 'main', index: 0 }]] };
 workflow.connections['Sign Cluster Upsert'] = { main: [[{ node: 'Upsert Clusters to BFF', type: 'main', index: 0 }]] };
 workflow.connections['Upsert Clusters to BFF'] = { main: [[{ node: 'Prepare Publish Payload', type: 'main', index: 0 }]] };
+
+// Keep the operational canvas compact enough to inspect at fit-to-screen zoom.
+// Positions are generated here so rebuilding the workflow cannot restore the
+// previous 7,600px-wide single row.
+const layout = {
+  'Schedule Trigger (Queue Polling)': [-220, -120],
+  'Webhook Trigger (Queue Event)': [-220, 100],
+  'Validate Trigger Secret': [0, 100],
+  'Prepare Claim Job Payload': [220, 0],
+  'Sign Claim Job Payload': [440, 0],
+  'Claim Job from BFF': [660, 0],
+  'Prepare Run Context': [880, 0],
+  'HTTP Request': [1100, 0],
+  'Prepare Preflight Reviews Payload': [1320, 0],
+  'Sign Preflight Reviews Payload': [1540, 0],
+  'Filter New Reviews via BFF': [1760, 0],
+  'Ensure New Reviews': [1980, 0],
+
+  'Basic LLM Chain': [0, 260],
+  'Parse JSON Response': [220, 260],
+  'Has Parse Error?': [440, 260],
+  'Filter Duplicates': [660, 260],
+  'Prepare Cluster Context': [880, 260],
+  'Sign Cluster Context': [1100, 260],
+  'Fetch Cluster Context': [1320, 260],
+  'Prepare Cluster Input': [1540, 260],
+  'Cluster Review Issues': [1760, 260],
+  'Validate Cluster Output': [1980, 260],
+  'Google Gemini Chat Model': [990, 410],
+
+  'Merge Cluster Batches': [0, 560],
+  'Consolidate Cluster Candidates': [220, 560],
+  'Validate Consolidated Clusters': [440, 560],
+  'Has Cluster Error?': [660, 560],
+  'Prepare Upsert Payload': [880, 560],
+  'Sign Upsert Payload': [1100, 560],
+  'Upsert Reviews to BFF': [1320, 560],
+  'Prepare Cluster Upsert': [1540, 560],
+  'Sign Cluster Upsert': [1760, 560],
+  'Upsert Clusters to BFF': [1980, 560],
+
+  'Check Critical Priority': [0, 860],
+  'Prepare Alert Events Payload': [220, 860],
+  'Sign Alert Events Payload': [440, 860],
+  'Send Alert Events to BFF': [660, 860],
+  'Prepare Parse Error Payload': [880, 860],
+  'Sign Parse Error Payload': [1100, 860],
+  'Send Parse Error to BFF': [1320, 860],
+  'Prepare Publish Payload': [1540, 860],
+  'Sign Publish Payload': [1760, 860],
+  'Notify Publish to BFF': [1980, 860],
+};
+
+for (const [name, position] of Object.entries(layout)) {
+  const node = byName.get(name);
+  if (!node) throw new Error(`Cannot position missing workflow node: ${name}`);
+  node.position = position;
+}
 
 await writeFile(workflowPath, JSON.stringify(workflow, null, 2) + '\n');
 console.log('Updated n8n workflow with two-stage extraction and clustering.');
