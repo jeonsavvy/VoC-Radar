@@ -93,6 +93,7 @@ async function main() {
 
   await test('public entry defers private routes and authentication dependencies', () => {
     const appSource = readFileSync('src/App.tsx', 'utf8');
+    const reportSource = readFileSync('src/routes/AppReportPage.tsx', 'utf8');
     const styles = readFileSync('src/styles.css', 'utf8');
     const headers = readFileSync('public/_headers', 'utf8');
     const search = readFileSync('src/components/GlobalSearch.tsx', 'utf8');
@@ -100,6 +101,8 @@ async function main() {
     assert.match(appSource, /lazy\(\(\) =>\s*import\('@\/routes\/AppReportPage'\)/);
     assert.match(appSource, /await import\('@\/lib\/auth'\)/);
     assert.doesNotMatch(appSource, /from '@\/lib\/(?:auth|supabase)'/);
+    assert.match(reportSource, /await import\('@\/lib\/auth'\)/);
+    assert.doesNotMatch(reportSource, /from '@\/lib\/(?:auth|supabase)'/);
     assert.doesNotMatch(styles, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
     assert.match(styles, /--font-sans: system-ui/);
     assert.match(headers, /\/assets\/\*[\s\S]*Cache-Control: public, max-age=31556952, immutable/);

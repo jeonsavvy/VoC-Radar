@@ -3,7 +3,6 @@ import { ArrowDown, ArrowRight, ArrowUp, Clock3, RefreshCw, Search, Star, X } fr
 import { Link, NavLink, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { getIssueDetail, getPublicReport, getPublicReviews, requestAnalysis } from '@/lib/api';
 import { reportPath } from '@/lib/appIdentity';
-import { getAccessToken } from '@/lib/auth';
 import type { IssueClusterItem, IssueDetail, PublicReport, ReviewItem } from '@/types';
 
 const TABS = ['overview', 'issues', 'reviews'] as const;
@@ -207,6 +206,7 @@ export function AppReportPage({ loggedIn }: Props) {
     }
     setRequesting(true); setRequestMessage(null);
     try {
+      const { getAccessToken } = await import('@/lib/auth');
       const token = await getAccessToken();
       if (!token) throw new Error('로그인이 필요합니다.');
       const response = await requestAnalysis(token, { appStoreId: appId, country, appName: report?.app.appName || undefined });
