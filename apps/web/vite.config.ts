@@ -18,9 +18,8 @@ export default defineConfig({
       output: {
         manualChunks: {
           'react-vendor': ['react', 'react-dom', 'react-router-dom'],
-          motion: ['motion'],
           supabase: ['@supabase/supabase-js'],
-          radix: ['@radix-ui/react-label', '@radix-ui/react-select', '@radix-ui/react-slot', '@radix-ui/react-tabs'],
+          radix: ['@radix-ui/react-label', '@radix-ui/react-slot', '@radix-ui/react-tabs'],
         },
       },
     },

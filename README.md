@@ -1,177 +1,102 @@
-# VoC-Radar
+# VoC Radar
 
-VoC-Radar는 App Store 리뷰를 수집하고 분류해 공개 대시보드와 리뷰 화면으로 제공하는 프로젝트입니다.
+VoC Radar는 앱 이름, App Store URL 또는 ID로 공개 분석 리포트를 찾고, 반복 이슈를 실제 리뷰 근거와 함께 확인하는 공개 리뷰 인텔리전스 도구입니다. 공개 리포트 열람은 로그인 없이 가능하며 신규 분석과 새로고침 요청만 로그인이 필요합니다.
 
-## 제공 기능
+## 제품 흐름
 
-- App Store 리뷰 수집 요청 등록
-- 기존 `review_id` 기준 중복 제거
-- AI 기반 우선순위·유형·요약 분류
-- 공개 대시보드 조회
-- 공개/비공개 리뷰 조회
-- 로그인 사용자 기준 작업 이력 조회 및 취소
-- 로그인 사용자 계정 탈퇴 및 본인 작업 이력 정리
-- 공개 개인정보처리방침 페이지 제공
-- n8n 파이프라인과 Worker 내부 API 연동
+- `/`: 앱 탐색
+- `/apps/:country/:appId/issues`: 기본 공개 리포트
+- `/apps/:country/:appId/overview`: 요약 지표와 유형·추이
+- `/apps/:country/:appId/reviews`: 공개 리뷰
+- `/requests`: 로그인 사용자의 분석 요청 진행 내역
 
-## 구조 요약
+이슈 목록은 클러스터 스냅샷의 canonical `severity`만 사용하며, 신뢰도 퍼센트 대신 정확한 근거 리뷰 수와 비교 가능한 경우의 변화율만 노출합니다.
 
-- `apps/web`: React 기반 프론트엔드입니다.
-- `apps/worker`: Cloudflare Worker API입니다.
-- `supabase/20260307_voc_radar_bootstrap.sql`: 신규 설치용 최신 스키마입니다.
-- `supabase/migrations`: 변경 이력 SQL입니다.
-- `n8n/workflow.supabase-only.json`: 운영 워크플로우입니다.
-- `docs/architecture.md`: 구조 설명 문서입니다.
-- `docs/deployment-runbook.md`: 배포 절차 문서입니다.
+## 구조
 
-## 운영 URL
+- `apps/web`: React/Vite 공개 탐색·리포트 UI
+- `apps/worker`: Web 정적 자산과 공개/비공개/내부 API를 함께 제공하는 단일 Cloudflare Worker
+- `supabase/20260307_voc_radar_bootstrap.sql`: 신규 설치용 최신 스키마
+- `supabase/migrations/202607180001_public_intelligence_v2.sql`: V2 additive migration
+- `n8n/workflow.supabase-only.json`: 리뷰 추출 → 클러스터링 → 검증·게시 workflow
+- `scripts/cluster-contract.mjs`: 리뷰 ID와 enum을 검증하는 deterministic contract
+- `DESIGN.md`: 제품 UI 계약
 
-- Web: `https://voc-radar.pages.dev/`
-- 개인정보처리방침: `https://voc-radar.pages.dev/privacy`
-- API: Cloudflare Worker `voc-radar-api`가 담당합니다. 실제 Worker route/base URL은 Cloudflare 환경변수와 배포 런북 기준으로 확인합니다.
-
-운영 smoke check는 Web 홈 진입, 개인정보처리방침 진입, `GET /api/health`, 공개 대시보드 조회, 로그인 사용자 작업 생성/취소/탈퇴 흐름을 순서대로 확인합니다.
-
-## 빠른 시작
-
-### 1) 의존성 설치
+## 로컬 실행
 
 ```bash
 npm install
-```
-
-### 2) Supabase 초기 스키마 적용
-
-신규 Supabase 프로젝트라면 아래 파일 하나만 실행해 주시면 됩니다.
-
-```sql
-supabase/20260307_voc_radar_bootstrap.sql
-```
-
-기존 운영 환경이라면 `supabase/migrations/` 이력을 유지해 주셔야 합니다.
-
-최근 권한/보안 정리 기준에는 아래 migration이 포함됩니다.
-
-```sql
-supabase/migrations/202603110001_private_review_feed_security_invoker.sql
-```
-
-### 3) Worker 환경변수 준비
-
-`apps/worker/.dev.vars` 또는 Cloudflare Worker 환경변수 예시는 아래와 같습니다.
-
-```bash
-SUPABASE_URL=https://<your-project>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
-SUPABASE_ANON_KEY=<anon-key>
-PIPELINE_WEBHOOK_SECRET=<strong-secret>
-DETAIL_VIEW_ENABLED=true
-API_TIMEOUT_MS=10000
-API_RETRY_COUNT=2
-CORS_ORIGIN=https://<your-pages-domain>
-N8N_PIPELINE_TRIGGER_URL=https://<your-n8n-domain>/webhook/voc-radar-queue-trigger
-N8N_PIPELINE_TRIGGER_SECRET=<optional-random-secret>
-```
-
-### 4) Web 환경변수 준비
-
-`apps/web/.env.local` 예시는 아래와 같습니다.
-
-```bash
-VITE_API_BASE_URL=https://<your-worker-domain>
-VITE_SUPABASE_URL=https://<your-project>.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon-key>
-VITE_DEFAULT_APP_ID=1234567890
-VITE_DEFAULT_COUNTRY=kr
-# optional
-# VITE_API_TIMEOUT_MS=10000
-# VITE_API_RETRY_COUNT=2
-```
-
-`VITE_API_BASE_URL`이 빠진 상태로 production Pages를 직접 배포해도 기본값은 `https://voc-radar-api.jeonsavvy.workers.dev`입니다. 다른 Worker 도메인으로 배포하는 환경에서는 반드시 이 값을 명시해 주세요.
-
-### 5) n8n 환경변수 준비
-
-`.env.example`와 `docs/deployment-runbook.md`를 기준으로 설정해 주시면 됩니다.
-
-| 변수 | 설명 |
-| --- | --- |
-| `VOC_BFF_BASE_URL` | Worker URL입니다. |
-| `PIPELINE_WEBHOOK_SECRET` | 내부 API 인증 토큰입니다. |
-| `VOC_FETCH_WINDOW_DAYS` | 리뷰 수집 기간입니다. |
-| `VOC_FETCH_MAX_PAGES` | 최대 수집 페이지 수입니다. |
-| `VOC_LLM_BATCH_LIMIT` | 한 번에 처리할 AI 분석 수입니다. |
-| `VOC_MODEL_VERSION` | 분석 모델 버전 라벨입니다. |
-| `VOC_ALERT_MAX_RATING` | 알림 기준 평점 상한입니다. |
-| `N8N_PIPELINE_TRIGGER_SECRET` | 선택적 webhook 검증값입니다. |
-
-### 6) 로컬 실행
-
-```bash
-# 터미널 1
 npm run dev:worker
-
-# 터미널 2
 npm run dev:web
 ```
 
-## API 개요
+Worker 로컬/운영 환경에는 기존 Supabase·pipeline secrets와 함께 아래 rollout flag를 둡니다. 현재 V2 rollout은 완료되어 기본값은 `true`이며, 장애 격리나 이전 read path 검증 때만 일시적으로 `false`로 내립니다.
 
-운영 Worker에서 `CORS_ORIGIN`을 비워두면 `*` fallback이 적용됩니다. 빠른 복구에는 유용하지만, 운영 배포에서는 실제 Web 도메인을 명시해 두는 편이 안전합니다.
+```bash
+REPORT_V2_ENABLED=true
+DETAIL_VIEW_ENABLED=true
+```
+
+Web은 가짜 기본 앱 ID를 사용하지 않습니다. 첫 화면에는 고정 추천 대신 게시 시각 기준의 최근 공개 리포트를 보여줍니다. 운영 배포에서는 API가 같은 Worker의 `/api`에 있으므로 `VITE_API_BASE_URL`을 비워 둡니다.
+
+```bash
+# 선택: 분리된 로컬 API나 임시 검증 환경에서만 설정
+# VITE_API_BASE_URL=https://<your-worker-domain>
+VITE_SUPABASE_URL=https://<your-project>.supabase.co
+VITE_SUPABASE_ANON_KEY=<anon-key>
+VITE_DEFAULT_COUNTRY=kr
+```
+
+## Canonical API
 
 ### Public
 
-- `GET /api/health`
-- `GET /api/public/apps?limit`
-- `GET /api/public/apps/search?q&limit`
-- `GET /api/public/app-meta?appId&country`
-- `GET /api/public/overview?appId&country&from&to`
-- `GET /api/public/trends?appId&country&from&to`
-- `GET /api/public/categories?appId&country&from&to`
-- `GET /api/public/issues?appId&country&from&to&limit`
-- `GET /api/public/dashboard?appId&country&from&to`
-- `GET /api/public/reviews?appId&country&page&limit&sortBy&sortDirection&rating&priority&category&search`
-- `GET /api/public/runs?appId&country&limit`
+- `GET /api/public/discover?q&country&limit`
+- `GET /api/public/report?appId&country&from&to`
+- `GET /api/public/issues?appId&country&limit`
+- `GET /api/public/issues/:issueId`
+- `GET /api/public/reviews?appId&country&page&limit&...`
 
 ### Private
 
+- `POST /api/private/jobs` → `fresh | existing | queued`
 - `GET /api/private/jobs?limit`
-- `POST /api/private/jobs`
-- `POST /api/private/jobs/cancel`
 - `DELETE /api/private/account`
-- `GET /api/private/reviews?...`
 
 ### Internal
 
 - `POST /api/internal/pipeline/claim-job`
 - `POST /api/internal/pipeline/fetch-reviews`
 - `POST /api/internal/pipeline/filter-new-reviews`
-- `POST /api/internal/pipeline/job-status`
+- `POST /api/internal/pipeline/cluster-context`
 - `POST /api/internal/pipeline/upsert-reviews`
+- `POST /api/internal/pipeline/upsert-clusters`
 - `POST /api/internal/pipeline/parse-error`
 - `POST /api/internal/pipeline/publish`
-- `POST /api/internal/pipeline/alert-events`
 
-## 운영 흐름
+기존 `dashboard/overview/categories/trends/apps/search` read model은 rollout rollback 기간에만 유지합니다. V2 운영 검증 후 별도 migration과 Web/Worker 변경으로 제거하며 영구 이중 경로로 유지하지 않습니다.
 
-1. Web에서 수집 요청을 생성합니다.
-2. Worker가 queue에 작업을 저장합니다.
-3. n8n이 queue를 claim합니다.
-4. n8n이 App Store RSS에서 최근 리뷰를 수집합니다.
-5. Worker가 기존 `review_id`를 기준으로 신규 리뷰만 남깁니다.
-6. AI가 리뷰를 우선순위·유형·요약으로 분류합니다.
-7. Worker가 `reviews`, `review_ai`, `pipeline_runs`를 갱신합니다.
-8. publish 단계에서 공개 캐시 버전을 갱신합니다.
-9. Web이 공개/비공개 API를 호출해 결과를 보여드립니다. 비공개 리뷰 상세는 Worker가 access token을 검증한 뒤 서버 권한으로 조회합니다.
+## 파이프라인 계약
+
+1. App Store 리뷰를 수집하고 기존 리뷰와 신규 리뷰를 분리합니다.
+2. 신규 리뷰만 모델에 전달해 리뷰별 category·summary를 구조화합니다.
+3. 현재 수집 window의 기존 추출 결과와 신규 결과를 합칩니다.
+4. 기존 issue cluster context와 매칭하거나 신규 cluster를 생성합니다.
+5. Worker가 존재하지 않는 review ID, 누락·중복 배정, 잘못된 enum을 차단합니다.
+6. `issue_clusters`, `issue_cluster_snapshots`, `issue_cluster_reviews`를 갱신한 뒤 검증 통과 run만 publish합니다.
 
 ## 검증
 
 ```bash
 npm run lint
 npm run typecheck
+npm run test --workspace @voc-radar/web
+npm run test --workspace @voc-radar/worker
 npm run build
 npm run verify:workflow
 ```
+
+Supabase project transfer·migration, n8n import/activation, 재분석, 통합 Worker 배포와 기존 Pages 제거 절차 및 롤백은 [배포 런북](./docs/deployment-runbook.md)에 기록합니다.
 
 ## 문서
 

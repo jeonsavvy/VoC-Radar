@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { Shell } from '@/components/Shell';
-import { formatCreateJobMessage } from '@/routes/AnalyzePage';
+import { parseAppIdentity, reportPath } from '@/lib/appIdentity';
 import * as LoginPageModule from '@/routes/LoginPage';
 import { LoginPage } from '@/routes/LoginPage';
 import { PrivacyPage } from '@/routes/PrivacyPage';
@@ -48,7 +48,7 @@ async function main() {
 
     assert.match(html, /owner@example\.com/);
     assert.match(html, /로그아웃/);
-    assert.match(html, /계정 탈퇴/);
+    assert.match(html, /분석 요청 내역/);
     assert.match(html, /개인정보처리방침/);
     assert.match(html, /href="\/privacy"/);
   });
@@ -64,28 +64,31 @@ async function main() {
     assert.match(html, /전찬혁/);
     assert.match(html, /jeonsavvy@gmail\.com/);
     assert.match(html, /2026년 3월 1일/);
-    assert.match(html, /대시보드로 돌아가기/);
+    assert.match(html, /앱 탐색으로 돌아가기/);
     assert.match(html, /href="\/"/);
     assert.doesNotMatch(html, /App Store ID를 직접 입력/);
   });
 
-  await test('API client keeps a production Worker fallback when Pages build env is missing', () => {
+  await test('API client defaults to same-origin for the unified Worker', () => {
     const source = readFileSync('src/lib/api.ts', 'utf8');
 
-    assert.match(source, /DEFAULT_PRODUCTION_API_BASE_URL/);
-    assert.match(source, /https:\/\/voc-radar-api\.jeonsavvy\.workers\.dev/);
-    assert.match(source, /import\.meta\.env\.PROD/);
+    assert.match(source, /import\.meta\.env\.VITE_API_BASE_URL \|\| ''/);
+    assert.match(source, /하나의 Worker/);
+    assert.doesNotMatch(source, /DEFAULT_PRODUCTION_API_BASE_URL/);
   });
 
-  await test('App keeps privacy route outside the dashboard shell', () => {
-    const source = readFileSync('src/App.tsx', 'utf8');
-    const privacyRouteIndex = source.indexOf('path="/privacy"');
-    const shellRouteIndex = source.indexOf('<Shell');
+  await test('Explore page presents inventory as recent public reports, not required examples', () => {
+    const source = readFileSync('src/routes/ExplorePage.tsx', 'utf8');
+    assert.match(source, /최근 공개 리포트/);
+    assert.match(source, /고정 추천이 아니라 실제 분석이 최근 게시된 앱/);
+    assert.doesNotMatch(source, /필수 앱|추천 앱/);
+  });
 
-    assert.ok(privacyRouteIndex > -1, 'privacy route should be registered');
-    assert.ok(shellRouteIndex > -1, 'dashboard shell should still be registered');
-    assert.ok(privacyRouteIndex < shellRouteIndex, 'privacy route should be a sibling before the shell route');
-    assert.doesNotMatch(source.slice(shellRouteIndex), /path="privacy"/);
+  await test('App registers public report and request-history routes', () => {
+    const source = readFileSync('src/App.tsx', 'utf8');
+    assert.match(source, /path="apps\/:country\/:appId\/:tab"/);
+    assert.match(source, /path="requests"/);
+    assert.match(source, /path="privacy"/);
   });
 
   await test('LoginPage shows a password confirmation field in signup mode', () => {
@@ -112,34 +115,26 @@ async function main() {
     );
   });
 
-  await test('AnalyzePage surfaces an unconfigured n8n trigger after job creation', () => {
-    const message = formatCreateJobMessage({
-      ok: true,
-      data: {
-        id: 'job-1',
-        app_store_id: '123456789',
-        country: 'kr',
-        app_name: null,
-        source: 'web',
-        status: 'queued',
-        run_id: null,
-        note: null,
-        error_message: null,
-        requested_at: '2026-05-01T00:00:00.000Z',
-        started_at: null,
-        finished_at: null,
-        created_at: '2026-05-01T00:00:00.000Z',
-        updated_at: '2026-05-01T00:00:00.000Z',
-      },
-      trigger: {
-        dispatched: false,
-        reason: 'trigger_webhook_not_configured',
-      },
+  await test('app identity accepts numeric ids and App Store URLs without a fake default', () => {
+    assert.deepEqual(parseAppIdentity('123456789', 'kr'), { appId: '123456789', country: 'kr' });
+    assert.deepEqual(parseAppIdentity('https://apps.apple.com/us/app/example/id987654321', 'kr'), {
+      appId: '987654321',
+      country: 'us',
     });
+    assert.equal(parseAppIdentity('not an id', 'kr'), null);
+    assert.equal(reportPath('123456789', 'kr'), '/apps/kr/123456789/issues');
+    assert.doesNotMatch(readFileSync('src/lib/appIdentity.ts', 'utf8'), /1234567890/);
+  });
 
-    assert.match(message, /수집 요청이 등록되었습니다/);
-    assert.match(message, /N8N_PIPELINE_TRIGGER_URL/);
-    assert.match(message, /queued/);
+  await test('report UI keeps evidence counts and canonical severity while hiding confidence percentages', () => {
+    const source = readFileSync('src/routes/AppReportPage.tsx', 'utf8');
+    assert.match(source, /근거 리뷰/);
+    assert.match(source, /severityLabel/);
+    assert.match(source, /changePercent == null/);
+    assert.doesNotMatch(source, /confidence/);
+    const css = readFileSync('src/styles.css', 'utf8');
+    assert.match(css, /@media \(max-width: 640px\)/);
+    assert.match(css, /\.issue-dialog \{ width: 100vw;/);
   });
 }
 

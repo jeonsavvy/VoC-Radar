@@ -1,13 +1,30 @@
-name = "voc-radar-api"
+name = "voc-radar"
 main = "src/index.ts"
 compatibility_date = "2026-02-25"
 workers_dev = true
+preview_urls = false
 
 [triggers]
 crons = ["0 * * * *"]
 
 [vars]
 DETAIL_VIEW_ENABLED = "true"
+REPORT_V2_ENABLED = "true"
 API_TIMEOUT_MS = "10000"
 API_RETRY_COUNT = "2"
-CORS_ORIGIN = "https://voc-radar.pages.dev"
+CORS_ORIGIN = "https://voc-radar.jeonsavvy.workers.dev"
+
+[secrets]
+required = [
+  "PIPELINE_WEBHOOK_SECRET",
+  "SUPABASE_ANON_KEY",
+  "SUPABASE_SERVICE_ROLE_KEY",
+  "SUPABASE_URL",
+]
+
+# Pages에서 제공하던 Vite SPA를 API와 같은 Worker에서 정적으로 제공한다.
+# /api/*만 Worker 코드를 우선 실행하고 나머지 경로는 자산 또는 SPA shell로 처리한다.
+[assets]
+directory = "../web/dist"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]

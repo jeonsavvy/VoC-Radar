@@ -11,13 +11,15 @@
     "build:web": "npm run build --workspace @voc-radar/web",
     "build:worker": "npm run build --workspace @voc-radar/worker",
     "typecheck": "npm run typecheck --workspace @voc-radar/web && npm run typecheck --workspace @voc-radar/worker",
-    "lint": "npm run lint --workspace @voc-radar/web && npm run lint --workspace @voc-radar/worker && npm run verify:workflow",
-    "verify:workflow": "node scripts/validate-workflow.js",
+    "lint": "npm run lint --workspace @voc-radar/web && npm run lint --workspace @voc-radar/worker && npm run verify:database && npm run verify:workflow",
+    "verify:database": "node --test scripts/supabase-contract.test.mjs",
+    "verify:workflow": "node scripts/validate-workflow.js && node scripts/validate-cluster-contract.mjs && node --test scripts/cluster-contract.test.mjs",
+    "verify:deploy-env": "node scripts/validate-deploy-env.mjs",
     "dev:web": "npm run dev --workspace @voc-radar/web",
     "dev:worker": "npm run dev --workspace @voc-radar/worker",
-    "deploy:worker": "npm run deploy --workspace @voc-radar/worker"
+    "deploy:worker": "npm run verify:deploy-env && npm run build:web && npm run deploy --workspace @voc-radar/worker"
   },
   "devDependencies": {
-    "esbuild": "^0.27.7"
+    "esbuild": "^0.28.1"
   }
 }

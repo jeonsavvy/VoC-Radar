@@ -56,7 +56,6 @@ for (const testFile of testFiles) {
     },
     define: {
       'import.meta.env': JSON.stringify({
-        VITE_DEFAULT_APP_ID: '1234567890',
         VITE_DEFAULT_COUNTRY: 'kr',
         VITE_API_BASE_URL: '',
         VITE_API_TIMEOUT_MS: '10000',

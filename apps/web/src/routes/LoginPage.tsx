@@ -10,8 +10,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { signInWithPassword, signUpWithPassword } from '@/lib/auth';
 import { hasSupabaseConfig } from '@/lib/supabase';
 
-// LoginPage는 수집 실행에 필요한 계정 인증 화면이다.
-// 이메일 인증이 끝난 사용자만 실제 수집 기능에 접근할 수 있다.
+// LoginPage는 신규·갱신 분석 요청에 필요한 계정 인증 화면이다.
+// 이메일 인증이 끝난 사용자만 분석 요청 기능에 접근할 수 있다.
 type Props = {
   onSignedIn: () => Promise<void>;
 };
@@ -24,6 +24,10 @@ export function LoginPage({ onSignedIn }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const mode = useMemo(() => (searchParams.get('mode') === 'signup' ? 'signup' : 'login'), [searchParams]);
+  const returnTo = useMemo(() => {
+    const value = searchParams.get('returnTo') || '/requests';
+    return value.startsWith('/') && !value.startsWith('//') ? value : '/requests';
+  }, [searchParams]);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -50,20 +54,20 @@ export function LoginPage({ onSignedIn }: Props) {
 
     try {
       if (!hasSupabaseConfig) {
-        throw new Error('Supabase 환경변수가 없어 로그인을 사용할 수 없습니다. Pages 환경변수를 먼저 설정하세요.');
+        throw new Error('Supabase 환경변수가 없어 로그인을 사용할 수 없습니다. Web 빌드 환경변수를 먼저 설정하세요.');
       }
 
       if (mode === 'signup') {
         await signUpWithPassword(email, password);
         setConfirmPassword('');
         setMessage('회원가입이 완료되었습니다. 이메일 인증 후 로그인하세요.');
-        setSearchParams({});
+        setSearchParams(returnTo === '/requests' ? {} : { returnTo });
         return;
       }
 
       await signInWithPassword(email, password);
       await onSignedIn();
-      navigate('/analyze');
+      navigate(returnTo);
     } catch (err) {
       setError(err instanceof Error ? err.message : '로그인 처리 중 오류가 발생했습니다.');
     } finally {
@@ -73,13 +77,13 @@ export function LoginPage({ onSignedIn }: Props) {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="로그인" description="수집 실행과 실행 이력 확인은 로그인 후 사용할 수 있습니다." />
+      <PageHeader title="로그인" description="신규 분석과 새로고침 요청은 로그인 후 사용할 수 있습니다." />
 
       <Card>
         <CardHeader>
           <div>
             <CardTitle className="text-xl">계정 인증</CardTitle>
-            <CardDescription>수집 실행을 위해 로그인하거나 계정을 만듭니다.</CardDescription>
+            <CardDescription>분석 요청을 위해 로그인하거나 계정을 만듭니다.</CardDescription>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -88,7 +92,7 @@ export function LoginPage({ onSignedIn }: Props) {
               <MailCheck className="size-4 text-primary" />
               이메일 인증 필요
             </p>
-            <p className="mt-2 text-sm text-muted-foreground">회원가입 후 이메일 인증을 마쳐야 수집 실행을 사용할 수 있습니다.</p>
+            <p className="mt-2 text-sm text-muted-foreground">회원가입 후 이메일 인증을 마쳐야 분석을 요청할 수 있습니다.</p>
           </div>
 
           <Tabs
@@ -97,7 +101,10 @@ export function LoginPage({ onSignedIn }: Props) {
               setMessage(null);
               setError(null);
               setConfirmPassword('');
-              setSearchParams(value === 'signup' ? { mode: 'signup' } : {});
+              const next = new URLSearchParams(searchParams);
+              if (value === 'signup') next.set('mode', 'signup');
+              else next.delete('mode');
+              setSearchParams(next);
             }}
           >
             <TabsList>

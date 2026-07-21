@@ -2,6 +2,7 @@ import type {
   AlertEventsRequest,
   CancelPipelineJobsRequest,
   ClaimJobRequest,
+  ClusterContextRequest,
   CreatePipelineJobRequest,
   Env,
   FetchReviewsRequest,
@@ -9,8 +10,10 @@ import type {
   JobStatusRequest,
   ParseErrorRequest,
   PublishRequest,
+  UpsertClustersRequest,
   UpsertReviewRequest,
 } from './types';
+import { validateClusterContract } from './cluster-contract';
 
 // index.ts는 VoC-Radar의 단일 API 진입점이다.
 // 공개 조회, 로그인 사용자 작업 제어, n8n 내부 파이프라인 호출을 한 파일에서 나눈다.
@@ -755,6 +758,24 @@ async function completePipelineJob(
   return { updated: fallbackRows.length > 0, data: fallbackRows[0] || null };
 }
 
+type PipelineStage = 'queued' | 'fetching' | 'extracting' | 'clustering' | 'publishing';
+
+async function updatePipelineJobStage(
+  env: Env,
+  jobId: string | null | undefined,
+  stage: PipelineStage | null,
+  runId?: string | null,
+) {
+  if (!isUuid(jobId)) return;
+  const patch: Record<string, unknown> = { stage, updated_at: new Date().toISOString() };
+  if (runId) patch.run_id = runId;
+  await supabaseRequest(env, `/rest/v1/pipeline_jobs?id=eq.${encodeURIComponent(String(jobId))}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+    idempotent: true,
+  });
+}
+
 function normalizeReviewedAt(rawValue: unknown) {
   const normalized = String(rawValue ?? '').trim();
   if (!normalized) {
@@ -1243,10 +1264,278 @@ async function handlePublicAppsSearch(env: Env, request: Request) {
   return jsonResponse(env, 200, { data });
 }
 
+type AppleCatalogItem = {
+  trackId?: number;
+  trackName?: string;
+  artworkUrl100?: string;
+  bundleId?: string;
+  sellerName?: string;
+};
+
+function extractAppStoreId(value: string) {
+  const trimmed = value.trim();
+  const direct = normalizeAppStoreId(trimmed);
+  if (direct) return direct;
+  const match = trimmed.match(/(?:\/id|\bid)(\d{5,20})(?:\b|[/?#])/i);
+  return normalizeAppStoreId(match?.[1]);
+}
+
+async function fetchAppleCatalog(env: Env, query: string, country: string, limit: number) {
+  const appId = extractAppStoreId(query);
+  const url = appId
+    ? `https://itunes.apple.com/lookup?id=${encodeURIComponent(appId)}&country=${country.toUpperCase()}`
+    : `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=${country.toUpperCase()}&entity=software&limit=${limit}`;
+  const response = await fetchWithRetry(env, url, {
+    method: 'GET',
+    timeoutMs: 15000,
+    retries: 2,
+    idempotent: true,
+  });
+  if (!response.ok) return [];
+  const payload = (await response.json()) as { results?: AppleCatalogItem[] };
+  return Array.isArray(payload.results) ? payload.results : [];
+}
+
+async function handlePublicDiscover(env: Env, request: Request) {
+  const { searchParams } = new URL(request.url);
+  const query = normalizeSearchKeyword(searchParams.get('q'), 180);
+  const country = normalizeCountry(searchParams.get('country'));
+  const limit = clampLimit(searchParams.get('limit'), 8, 12);
+  if (!query) {
+    const runs = await supabaseRequest<Array<Record<string, unknown>>>(
+      env,
+      `/rest/v1/pipeline_runs?select=app_store_id,country,published_at,updated_at&status=eq.published&order=published_at.desc.nullslast&limit=${limit * 4}`,
+      { method: 'GET', idempotent: true },
+    );
+    const seen = new Set<string>();
+    const recent = [];
+    for (const run of runs) {
+      const id = normalizeAppStoreId(String(run.app_store_id || ''));
+      const appCountry = normalizeCountry(String(run.country || country));
+      if (!id || seen.has(`${id}:${appCountry}`)) continue;
+      seen.add(`${id}:${appCountry}`);
+      const apps = await supabaseRequest<Array<Record<string, unknown>>>(
+        env,
+        `/rest/v1/apps?select=app_name&app_store_id=eq.${encodeURIComponent(id)}&country=eq.${encodeURIComponent(appCountry)}&limit=1`,
+        { method: 'GET', idempotent: true },
+      );
+      recent.push({
+        appStoreId: id,
+        country: appCountry,
+        appName: normalizeOptionalText(apps[0]?.app_name, 120),
+        artworkUrl: null,
+        bundleId: null,
+        developerName: null,
+        analyzed: true,
+        lastAnalyzedAt: run.published_at || run.updated_at || null,
+        source: 'catalog',
+      });
+      if (recent.length >= limit) break;
+    }
+    return jsonResponse(env, 200, { data: recent });
+  }
+
+  const appId = extractAppStoreId(query);
+  const dbFilter = appId
+    ? `app_store_id=eq.${encodeURIComponent(appId)}`
+    : `or=(app_name.ilike.*${encodeURIComponent(query)}*,app_store_id.ilike.*${encodeURIComponent(query)}*)`;
+
+  const [knownApps, appleItems, publishedRuns] = await Promise.all([
+    supabaseRequest<Array<Record<string, unknown>>>(
+      env,
+      `/rest/v1/apps?select=app_store_id,country,app_name,updated_at&${dbFilter}&order=updated_at.desc.nullslast&limit=${limit}`,
+      { method: 'GET', idempotent: true },
+    ),
+    fetchAppleCatalog(env, query, country, limit),
+    supabaseRequest<Array<Record<string, unknown>>>(
+      env,
+      '/rest/v1/pipeline_runs?select=app_store_id,country,published_at,updated_at&status=eq.published&order=published_at.desc.nullslast&limit=200',
+      { method: 'GET', idempotent: true },
+    ),
+  ]);
+
+  const analyzed = new Map<string, string>();
+  for (const run of publishedRuns) {
+    const key = `${String(run.app_store_id || '')}:${normalizeCountry(String(run.country || ''))}`;
+    if (!analyzed.has(key)) analyzed.set(key, String(run.published_at || run.updated_at || ''));
+  }
+
+  const merged = new Map<string, Record<string, unknown>>();
+  for (const app of knownApps) {
+    const id = normalizeAppStoreId(String(app.app_store_id || ''));
+    const appCountry = normalizeCountry(String(app.country || country));
+    if (!id) continue;
+    const key = `${id}:${appCountry}`;
+    merged.set(key, {
+      appStoreId: id,
+      country: appCountry,
+      appName: normalizeOptionalText(app.app_name, 120),
+      artworkUrl: null,
+      bundleId: null,
+      developerName: null,
+      analyzed: analyzed.has(key),
+      lastAnalyzedAt: analyzed.get(key) || null,
+      source: 'catalog',
+    });
+  }
+
+  for (const app of appleItems) {
+    const id = normalizeAppStoreId(String(app.trackId || ''));
+    if (!id) continue;
+    const key = `${id}:${country}`;
+    const previous = merged.get(key) || {};
+    merged.set(key, {
+      ...previous,
+      appStoreId: id,
+      country,
+      appName: normalizeOptionalText(app.trackName, 120),
+      artworkUrl: normalizeOptionalText(app.artworkUrl100, 500),
+      bundleId: normalizeOptionalText(app.bundleId, 180),
+      developerName: normalizeOptionalText(app.sellerName, 180),
+      analyzed: analyzed.has(key),
+      lastAnalyzedAt: analyzed.get(key) || null,
+      source: analyzed.has(key) ? 'catalog' : 'app_store',
+    });
+  }
+
+  const data = [...merged.values()]
+    .sort((a, b) => Number(Boolean(b.analyzed)) - Number(Boolean(a.analyzed)))
+    .slice(0, limit);
+  return jsonResponse(env, 200, { data });
+}
+
+function mapIssueCluster(row: Record<string, unknown>) {
+  return {
+    issueId: String(row.issue_id || ''),
+    title: String(row.title || ''),
+    category: String(row.category || ''),
+    severity: String(row.severity || 'low'),
+    reviewCount: Number(row.review_count || 0),
+    changePercent: row.change_percent == null ? null : Number(row.change_percent),
+    evidenceCount: Number(row.evidence_count || 0),
+    lastOccurredAt: row.last_occurred_at || null,
+    summary: String(row.summary || ''),
+    actionHint: normalizeOptionalText(row.action_hint, 300),
+    runId: String(row.run_id || ''),
+    modelVersion: String(row.model_version || ''),
+    analyzedAt: row.analyzed_at || null,
+  };
+}
+
+async function getPublicIssueClusters(env: Env, appId: string, country: string, limit = 50) {
+  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_issue_clusters', {
+    method: 'POST',
+    body: JSON.stringify({ p_app_store_id: appId, p_country: country, p_limit: limit }),
+    idempotent: true,
+  });
+  return rows.map(mapIssueCluster);
+}
+
+async function handlePublicReport(env: Env, request: Request) {
+  if (!boolFromEnv(env.REPORT_V2_ENABLED, false)) {
+    return jsonResponse(env, 404, { error: 'report_v2_disabled' });
+  }
+  const { searchParams } = new URL(request.url);
+  const appId = normalizeAppStoreId(searchParams.get('appId'));
+  const country = normalizeCountry(searchParams.get('country'));
+  const from = searchParams.get('from');
+  const to = searchParams.get('to');
+  if (!appId) return badRequest(env, 'appId is required');
+
+  const [overviewRows, categories, trends, issues, runs, apps] = await Promise.all([
+    supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_overview', {
+      method: 'POST',
+      body: JSON.stringify({ p_app_store_id: appId, p_country: country, p_from: from, p_to: to }),
+      idempotent: true,
+    }),
+    supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_categories', {
+      method: 'POST',
+      body: JSON.stringify({ p_app_store_id: appId, p_country: country, p_from: from, p_to: to }),
+      idempotent: true,
+    }),
+    supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_trends', {
+      method: 'POST',
+      body: JSON.stringify({ p_app_store_id: appId, p_country: country, p_from: from, p_to: to }),
+      idempotent: true,
+    }),
+    getPublicIssueClusters(env, appId, country),
+    supabaseRequest<Array<Record<string, unknown>>>(
+      env,
+      `/rest/v1/pipeline_runs?select=run_id,status,model_version,published_at,updated_at&app_store_id=eq.${encodeURIComponent(appId)}&country=eq.${encodeURIComponent(country)}&status=eq.published&order=published_at.desc&limit=1`,
+      { method: 'GET', idempotent: true },
+    ),
+    supabaseRequest<Array<Record<string, unknown>>>(
+      env,
+      `/rest/v1/apps?select=app_name&app_store_id=eq.${encodeURIComponent(appId)}&country=eq.${encodeURIComponent(country)}&limit=1`,
+      { method: 'GET', idempotent: true },
+    ),
+  ]);
+
+  const overview = overviewRows[0] || {};
+  const run = runs[0] || null;
+  let appName = normalizeOptionalText(apps[0]?.app_name, 120);
+  if (!appName) {
+    const catalog = await fetchAppleCatalog(env, appId, country, 1);
+    appName = normalizeOptionalText(catalog[0]?.trackName, 120);
+  }
+  const lastAnalyzedAt = run?.published_at || run?.updated_at || null;
+  const totalReviews = Number(overview.total_reviews || 0);
+  const lowRatingCount = Number(overview.low_rating_count || 0);
+  const data = {
+    app: {
+      appStoreId: appId,
+      country,
+      appName,
+    },
+    summary: {
+      totalReviews,
+      issueCount: issues.length,
+      averageRating: Number(overview.average_rating || 0),
+      lowRatingCount,
+      lowRatingRatio: totalReviews > 0 ? Number(((lowRatingCount / totalReviews) * 100).toFixed(1)) : 0,
+      positiveRatio: Number(overview.positive_ratio || 0),
+      lastReviewAt: overview.last_review_at || null,
+    },
+    analysis: {
+      status: run?.status === 'published' ? 'analyzed' : 'not_analyzed',
+      runId: run?.run_id || null,
+      modelVersion: run?.model_version || issues[0]?.modelVersion || null,
+      lastAnalyzedAt,
+      stale: lastAnalyzedAt ? Date.now() - new Date(String(lastAnalyzedAt)).getTime() > 24 * 60 * 60 * 1000 : false,
+    },
+    issues,
+    categories: categories.map((row) => ({
+      category: String(row.category || ''),
+      totalReviews: Number(row.total_reviews || 0),
+      sharePercent: Number(row.share_percent || 0),
+    })),
+    trends: trends.map((row) => ({
+      date: row.bucket_date,
+      totalReviews: Number(row.total_reviews || 0),
+      averageRating: Number(row.average_rating || 0),
+    })),
+  };
+  return jsonResponse(env, 200, { data });
+}
+
+async function handlePublicIssueDetail(env: Env, request: Request, issueId: string) {
+  if (!boolFromEnv(env.REPORT_V2_ENABLED, false)) {
+    return jsonResponse(env, 404, { error: 'report_v2_disabled' });
+  }
+  if (!isUuid(issueId)) return badRequest(env, 'issue id must be uuid');
+  const data = await supabaseRequest<Record<string, unknown> | null>(env, '/rest/v1/rpc/get_public_issue_detail', {
+    method: 'POST',
+    body: JSON.stringify({ p_issue_id: issueId }),
+    idempotent: true,
+  });
+  if (!data) return jsonResponse(env, 404, { error: 'issue not found' });
+  return jsonResponse(env, 200, { data });
+}
+
 async function getPublicRunsForApp(env: Env, appId: string, country: string, limit = 5) {
   return supabaseRequest<Array<Record<string, unknown>>>(
     env,
-    `/rest/v1/pipeline_runs?select=run_id,app_store_id,country,source,status,review_count,executed_at,published_at,updated_at&app_store_id=eq.${encodeURIComponent(appId)}&country=eq.${encodeURIComponent(country)}&order=executed_at.desc&limit=${limit}`,
+    `/rest/v1/pipeline_runs?select=run_id,app_store_id,country,source,status,review_count,model_version,validation_status,executed_at,published_at,updated_at&app_store_id=eq.${encodeURIComponent(appId)}&country=eq.${encodeURIComponent(country)}&order=executed_at.desc&limit=${limit}`,
     {
       method: 'GET',
       idempotent: true,
@@ -1301,6 +1590,11 @@ async function handlePublicIssues(env: Env, request: Request) {
 
   if (!appId) {
     return badRequest(env, 'appId is required');
+  }
+
+  if (boolFromEnv(env.REPORT_V2_ENABLED, false)) {
+    const data = await getPublicIssueClusters(env, appId, country, limit);
+    return jsonResponse(env, 200, { data });
   }
 
   const data = await getPublicIssuesForApp(env, { appId, country, from, to, limit });
@@ -1602,6 +1896,66 @@ async function handlePrivateCreateJob(env: Env, request: Request) {
   const appName = normalizeOptionalText(body?.appName, 120);
   const note = normalizeOptionalText(body?.note, 300);
   const now = new Date().toISOString();
+  const cooldownUntil = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+  const freshRuns = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/pipeline_runs?select=run_id,app_store_id,country,status,published_at,model_version&app_store_id=eq.${encodeURIComponent(appStoreId)}&country=eq.${encodeURIComponent(country)}&status=eq.published&published_at=gte.${encodeURIComponent(cooldownUntil)}&order=published_at.desc&limit=1`,
+    { method: 'GET', idempotent: true },
+  );
+  const freshRun = freshRuns[0];
+  if (freshRun) {
+    const publishedAt = String(freshRun.published_at || now);
+    return jsonResponse(env, 200, {
+      ok: true,
+      result: 'fresh',
+      data: {
+        runId: freshRun.run_id,
+        appStoreId,
+        country,
+        publishedAt,
+        nextAllowedAt: new Date(new Date(publishedAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      },
+    });
+  }
+
+  // A refresh can complete without a new published run when the App Store feed has
+  // no unseen reviews. Treat that successful check as a cooldown boundary too.
+  const completedJobs = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/pipeline_jobs?select=id,run_id,finished_at&app_store_id=eq.${encodeURIComponent(appStoreId)}&country=eq.${encodeURIComponent(country)}&status=eq.completed&finished_at=gte.${encodeURIComponent(cooldownUntil)}&order=finished_at.desc&limit=1`,
+    { method: 'GET', idempotent: true },
+  );
+  const completedJob = completedJobs[0];
+  if (completedJob) {
+    const latestRuns = await supabaseRequest<Array<Record<string, unknown>>>(
+      env,
+      `/rest/v1/pipeline_runs?select=run_id,published_at&app_store_id=eq.${encodeURIComponent(appStoreId)}&country=eq.${encodeURIComponent(country)}&status=eq.published&order=published_at.desc&limit=1`,
+      { method: 'GET', idempotent: true },
+    );
+    const completedAt = String(completedJob.finished_at || now);
+    const latestRun = latestRuns[0];
+    return jsonResponse(env, 200, {
+      ok: true,
+      result: 'fresh',
+      data: {
+        runId: latestRun?.run_id || completedJob.run_id || null,
+        appStoreId,
+        country,
+        publishedAt: latestRun?.published_at || completedAt,
+        nextAllowedAt: new Date(new Date(completedAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      },
+    });
+  }
+
+  const activeJobsPath = `/rest/v1/pipeline_jobs?select=id,app_store_id,country,app_name,status,stage,run_id,requested_at,updated_at&app_store_id=eq.${encodeURIComponent(appStoreId)}&country=eq.${encodeURIComponent(country)}&status=in.(queued,running)&order=requested_at.asc&limit=1`;
+  const activeJobs = await supabaseRequest<Array<Record<string, unknown>>>(env, activeJobsPath, {
+    method: 'GET',
+    idempotent: true,
+  });
+  if (activeJobs[0]) {
+    return jsonResponse(env, 200, { ok: true, result: 'existing', data: activeJobs[0] });
+  }
 
   await supabaseRequest(env, '/rest/v1/apps?on_conflict=app_store_id,country', {
     method: 'POST',
@@ -1637,6 +1991,7 @@ async function handlePrivateCreateJob(env: Env, request: Request) {
           note,
           source: 'web',
           status: 'queued',
+          stage: 'queued',
           requested_at: now,
           updated_at: now,
         }),
@@ -1646,6 +2001,15 @@ async function handlePrivateCreateJob(env: Env, request: Request) {
     const message = error instanceof Error ? error.message : 'job create failed';
     if (message.includes('(401)') || message.includes('(403)')) {
       return unauthorized(env, 'insufficient access');
+    }
+    if (message.includes('23505') || message.toLowerCase().includes('duplicate key')) {
+      const racedJobs = await supabaseRequest<Array<Record<string, unknown>>>(env, activeJobsPath, {
+        method: 'GET',
+        idempotent: true,
+      });
+      if (racedJobs[0]) {
+        return jsonResponse(env, 200, { ok: true, result: 'existing', data: racedJobs[0] });
+      }
     }
     throw error;
   }
@@ -1668,6 +2032,7 @@ async function handlePrivateCreateJob(env: Env, request: Request) {
 
   return jsonResponse(env, 201, {
     ok: true,
+    result: 'queued',
     data: created,
     trigger,
   });
@@ -1695,7 +2060,7 @@ async function handlePrivateJobs(env: Env, request: Request) {
   try {
     data = await supabaseUserRequest<Array<Record<string, unknown>>>(
       env,
-      `/rest/v1/pipeline_jobs?select=id,app_store_id,country,app_name,source,status,run_id,note,error_message,requested_at,started_at,finished_at,created_at,updated_at&order=created_at.desc&limit=${limit}`,
+      `/rest/v1/pipeline_jobs?select=id,app_store_id,country,app_name,source,status,stage,run_id,note,error_message,requested_at,started_at,finished_at,created_at,updated_at&order=created_at.desc&limit=${limit}`,
       authorization,
       {
         method: 'GET',
@@ -1837,6 +2202,7 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
   const country = normalizeCountry(body?.country);
   const jobId = (body?.jobId || '').toString().trim();
   const runId = normalizeOptionalText(body?.runId, 120);
+  const forceReanalysis = body?.forceReanalysis === true;
 
   const completeJobIfNoNewReviews = async () => completePipelineJob(env, {
     jobId,
@@ -1894,9 +2260,36 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
 
   const existingIds = new Set(existingRows.map((row) => row.review_id));
   const freshReviews = normalizedReviews.filter((review) => !existingIds.has(review.reviewId));
+  let existingExtractions: Array<Record<string, unknown>> = [];
+  if (existingIds.size > 0) {
+    const idFilter = [...existingIds].map((id) => encodeURIComponent(id)).join(',');
+    const rows = await supabaseRequest<Array<Record<string, unknown>>>(
+      env,
+      `/rest/v1/private_review_feed?select=review_id,rating,author,content,reviewed_at,priority,category,summary&review_id=in.(${idFilter})`,
+      { method: 'GET', idempotent: true },
+    );
+    existingExtractions = rows.map((row) => ({
+      ID: row.review_id,
+      id: row.review_id,
+      rating: row.rating,
+      author: row.author,
+      content: row.content,
+      date: row.reviewed_at,
+      priority: row.priority,
+      category: row.category,
+      summary: row.summary,
+      appStoreId,
+      country,
+      runId,
+      jobId: jobId || null,
+      isExisting: true,
+    }));
+  }
 
-  if (freshReviews.length === 0) {
+  if (freshReviews.length === 0 && !forceReanalysis) {
     await completeJobIfNoNewReviews();
+  } else {
+    await updatePipelineJobStage(env, jobId, 'extracting', runId);
   }
 
   return jsonResponse(env, 200, {
@@ -1906,7 +2299,9 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
       existingCount: existingIds.size,
       newCount: freshReviews.length,
       reviews: freshReviews,
-      autoCompleted: freshReviews.length === 0 && isUuid(jobId),
+      existingExtractions,
+      autoCompleted: freshReviews.length === 0 && !forceReanalysis && isUuid(jobId),
+      forceReanalysis,
     },
   });
 }
@@ -1960,6 +2355,8 @@ async function handleInternalClaimJob(env: Env, request: Request, rawBody: strin
     requestedAt: (row.requested_at as string | null) || new Date().toISOString(),
   };
 
+  if (jobId) await updatePipelineJobStage(env, jobId, 'fetching');
+
   return jsonResponse(env, 200, { ok: true, data });
 }
 
@@ -1987,12 +2384,19 @@ async function handleInternalJobStatus(env: Env, request: Request, rawBody: stri
     return badRequest(env, 'invalid status');
   }
 
+  const requestedStage = body.stage ?? null;
+  if (![null, 'queued', 'fetching', 'extracting', 'clustering', 'publishing'].includes(requestedStage)) {
+    return badRequest(env, 'invalid stage');
+  }
+
   const result = await completePipelineJob(env, {
     jobId: normalizedJobId,
     status: normalizedStatus as 'queued' | 'running' | 'completed' | 'failed' | 'canceled',
     runId: normalizeOptionalText(body.runId, 120),
     errorMessage: normalizeOptionalText(body.errorMessage, 300),
   });
+
+  await updatePipelineJobStage(env, normalizedJobId, requestedStage, body.runId);
 
   const data = result.data || null;
   return jsonResponse(env, 200, { ok: true, data });
@@ -2312,12 +2716,262 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
       status: 'running',
       runId: body.runId,
     });
+    await updatePipelineJobStage(env, body.jobId, 'clustering', body.runId);
   }
 
   return jsonResponse(env, 200, {
     ok: true,
     runId: body.runId,
     upsertedReviews: reviewRows.length,
+  });
+}
+
+async function handleInternalUpsertClusters(env: Env, request: Request, rawBody: string) {
+  const verified = await verifySignedRequest(env, request, rawBody);
+  if (!verified) return unauthorized(env, 'invalid signature');
+
+  let body: UpsertClustersRequest;
+  try {
+    body = JSON.parse(rawBody) as UpsertClustersRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+
+  const appStoreId = normalizeAppStoreId(body?.appStoreId);
+  const country = normalizeCountry(body?.country);
+  const modelVersion = normalizeOptionalText(body?.modelVersion, 120);
+  const comparisonEligible = body?.comparisonEligible !== false;
+  if (!body?.runId || !appStoreId || !modelVersion || !Array.isArray(body.inputReviewIds)) {
+    return badRequest(env, 'invalid payload');
+  }
+
+  let validated;
+  try {
+    validated = validateClusterContract(body.inputReviewIds, body.result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'cluster validation failed';
+    await supabaseRequest(env, `/rest/v1/pipeline_runs?run_id=eq.${encodeURIComponent(body.runId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: 'failed',
+        model_version: modelVersion,
+        validation_status: 'failed',
+        validation_result: { passed: false, error: message },
+        updated_at: new Date().toISOString(),
+      }),
+      idempotent: true,
+    });
+    if (isUuid(body.jobId || undefined)) {
+      await completePipelineJob(env, {
+        jobId: body.jobId,
+        status: 'failed',
+        runId: body.runId,
+        errorMessage: message,
+      });
+    }
+    return jsonResponse(env, 422, { error: 'cluster_contract_invalid', detail: message });
+  }
+
+  const reviewIds = validated.extractions.map((item) => item.reviewId);
+  const reviewFilter = reviewIds.map((id) => encodeURIComponent(id)).join(',');
+  const reviewRows = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/reviews?select=review_id,reviewed_at&review_id=in.(${reviewFilter})`,
+    { method: 'GET', idempotent: true },
+  );
+  const reviewedAtById = new Map(reviewRows.map((row) => [String(row.review_id || ''), String(row.reviewed_at || '')]));
+  const missingReviewIds = reviewIds.filter((id) => !reviewedAtById.has(id));
+  if (missingReviewIds.length > 0) {
+    return jsonResponse(env, 422, { error: 'unknown_review_ids', reviewIds: missingReviewIds });
+  }
+
+  const existingClusters = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/issue_clusters?select=id,canonical_key,first_seen_at,last_seen_at,current_run_id&app_store_id=eq.${encodeURIComponent(appStoreId)}&country=eq.${encodeURIComponent(country)}`,
+    { method: 'GET', idempotent: true },
+  );
+  const existingByKey = new Map(existingClusters.map((row) => [String(row.canonical_key || ''), row]));
+  for (const cluster of validated.clusters) {
+    const existing = existingByKey.get(cluster.canonicalKey);
+    if (cluster.existingClusterId && String(existing?.id || '') !== cluster.existingClusterId) {
+      return jsonResponse(env, 422, {
+        error: 'existing_cluster_mismatch',
+        canonicalKey: cluster.canonicalKey,
+      });
+    }
+  }
+
+  const now = new Date().toISOString();
+  const clusterRows = validated.clusters.map((cluster) => {
+    const existing = existingByKey.get(cluster.canonicalKey);
+    const occurrences = cluster.reviewIds.map((id) => reviewedAtById.get(id) || now).sort();
+    const firstSeenCandidates = [existing?.first_seen_at, ...occurrences]
+      .map((value) => String(value || ''))
+      .filter((value) => Number.isFinite(new Date(value).getTime()))
+      .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    const lastSeenCandidates = [existing?.last_seen_at, ...occurrences]
+      .map((value) => String(value || ''))
+      .filter((value) => Number.isFinite(new Date(value).getTime()))
+      .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    return {
+      app_store_id: appStoreId,
+      country,
+      canonical_key: cluster.canonicalKey,
+      title: cluster.title,
+      category: cluster.category,
+      first_seen_at: firstSeenCandidates[0] || now,
+      last_seen_at: lastSeenCandidates[lastSeenCandidates.length - 1] || now,
+      model_version: modelVersion,
+      updated_at: now,
+    };
+  });
+
+  const persistedClusters = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    '/rest/v1/issue_clusters?on_conflict=app_store_id,country,canonical_key',
+    {
+      method: 'POST',
+      headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+      body: JSON.stringify(clusterRows),
+      idempotent: true,
+    },
+  );
+  const persistedByKey = new Map(persistedClusters.map((row) => [String(row.canonical_key || ''), row]));
+
+  const previousCounts = new Map<string, number>();
+  if (comparisonEligible) {
+    await Promise.all(
+      existingClusters.map(async (existing) => {
+        const clusterId = String(existing.id || '');
+        const previousRunId = String(existing.current_run_id || '');
+        if (!clusterId || !previousRunId) return;
+        const rows = await supabaseRequest<Array<Record<string, unknown>>>(
+          env,
+          `/rest/v1/issue_cluster_snapshots?select=review_count&cluster_id=eq.${encodeURIComponent(clusterId)}&run_id=eq.${encodeURIComponent(previousRunId)}&limit=1`,
+          { method: 'GET', idempotent: true },
+        );
+        if (rows[0]) previousCounts.set(clusterId, Number(rows[0].review_count || 0));
+      }),
+    );
+  }
+
+  const validationResult = { ...validated.validation, comparisonEligible };
+
+  const snapshots = validated.clusters.map((cluster) => {
+    const persisted = persistedByKey.get(cluster.canonicalKey);
+    const clusterId = String(persisted?.id || '');
+    if (!clusterId) throw new Error(`cluster persistence failed: ${cluster.canonicalKey}`);
+    const previousReviewCount = previousCounts.get(clusterId);
+    return {
+      cluster_id: clusterId,
+      run_id: body.runId,
+      severity: cluster.severity,
+      review_count: cluster.reviewIds.length,
+      previous_review_count: previousReviewCount ?? null,
+      change_percent:
+        previousReviewCount && previousReviewCount > 0
+          ? Number((((cluster.reviewIds.length - previousReviewCount) / previousReviewCount) * 100).toFixed(1))
+          : null,
+      evidence_count: cluster.reviewIds.length,
+      summary: cluster.summary,
+      action_hint: cluster.actionHint,
+      window_from: body.windowFrom || null,
+      window_to: body.windowTo || null,
+      validation_status: 'passed',
+      validation_result: validationResult,
+      created_at: now,
+    };
+  });
+
+  await supabaseRequest(env, '/rest/v1/issue_cluster_snapshots?on_conflict=cluster_id,run_id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(snapshots),
+    idempotent: true,
+  });
+
+  await supabaseRequest(env, `/rest/v1/issue_cluster_reviews?run_id=eq.${encodeURIComponent(body.runId)}`, {
+    method: 'DELETE',
+    headers: { Prefer: 'return=minimal' },
+    idempotent: true,
+  });
+  const memberships = validated.clusters.flatMap((cluster) => {
+    const clusterId = String(persistedByKey.get(cluster.canonicalKey)?.id || '');
+    return cluster.reviewIds.map((reviewId) => ({
+      run_id: body.runId,
+      review_id: reviewId,
+      cluster_id: clusterId,
+      is_representative: cluster.representativeReviewIds.includes(reviewId),
+    }));
+  });
+  await supabaseRequest(env, '/rest/v1/issue_cluster_reviews?on_conflict=run_id,review_id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(memberships),
+    idempotent: true,
+  });
+
+  await supabaseRequest(env, `/rest/v1/pipeline_runs?run_id=eq.${encodeURIComponent(body.runId)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      model_version: modelVersion,
+      validation_status: 'passed',
+      validation_result: validationResult,
+      updated_at: now,
+    }),
+    idempotent: true,
+  });
+  if (isUuid(body.jobId || undefined)) {
+    await supabaseRequest(env, `/rest/v1/pipeline_jobs?id=eq.${encodeURIComponent(String(body.jobId))}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'running', stage: 'publishing', run_id: body.runId, updated_at: now }),
+      idempotent: true,
+    });
+  }
+
+  return jsonResponse(env, 200, {
+    ok: true,
+    runId: body.runId,
+    clusterCount: snapshots.length,
+    assignedReviewCount: memberships.length,
+    validation: validationResult,
+  });
+}
+
+async function handleInternalClusterContext(env: Env, request: Request, rawBody: string) {
+  const verified = await verifySignedRequest(env, request, rawBody);
+  if (!verified) return unauthorized(env, 'invalid signature');
+  let body: ClusterContextRequest;
+  try {
+    body = JSON.parse(rawBody) as ClusterContextRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+  const appStoreId = normalizeAppStoreId(body?.appStoreId);
+  const country = normalizeCountry(body?.country);
+  if (!appStoreId) return badRequest(env, 'appStoreId must be numeric');
+  const runs = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/pipeline_runs?select=run_id&app_store_id=eq.${encodeURIComponent(appStoreId)}&country=eq.${encodeURIComponent(country)}&status=eq.published&validation_status=eq.passed&order=published_at.desc.nullslast,updated_at.desc&limit=1`,
+    { method: 'GET', idempotent: true },
+  );
+  const latestRunId = normalizeOptionalText(runs[0]?.run_id, 120);
+  if (!latestRunId) return jsonResponse(env, 200, { ok: true, data: [] });
+  const data = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/issue_clusters?select=id,canonical_key,title,category,first_seen_at,last_seen_at&app_store_id=eq.${encodeURIComponent(appStoreId)}&country=eq.${encodeURIComponent(country)}&current_run_id=eq.${encodeURIComponent(latestRunId)}&order=updated_at.desc&limit=100`,
+    { method: 'GET', idempotent: true },
+  );
+  return jsonResponse(env, 200, {
+    ok: true,
+    data: data.map((row) => ({
+      issueId: row.id,
+      canonicalKey: row.canonical_key,
+      title: row.title,
+      category: row.category,
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
+    })),
   });
 }
 
@@ -2391,9 +3045,18 @@ async function handleInternalPublish(env: Env, request: Request, rawBody: string
     return badRequest(env, 'invalid payload');
   }
 
-  const publishedAt = body.publishedAt || new Date().toISOString();
+  if (boolFromEnv(env.REPORT_V2_ENABLED, false)) {
+    const runs = await supabaseRequest<Array<Record<string, unknown>>>(
+      env,
+      `/rest/v1/pipeline_runs?select=validation_status&run_id=eq.${encodeURIComponent(body.runId)}&limit=1`,
+      { method: 'GET', idempotent: true },
+    );
+    if (runs[0]?.validation_status !== 'passed') {
+      return jsonResponse(env, 409, { error: 'cluster_validation_required' });
+    }
+  }
 
-  await setCacheVersion(env, String(Date.now()));
+  const publishedAt = body.publishedAt || new Date().toISOString();
 
   await supabaseRequest(env, '/rest/v1/pipeline_runs?run_id=eq.' + encodeURIComponent(body.runId), {
     method: 'PATCH',
@@ -2405,13 +3068,30 @@ async function handleInternalPublish(env: Env, request: Request, rawBody: string
     idempotent: true,
   });
 
+  const snapshots = await supabaseRequest<Array<Record<string, unknown>>>(
+    env,
+    `/rest/v1/issue_cluster_snapshots?select=cluster_id&run_id=eq.${encodeURIComponent(body.runId)}`,
+    { method: 'GET', idempotent: true },
+  );
+  const clusterIds = [...new Set(snapshots.map((row) => String(row.cluster_id || '')).filter(isUuid))];
+  if (clusterIds.length > 0) {
+    await supabaseRequest(env, `/rest/v1/issue_clusters?id=in.(${clusterIds.join(',')})`, {
+      method: 'PATCH',
+      body: JSON.stringify({ current_run_id: body.runId, updated_at: new Date().toISOString() }),
+      idempotent: true,
+    });
+  }
+
   if (isUuid(body.jobId || undefined)) {
     await completePipelineJob(env, {
       jobId: body.jobId,
       status: 'completed',
       runId: body.runId,
     });
+    await updatePipelineJobStage(env, body.jobId, null, body.runId);
   }
+
+  await setCacheVersion(env, String(Date.now()));
 
   return jsonResponse(env, 200, {
     ok: true,
@@ -2512,11 +3192,25 @@ export default {
         return jsonResponse(env, 200, {
           ok: true,
           detailViewEnabled: boolFromEnv(env.DETAIL_VIEW_ENABLED, true),
+          reportV2Enabled: boolFromEnv(env.REPORT_V2_ENABLED, false),
           timestamp: new Date().toISOString(),
         });
       }
 
       // Public API: 로그인 없이 조회 가능한 집계 데이터
+      if (request.method === 'GET' && url.pathname === '/api/public/discover') {
+        return await handlePublicDiscover(env, request);
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/public/report') {
+        return await handlePublicReport(env, request);
+      }
+
+      const issueDetailMatch = url.pathname.match(/^\/api\/public\/issues\/([0-9a-f-]+)$/i);
+      if (request.method === 'GET' && issueDetailMatch) {
+        return await handlePublicIssueDetail(env, request, issueDetailMatch[1] || '');
+      }
+
       if (request.method === 'GET' && url.pathname === '/api/public/overview') {
         return await handlePublicOverview(env, request);
       }
@@ -2597,6 +3291,14 @@ export default {
 
       if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/upsert-reviews') {
         return await handleInternalUpsertReviews(env, request, await request.text());
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/upsert-clusters') {
+        return await handleInternalUpsertClusters(env, request, await request.text());
+      }
+
+      if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/cluster-context') {
+        return await handleInternalClusterContext(env, request, await request.text());
       }
 
       if (request.method === 'POST' && url.pathname === '/api/internal/pipeline/parse-error') {

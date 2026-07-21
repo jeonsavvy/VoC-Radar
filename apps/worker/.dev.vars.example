@@ -9,4 +9,4 @@ API_TIMEOUT_MS=10000
 API_RETRY_COUNT=2
 CORS_ORIGIN=http://localhost:5173
 # production example:
-# CORS_ORIGIN=https://<your-pages-domain>
+# CORS_ORIGIN=https://<your-unified-worker-domain>

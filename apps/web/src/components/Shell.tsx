@@ -1,333 +1,71 @@
-import { useEffect, useState } from 'react';
-import { BellRing, LogIn, LogOut, Trash2 } from 'lucide-react';
-import { NavLink, Outlet } from 'react-router-dom';
-import { AppSearchPicker } from '@/components/app-search-picker';
-import { Button } from '@/components/ui/button';
-import { deleteAccount, getPublicAppMeta, getPublicApps, getRuns } from '@/lib/api';
-import type { AppSelection } from '@/lib/appSelection';
-import { getAccessToken } from '@/lib/auth';
-import { cn } from '@/lib/utils';
-import type { PublicAppItem, RunSummaryItem } from '@/types';
+import { useState } from 'react';
+import { ChevronDown, LogIn, Search, X } from 'lucide-react';
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { GlobalSearch } from '@/components/GlobalSearch';
 
 type Props = {
   loggedIn: boolean;
   userEmail?: string | null;
   onSignOut: () => void | Promise<void>;
-  selection: AppSelection;
-  onSelectionChange: (next: AppSelection) => void;
 };
 
-const NAV_ITEMS = [
-  { to: '/', label: '대시보드' },
-  { to: '/reviews', label: '리뷰' },
-  { to: '/analyze', label: '수집 실행' },
-] as const;
-
-const ACCOUNT_DELETE_CONFIRMATION = '탈퇴';
-
-function formatRunStatus(run: RunSummaryItem | null) {
-  if (!run) {
-    return '최근 실행 이력이 없습니다.';
-  }
-
-  if (run.status === 'published') {
-    return `마지막 반영 ${new Date(run.published_at || run.updated_at).toLocaleString()}`;
-  }
-
-  if (run.status === 'failed') {
-    return `최근 실행 실패 ${new Date(run.updated_at).toLocaleString()}`;
-  }
-
-  return `최근 실행 ${new Date(run.updated_at).toLocaleString()}`;
-}
-
-export function Shell({ loggedIn, userEmail, onSignOut, selection, onSelectionChange }: Props) {
-  const [appName, setAppName] = useState<string | null>(null);
-  const [recentAnalyzedApps, setRecentAnalyzedApps] = useState<PublicAppItem[]>([]);
-  const [latestRun, setLatestRun] = useState<RunSummaryItem | null>(null);
-  const [isDeletePanelOpen, setIsDeletePanelOpen] = useState(false);
-  const [deleteConfirmation, setDeleteConfirmation] = useState('');
-  const [deleteError, setDeleteError] = useState<string | null>(null);
-  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
-
-  useEffect(() => {
-    let mounted = true;
-
-    getPublicAppMeta(selection.appId, selection.country)
-      .then((response) => {
-        if (mounted) {
-          setAppName(response.data.app_name?.trim() || null);
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setAppName(null);
-        }
-      });
-
-    getRuns(selection.appId, selection.country, 1)
-      .then((response) => {
-        if (mounted) {
-          setLatestRun(response.data[0] || null);
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setLatestRun(null);
-        }
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [selection.appId, selection.country]);
-
-  useEffect(() => {
-    let mounted = true;
-
-    getPublicApps(20)
-      .then(async (response) => {
-        const candidates = response.data.slice(0, 20);
-        const withRuns = await Promise.all(
-          candidates.map(async (item) => {
-            try {
-              const runsResponse = await getRuns(item.app_store_id, item.country, 1);
-              return runsResponse.data.length > 0 ? item : null;
-            } catch {
-              return null;
-            }
-          }),
-        );
-
-        if (mounted) {
-          setRecentAnalyzedApps(withRuns.filter((item): item is PublicAppItem => item !== null).slice(0, 6));
-        }
-      })
-      .catch(() => {
-        if (mounted) {
-          setRecentAnalyzedApps([]);
-        }
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const handleDeleteAccount = async () => {
-    if (deleteConfirmation !== ACCOUNT_DELETE_CONFIRMATION || isDeletingAccount) {
-      return;
-    }
-
-    setIsDeletingAccount(true);
-    setDeleteError(null);
-
-    try {
-      const accessToken = await getAccessToken();
-      if (!accessToken) {
-        throw new Error('로그인이 필요합니다.');
-      }
-
-      await deleteAccount(accessToken);
-      await Promise.resolve(onSignOut()).catch(() => undefined);
-      window.location.assign('/');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '계정 탈퇴 처리에 실패했습니다.';
-      setDeleteError(message);
-    } finally {
-      setIsDeletingAccount(false);
-    }
-  };
+export function Shell({ loggedIn, userEmail, onSignOut }: Props) {
+  const location = useLocation();
+  const [mobileSearch, setMobileSearch] = useState(false);
+  const country = location.pathname.match(/^\/apps\/([a-z]{2})\//)?.[1] || 'kr';
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-border bg-background/90 backdrop-blur-sm">
-        <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex items-center gap-3">
-              <img src="/assets/voc-radar-mark.svg" alt="VoC-Radar" className="size-11 rounded-xl border border-border bg-card p-1.5" />
-              <p className="text-sm font-semibold text-foreground">VoC-Radar</p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-2">
-              {loggedIn ? (
-                <>
-                  <div className="inline-flex max-w-full items-center rounded-full border border-border bg-panel px-3 py-2 text-sm font-medium text-foreground">
-                    <span className="truncate" title={userEmail || undefined}>
-                      {userEmail || '로그인됨'}
-                    </span>
-                  </div>
-                  <Button variant="outline" onClick={onSignOut}>
-                    <LogOut className="size-4" />
-                    로그아웃
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      setIsDeletePanelOpen((prev) => !prev);
-                      setDeleteError(null);
-                    }}
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  >
-                    <Trash2 className="size-4" />
-                    계정 탈퇴
-                  </Button>
-                </>
-              ) : (
-                <Button asChild>
-                  <NavLink to="/login">
-                    <LogIn className="size-4" />
-                    로그인
-                  </NavLink>
-                </Button>
-              )}
-            </div>
+    <div className="app-shell">
+      <header className="product-header">
+        <div className="product-header__inner">
+          <Link to="/" className="wordmark" aria-label="VoC Radar 홈">
+            VoC Radar
+          </Link>
+          <div className="product-header__search">
+            <GlobalSearch country={country} />
           </div>
-
-          {loggedIn && isDeletePanelOpen ? (
-            <div className="rounded-2xl border border-destructive/25 bg-destructive/5 p-4 text-sm text-foreground">
-              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(220px,0.45fr)] md:items-end">
-                <div className="space-y-1">
-                  <p className="font-semibold text-destructive">계정 탈퇴</p>
-                  <p className="leading-6 text-muted-foreground">
-                    현재 로그인 계정을 삭제하고 진행 중인 수집 작업을 취소합니다. App Store 공개 리뷰와 분석 결과는 서비스 공용 데이터로 유지됩니다.
-                    계속하려면 입력창에 <strong className="text-foreground">{ACCOUNT_DELETE_CONFIRMATION}</strong>를 입력하세요.
-                  </p>
-                  {deleteError ? <p className="text-destructive">{deleteError}</p> : null}
+          <nav aria-label="사용자 메뉴" className="product-header__actions">
+            <button
+              type="button"
+              className="icon-button mobile-search-button"
+              aria-label={mobileSearch ? '검색 닫기' : '앱 검색 열기'}
+              onClick={() => setMobileSearch((value) => !value)}
+            >
+              {mobileSearch ? <X /> : <Search />}
+            </button>
+            {loggedIn ? (
+              <details className="account-menu">
+                <summary>
+                  <span className="account-avatar">{userEmail?.[0]?.toUpperCase() || 'U'}</span>
+                  <span className="account-label">계정</span>
+                  <ChevronDown aria-hidden="true" />
+                </summary>
+                <div className="account-menu__panel">
+                  <p title={userEmail || undefined}>{userEmail || '로그인됨'}</p>
+                  <NavLink to="/requests">분석 요청 내역</NavLink>
+                  <button type="button" onClick={onSignOut}>로그아웃</button>
                 </div>
-                <div className="flex flex-col gap-2 sm:flex-row md:flex-col">
-                  <input
-                    type="text"
-                    value={deleteConfirmation}
-                    onChange={(event) => setDeleteConfirmation(event.target.value)}
-                    aria-label="계정 탈퇴 확인 문구"
-                    placeholder={ACCOUNT_DELETE_CONFIRMATION}
-                    className="h-10 rounded-md border border-border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                  />
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => {
-                        setIsDeletePanelOpen(false);
-                        setDeleteConfirmation('');
-                        setDeleteError(null);
-                      }}
-                      className="flex-1"
-                    >
-                      취소
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="destructive"
-                      disabled={deleteConfirmation !== ACCOUNT_DELETE_CONFIRMATION || isDeletingAccount}
-                      onClick={handleDeleteAccount}
-                      className="flex-1"
-                    >
-                      {isDeletingAccount ? '처리 중...' : '영구 탈퇴'}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="grid gap-4 rounded-2xl border border-border bg-card p-4 lg:grid-cols-[minmax(0,1.3fr)_minmax(280px,0.7fr)]">
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                {NAV_ITEMS.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    className={({ isActive }) =>
-                      cn(
-                        'rounded-full px-3 py-2 text-sm font-medium transition-colors',
-                        isActive
-                          ? 'bg-primary !text-white shadow-sm'
-                          : 'bg-secondary text-secondary-foreground hover:bg-accent',
-                      )
-                    }
-                  >
-                    {item.label}
-                  </NavLink>
-                ))}
-              </div>
-
-              <AppSearchPicker
-                selection={selection}
-                onSelect={(next) => {
-                  onSelectionChange(next);
-                  setAppName(null);
-                }}
-              />
-
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">최근 분석된 앱</p>
-                {recentAnalyzedApps.length > 0 ? (
-                  <div className="flex flex-wrap gap-2">
-                    {recentAnalyzedApps.map((item) => {
-                      const isSelected = item.app_store_id === selection.appId && item.country === selection.country;
-                      return (
-                        <button
-                          key={`${item.app_store_id}-${item.country}`}
-                          type="button"
-                          onClick={() =>
-                            onSelectionChange({
-                              appId: item.app_store_id,
-                              country: item.country,
-                            })
-                          }
-                          className={cn(
-                            'rounded-full border px-3 py-2 text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-                            isSelected
-                              ? 'border-primary bg-primary !text-white shadow-sm hover:bg-primary/92'
-                              : 'border-border bg-background text-foreground hover:border-primary/35 hover:bg-accent',
-                          )}
-                        >
-                          {(item.app_name || `앱 ${item.app_store_id}`).slice(0, 18)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground">최근 분석 완료된 앱이 아직 없습니다.</p>
-                )}
-              </div>
-            </div>
-
-            <div className="grid gap-3 rounded-xl bg-panel p-4">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground">현재 선택 앱</p>
-                <p className="mt-1 text-lg font-semibold text-foreground">{appName || `앱 ${selection.appId}`}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {selection.appId} · {selection.country.toUpperCase()}
-                </p>
-              </div>
-
-              <div className="grid gap-2 rounded-xl border border-border bg-background px-3 py-3">
-                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                  <BellRing className="size-4 text-primary" />
-                  최근 반영 상태
-                </div>
-                <p className="text-sm text-muted-foreground">{formatRunStatus(latestRun)}</p>
-              </div>
-            </div>
-          </div>
+              </details>
+            ) : (
+              <Link className="login-link" to={`/login?returnTo=${encodeURIComponent(location.pathname)}`}>
+                <LogIn aria-hidden="true" />
+                로그인
+              </Link>
+            )}
+          </nav>
         </div>
+        {mobileSearch ? (
+          <div className="mobile-search-panel">
+            <GlobalSearch country={country} autoFocus onNavigate={() => setMobileSearch(false)} />
+          </div>
+        ) : null}
       </header>
 
-      <div className="mx-auto w-full max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8">
-        <main className="pb-10">
-          <Outlet />
-        </main>
-        <footer className="flex flex-wrap items-center justify-center gap-x-3 gap-y-2 pt-5 text-center text-sm text-muted-foreground">
-          <span>© VoC-Radar</span>
-          <NavLink to="/privacy" className="font-medium underline-offset-4 hover:text-foreground hover:underline">
-            개인정보처리방침
-          </NavLink>
-        </footer>
-      </div>
+      <main className="page-frame"><Outlet /></main>
+      <footer className="product-footer">
+        <span>© VoC Radar</span>
+        <Link to="/privacy">개인정보처리방침</Link>
+      </footer>
     </div>
   );
 }

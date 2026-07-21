@@ -1,0 +1,47 @@
+name: voc-radar
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.30.8
+    container_name: voc-radar-n8n
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5679:5678"
+    environment:
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Asia/Seoul}
+      TZ: ${TZ:-Asia/Seoul}
+      NODE_ENV: production
+      N8N_RELEASE_TYPE: stable
+      N8N_SECURE_COOKIE: "false"
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_RUNNERS_MODE: internal
+      N8N_RUNNERS_TASK_TIMEOUT: "300"
+      N8N_UNVERIFIED_PACKAGES_ENABLED: "false"
+      N8N_COMPRESSION_NODE_MAX_DECOMPRESSED_SIZE_BYTES: "268435456"
+      N8N_COMPRESSION_NODE_MAX_ZIP_ENTRIES: "1000"
+      VOC_BFF_BASE_URL: ${VOC_BFF_BASE_URL:?VOC_BFF_BASE_URL is required}
+      PIPELINE_WEBHOOK_SECRET: ${PIPELINE_WEBHOOK_SECRET:?PIPELINE_WEBHOOK_SECRET is required}
+      VOC_FETCH_WINDOW_DAYS: ${VOC_FETCH_WINDOW_DAYS:-30}
+      VOC_FETCH_MAX_PAGES: ${VOC_FETCH_MAX_PAGES:-120}
+      VOC_LLM_BATCH_LIMIT: ${VOC_LLM_BATCH_LIMIT:-50}
+      VOC_CLUSTER_BATCH_LIMIT: ${VOC_CLUSTER_BATCH_LIMIT:-30}
+      VOC_MODEL_VERSION: ${VOC_MODEL_VERSION:-gemini-3-flash-preview}
+      VOC_ALERT_MAX_RATING: ${VOC_ALERT_MAX_RATING:-2}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./:/voc-radar-workflows:ro
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - node -e "fetch('http://127.0.0.1:5678/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    stop_grace_period: 30s
+
+volumes:
+  n8n_data:
+    external: true
+    name: ${N8N_DATA_VOLUME:-voc-radar-n8n_data}

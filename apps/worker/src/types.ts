@@ -8,6 +8,7 @@ export interface Env {
   N8N_PIPELINE_TRIGGER_URL?: string;
   N8N_PIPELINE_TRIGGER_SECRET?: string;
   DETAIL_VIEW_ENABLED?: string;
+  REPORT_V2_ENABLED?: string;
   API_TIMEOUT_MS?: string;
   API_RETRY_COUNT?: string;
   CORS_ORIGIN?: string;
@@ -41,6 +42,24 @@ export interface UpsertReviewRequest {
     modelVersion?: string | null;
     rawSource?: unknown;
   }>;
+}
+
+export interface UpsertClustersRequest {
+  runId: string;
+  jobId?: string | null;
+  appStoreId: string;
+  country: string;
+  modelVersion: string;
+  windowFrom?: string | null;
+  windowTo?: string | null;
+  inputReviewIds: string[];
+  result: unknown;
+  comparisonEligible?: boolean;
+}
+
+export interface ClusterContextRequest {
+  appStoreId: string;
+  country?: string;
 }
 
 // 파싱 실패 payload:
@@ -101,6 +120,7 @@ export interface ClaimJobRequest {
 export interface JobStatusRequest {
   jobId: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
+  stage?: 'queued' | 'fetching' | 'extracting' | 'clustering' | 'publishing' | null;
   runId?: string;
   errorMessage?: string;
 }
@@ -111,6 +131,7 @@ export interface FilterNewReviewsRequest {
   country?: string;
   runId?: string;
   jobId?: string | null;
+  forceReanalysis?: boolean;
   reviews: Array<{
     reviewId: string;
     author?: string;
