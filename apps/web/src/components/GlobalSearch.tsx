@@ -80,6 +80,7 @@ export function GlobalSearch({ country = 'kr', variant = 'compact', autoFocus = 
       <form role="search" onSubmit={submit} className="global-search__form">
         <Search aria-hidden="true" className="global-search__icon" />
         <input
+          role="combobox"
           autoFocus={autoFocus}
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -87,6 +88,7 @@ export function GlobalSearch({ country = 'kr', variant = 'compact', autoFocus = 
           onBlur={() => window.setTimeout(() => setOpen(false), 120)}
           aria-label="앱 검색"
           aria-autocomplete="list"
+          aria-haspopup="listbox"
           aria-controls={listId}
           aria-expanded={open}
           placeholder={variant === 'hero' ? '앱 이름, App Store URL 또는 ID' : '앱 검색'}

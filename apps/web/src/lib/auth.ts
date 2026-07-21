@@ -76,3 +76,30 @@ export async function getAccessToken(): Promise<string | null> {
 
   return session?.access_token ?? null;
 }
+
+export async function getSessionSummary() {
+  if (!supabase) {
+    return { loggedIn: false, userEmail: null };
+  }
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  return {
+    loggedIn: Boolean(session?.access_token),
+    userEmail: session?.user?.email ?? null,
+  };
+}
+
+export function subscribeToAuthChanges(onChange: () => void) {
+  if (!supabase) {
+    return () => {};
+  }
+
+  const {
+    data: { subscription },
+  } = supabase.auth.onAuthStateChange(onChange);
+
+  return () => subscription.unsubscribe();
+}

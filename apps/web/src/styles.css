@@ -1,9 +1,8 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+KR:wght@400;500;600;700&display=swap');
 @import 'tailwindcss';
 
 @theme {
-  --font-sans: 'Noto Sans KR', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --color-background: #f7f8fa;
   --color-foreground: #172033;
   --color-card: #ffffff;
@@ -75,7 +74,7 @@ button { border: 0; }
 .mobile-search-panel { display: none; }
 
 .page-frame { flex: 1; width: min(1240px, calc(100% - 48px)); margin: 0 auto; padding: 40px 0 64px; }
-.product-footer { width: min(1240px, calc(100% - 48px)); margin: auto; padding: 24px 0 32px; border-top: 1px solid #e0e4ea; display: flex; justify-content: space-between; color: #7a8492; font-size: 12px; }
+.product-footer { width: min(1240px, calc(100% - 48px)); margin: auto; padding: 24px 0 32px; border-top: 1px solid #e0e4ea; display: flex; justify-content: space-between; color: #606b7a; font-size: 12px; }
 
 .global-search { position: relative; width: 100%; }
 .global-search__form { height: 40px; display: grid; grid-template-columns: 20px 1fr 32px; align-items: center; gap: 8px; padding: 0 6px 0 12px; border: 1px solid #cfd6df; border-radius: 7px; background: #f9fafb; transition: border-color .15s, background .15s; }
@@ -115,8 +114,8 @@ button { border: 0; }
 .recent-app-row:hover { background: #f0f3f7; }
 .recent-app-row strong, .recent-app-row small { display: block; }
 .recent-app-row strong { font-size: 14px; }
-.recent-app-row small { margin-top: 3px; color: #808998; font-size: 11px; }
-.recent-app-row time { color: #6d7787; font-size: 12px; }
+.recent-app-row small { margin-top: 3px; color: #626d7c; font-size: 11px; }
+.recent-app-row time { color: #606b7a; font-size: 12px; }
 .recent-app-row > svg { width: 16px; color: #8c95a2; }
 .quiet-empty { padding: 54px 24px; border: 1px solid #dfe4ea; background: white; color: #727c8b; text-align: center; font-size: 13px; }
 .report-page { display: grid; gap: 0; }
@@ -242,6 +241,7 @@ button { border: 0; }
 .job-row__actions svg { width: 13px; }
 .request-loading { display: flex; align-items: center; gap: 8px; color: #727c8b; font-size: 13px; }
 .request-loading svg { width: 17px; }
+.route-loading { min-height: 50vh; display: grid; place-items: center; color: #606b7a; font-size: 13px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .5; } }
 .is-spinning { animation: spin .8s linear infinite; }

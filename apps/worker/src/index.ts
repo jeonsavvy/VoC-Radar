@@ -34,6 +34,7 @@ const DEFAULT_FETCH_MAX_PAGES = 120;
 const MAX_FETCH_MAX_PAGES = 200;
 const MAX_FETCH_REVIEW_CAP = 10000;
 const ITUNES_USER_REVIEW_PAGE_SIZE = 10;
+const PUBLIC_API_CACHE_CONTROL = 'public, max-age=120, s-maxage=120';
 
 type JsonValue = Record<string, unknown> | unknown[];
 
@@ -80,6 +81,18 @@ function jsonResponse(env: Env, status: number, payload: JsonValue) {
     new Response(JSON.stringify(payload), {
       status,
       headers: JSON_HEADERS,
+    }),
+  );
+}
+
+function cacheableJsonResponse(env: Env, payload: JsonValue) {
+  return withCors(
+    env,
+    new Response(JSON.stringify(payload), {
+      headers: {
+        ...JSON_HEADERS,
+        'cache-control': PUBLIC_API_CACHE_CONTROL,
+      },
     }),
   );
 }
@@ -1301,6 +1314,21 @@ async function handlePublicDiscover(env: Env, request: Request) {
   const query = normalizeSearchKeyword(searchParams.get('q'), 180);
   const country = normalizeCountry(searchParams.get('country'));
   const limit = clampLimit(searchParams.get('limit'), 8, 12);
+
+  const version = await getCacheVersion(env);
+  const cacheKey = getPublicCacheKey(request, version);
+  const cache = await getEdgeCache();
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return withCors(env, cached);
+  }
+
+  const respond = async (data: Array<Record<string, unknown>>) => {
+    const response = cacheableJsonResponse(env, { data });
+    await cache.put(cacheKey, response.clone());
+    return response;
+  };
+
   if (!query) {
     const runs = await supabaseRequest<Array<Record<string, unknown>>>(
       env,
@@ -1308,31 +1336,51 @@ async function handlePublicDiscover(env: Env, request: Request) {
       { method: 'GET', idempotent: true },
     );
     const seen = new Set<string>();
-    const recent = [];
+    const recentRuns: Array<{
+      appStoreId: string;
+      country: string;
+      lastAnalyzedAt: unknown;
+    }> = [];
     for (const run of runs) {
       const id = normalizeAppStoreId(String(run.app_store_id || ''));
       const appCountry = normalizeCountry(String(run.country || country));
       if (!id || seen.has(`${id}:${appCountry}`)) continue;
       seen.add(`${id}:${appCountry}`);
-      const apps = await supabaseRequest<Array<Record<string, unknown>>>(
-        env,
-        `/rest/v1/apps?select=app_name&app_store_id=eq.${encodeURIComponent(id)}&country=eq.${encodeURIComponent(appCountry)}&limit=1`,
-        { method: 'GET', idempotent: true },
-      );
-      recent.push({
+      recentRuns.push({
         appStoreId: id,
         country: appCountry,
-        appName: normalizeOptionalText(apps[0]?.app_name, 120),
-        artworkUrl: null,
-        bundleId: null,
-        developerName: null,
-        analyzed: true,
         lastAnalyzedAt: run.published_at || run.updated_at || null,
-        source: 'catalog',
       });
-      if (recent.length >= limit) break;
+      if (recentRuns.length >= limit) break;
     }
-    return jsonResponse(env, 200, { data: recent });
+
+    const appIds = [...new Set(recentRuns.map((run) => run.appStoreId))];
+    const countries = [...new Set(recentRuns.map((run) => run.country))];
+    const apps = appIds.length
+      ? await supabaseRequest<Array<Record<string, unknown>>>(
+          env,
+          `/rest/v1/apps?select=app_store_id,country,app_name&app_store_id=in.(${appIds.map(encodeURIComponent).join(',')})&country=in.(${countries.map(encodeURIComponent).join(',')})`,
+          { method: 'GET', idempotent: true },
+        )
+      : [];
+    const appNames = new Map(
+      apps.map((app) => [
+        `${normalizeAppStoreId(String(app.app_store_id || ''))}:${normalizeCountry(String(app.country || country))}`,
+        normalizeOptionalText(app.app_name, 120),
+      ]),
+    );
+    const recent = recentRuns.map((run) => ({
+      appStoreId: run.appStoreId,
+      country: run.country,
+      appName: appNames.get(`${run.appStoreId}:${run.country}`) || null,
+      artworkUrl: null,
+      bundleId: null,
+      developerName: null,
+      analyzed: true,
+      lastAnalyzedAt: run.lastAnalyzedAt,
+      source: 'catalog',
+    }));
+    return respond(recent);
   }
 
   const appId = extractAppStoreId(query);
@@ -1401,7 +1449,7 @@ async function handlePublicDiscover(env: Env, request: Request) {
   const data = [...merged.values()]
     .sort((a, b) => Number(Boolean(b.analyzed)) - Number(Boolean(a.analyzed)))
     .slice(0, limit);
-  return jsonResponse(env, 200, { data });
+  return respond(data);
 }
 
 function mapIssueCluster(row: Record<string, unknown>) {
@@ -1441,6 +1489,14 @@ async function handlePublicReport(env: Env, request: Request) {
   const from = searchParams.get('from');
   const to = searchParams.get('to');
   if (!appId) return badRequest(env, 'appId is required');
+
+  const version = await getCacheVersion(env);
+  const cacheKey = getPublicCacheKey(request, version);
+  const cache = await getEdgeCache();
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return withCors(env, cached);
+  }
 
   const [overviewRows, categories, trends, issues, runs, apps] = await Promise.all([
     supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_overview', {
@@ -1515,7 +1571,9 @@ async function handlePublicReport(env: Env, request: Request) {
       averageRating: Number(row.average_rating || 0),
     })),
   };
-  return jsonResponse(env, 200, { data });
+  const response = cacheableJsonResponse(env, { data });
+  await cache.put(cacheKey, response.clone());
+  return response;
 }
 
 async function handlePublicIssueDetail(env: Env, request: Request, issueId: string) {

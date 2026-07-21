@@ -91,6 +91,21 @@ async function main() {
     assert.match(source, /path="privacy"/);
   });
 
+  await test('public entry defers private routes and authentication dependencies', () => {
+    const appSource = readFileSync('src/App.tsx', 'utf8');
+    const styles = readFileSync('src/styles.css', 'utf8');
+    const headers = readFileSync('public/_headers', 'utf8');
+    const search = readFileSync('src/components/GlobalSearch.tsx', 'utf8');
+
+    assert.match(appSource, /lazy\(\(\) =>\s*import\('@\/routes\/AppReportPage'\)/);
+    assert.match(appSource, /await import\('@\/lib\/auth'\)/);
+    assert.doesNotMatch(appSource, /from '@\/lib\/(?:auth|supabase)'/);
+    assert.doesNotMatch(styles, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
+    assert.match(styles, /--font-sans: system-ui/);
+    assert.match(headers, /\/assets\/\*[\s\S]*Cache-Control: public, max-age=31556952, immutable/);
+    assert.match(search, /role="combobox"/);
+  });
+
   await test('LoginPage shows a password confirmation field in signup mode', () => {
     const html = renderToStaticMarkup(
       <MemoryRouter initialEntries={['/login?mode=signup']}>

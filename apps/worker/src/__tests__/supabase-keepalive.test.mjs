@@ -11,6 +11,42 @@ let tempDir;
 const testDir = dirname(fileURLToPath(import.meta.url));
 const workerEntry = resolve(testDir, '../index.ts');
 
+function createMemoryCacheStorage() {
+  const entries = new Map();
+  const cache = {
+    async match(input) {
+      const response = entries.get(typeof input === 'string' ? input : input.url);
+      return response?.clone();
+    },
+    async put(input, response) {
+      entries.set(typeof input === 'string' ? input : input.url, response.clone());
+    },
+  };
+
+  return {
+    async open() {
+      return cache;
+    },
+  };
+}
+
+function replaceGlobalCaches(cacheStorage) {
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+  Object.defineProperty(globalThis, 'caches', {
+    configurable: true,
+    writable: true,
+    value: cacheStorage,
+  });
+
+  return () => {
+    if (descriptor) {
+      Object.defineProperty(globalThis, 'caches', descriptor);
+    } else {
+      delete globalThis.caches;
+    }
+  };
+}
+
 test.before(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'voc-radar-worker-test-'));
   const outfile = join(tempDir, 'worker.mjs');
@@ -89,6 +125,108 @@ test('scheduled keepalive performs multiple cheap Supabase GET probes', async ()
     assert.match(calls[1].url, /\/rest\/v1\/pipeline_runs\?select=run_id&limit=1$/);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('public discovery batches app metadata and reuses the edge cache', async () => {
+  const originalFetch = globalThis.fetch;
+  const restoreCaches = replaceGlobalCaches(createMemoryCacheStorage());
+  const calls = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, method: init.method || 'GET' });
+
+    if (url.includes('/rest/v1/pipeline_runs?')) {
+      return Response.json([
+        { app_store_id: '1018769995', country: 'kr', published_at: '2026-07-21T01:00:00.000Z' },
+        { app_store_id: '1585915174', country: 'kr', published_at: '2026-07-21T00:00:00.000Z' },
+      ]);
+    }
+    if (url.includes('/rest/v1/apps?')) {
+      return Response.json([
+        { app_store_id: '1018769995', country: 'kr', app_name: '당근' },
+        { app_store_id: '1585915174', country: 'kr', app_name: '승리의 여신: 니케' },
+      ]);
+    }
+    return Response.json({ error: `unexpected ${url}` }, { status: 500 });
+  };
+
+  try {
+    const requestUrl = 'https://worker.example/api/public/discover?country=kr&limit=6';
+    const env = {
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      SUPABASE_ANON_KEY: 'anon-key',
+      PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      API_RETRY_COUNT: '0',
+    };
+
+    const firstResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    const firstPayload = await firstResponse.json();
+    assert.equal(firstResponse.status, 200);
+    assert.equal(firstResponse.headers.get('cache-control'), 'public, max-age=120, s-maxage=120');
+    assert.deepEqual(firstPayload.data.map((app) => app.appName), ['당근', '승리의 여신: 니케']);
+    assert.equal(calls.length, 2);
+    assert.match(calls[1].url, /app_store_id=in\.\(1018769995,1585915174\)/);
+    assert.doesNotMatch(calls[1].url, /app_store_id=eq\./);
+
+    const secondResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    assert.equal(secondResponse.status, 200);
+    assert.equal(calls.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreCaches();
+  }
+});
+
+test('public report reuses the edge cache without changing its response contract', async () => {
+  const originalFetch = globalThis.fetch;
+  const restoreCaches = replaceGlobalCaches(createMemoryCacheStorage());
+  const calls = [];
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith('/rest/v1/rpc/get_public_overview')) {
+      return Response.json([{ total_reviews: 20, average_rating: 3.8, low_rating_count: 4 }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/get_public_categories')) return Response.json([]);
+    if (url.endsWith('/rest/v1/rpc/get_public_trends')) return Response.json([]);
+    if (url.endsWith('/rest/v1/rpc/get_public_issue_clusters')) return Response.json([]);
+    if (url.includes('/rest/v1/pipeline_runs?')) {
+      return Response.json([{ run_id: 'run-1', status: 'published', model_version: 'model-1', published_at: '2026-07-21T01:00:00.000Z' }]);
+    }
+    if (url.includes('/rest/v1/apps?')) return Response.json([{ app_name: '당근' }]);
+    return Response.json({ error: `unexpected ${url}` }, { status: 500 });
+  };
+
+  try {
+    const requestUrl = 'https://worker.example/api/public/report?appId=1018769995&country=kr';
+    const env = {
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      SUPABASE_ANON_KEY: 'anon-key',
+      PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      API_RETRY_COUNT: '0',
+      REPORT_V2_ENABLED: 'true',
+    };
+
+    const firstResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    const firstPayload = await firstResponse.json();
+    assert.equal(firstResponse.status, 200);
+    assert.equal(firstResponse.headers.get('cache-control'), 'public, max-age=120, s-maxage=120');
+    assert.equal(firstPayload.data.app.appName, '당근');
+    assert.equal(firstPayload.data.summary.totalReviews, 20);
+    assert.equal(calls.length, 6);
+
+    const secondResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    const secondPayload = await secondResponse.json();
+    assert.deepEqual(secondPayload, firstPayload);
+    assert.equal(calls.length, 6);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreCaches();
   }
 });
 
