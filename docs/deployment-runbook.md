@@ -147,7 +147,7 @@ npx wrangler deploy --config apps/worker/wrangler.toml --var REPORT_V2_ENABLED:t
 - Non-production branch builds: disabled
 - Build variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`
 
-Web build 변수는 Workers Builds에만 주입하고 저장소에는 기록하지 않습니다. `SUPABASE_SERVICE_ROLE_KEY`, `PIPELINE_WEBHOOK_SECRET` 등 runtime secret은 기존 Worker의 **Variables and Secrets**에만 유지하며 build 변수로 복제하지 않습니다. Git 연동 직후에는 최초 build의 commit SHA, Worker name, 배포 version, `/api/health`, SPA deep link를 확인합니다. 자동 배포를 중단해야 하면 Settings > Builds에서 연결을 해제하고 마지막 정상 Worker version을 다시 배포합니다.
+Web build 변수는 Workers Builds에만 주입하고 저장소에는 기록하지 않습니다. `SUPABASE_SERVICE_ROLE_KEY`, `PIPELINE_WEBHOOK_SECRET` 등 runtime secret은 기존 Worker의 **Variables and Secrets**에만 유지하며 build 변수로 복제하지 않습니다. Git 연동은 기존 커밋을 소급 빌드하지 않으므로 연결 후 검증된 변경을 `main`에 push해 최초 build를 시작합니다. Git 연동 직후에는 최초 build의 commit SHA, Worker name, 배포 version, `/api/health`, SPA deep link를 확인합니다. 자동 배포를 중단해야 하면 Settings > Builds에서 연결을 해제하고 마지막 정상 Worker version을 다시 배포합니다.
 
 ## 3) n8n 설정
 
