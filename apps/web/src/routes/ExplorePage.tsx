@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { AppArtwork } from '@/components/AppArtwork';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { discoverApps } from '@/lib/api';
 import { reportPath } from '@/lib/appIdentity';
@@ -45,7 +46,7 @@ export function ExplorePage() {
           <div className="recent-apps">
             {recent.map((app) => (
               <Link key={`${app.appStoreId}-${app.country}`} to={reportPath(app.appStoreId, app.country)} className="recent-app-row">
-                <span className="app-initial">{app.appName?.[0] || 'A'}</span>
+                <AppArtwork artworkUrl={app.artworkUrl} appName={app.appName} />
                 <span>
                   <strong>{app.appName || `App ${app.appStoreId}`}</strong>
                   <small>{app.appStoreId} · {app.country.toUpperCase()}</small>

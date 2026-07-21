@@ -149,6 +149,14 @@ test('public discovery batches app metadata and reuses the edge cache', async ()
         { app_store_id: '1585915174', country: 'kr', app_name: '승리의 여신: 니케' },
       ]);
     }
+    if (url.includes('itunes.apple.com/lookup?')) {
+      return Response.json({
+        results: [
+          { trackId: 1018769995, trackName: '당근', artworkUrl100: 'https://example.test/carrot.jpg' },
+          { trackId: 1585915174, trackName: '승리의 여신: 니케', artworkUrl100: 'https://example.test/nikke.jpg' },
+        ],
+      });
+    }
     return Response.json({ error: `unexpected ${url}` }, { status: 500 });
   };
 
@@ -167,20 +175,27 @@ test('public discovery batches app metadata and reuses the edge cache', async ()
     assert.equal(firstResponse.status, 200);
     assert.equal(firstResponse.headers.get('cache-control'), 'public, max-age=120, s-maxage=120');
     assert.deepEqual(firstPayload.data.map((app) => app.appName), ['당근', '승리의 여신: 니케']);
-    assert.equal(calls.length, 2);
-    assert.match(calls[1].url, /app_store_id=in\.\(1018769995,1585915174\)/);
-    assert.doesNotMatch(calls[1].url, /app_store_id=eq\./);
+    assert.deepEqual(firstPayload.data.map((app) => app.artworkUrl), [
+      'https://example.test/carrot.jpg',
+      'https://example.test/nikke.jpg',
+    ]);
+    assert.equal(calls.length, 3);
+    const appsCall = calls.find((call) => call.url.includes('/rest/v1/apps?'));
+    const catalogCall = calls.find((call) => call.url.includes('itunes.apple.com/lookup?'));
+    assert.match(appsCall.url, /app_store_id=in\.\(1018769995,1585915174\)/);
+    assert.doesNotMatch(appsCall.url, /app_store_id=eq\./);
+    assert.match(catalogCall.url, /id=1018769995,1585915174&country=KR/);
 
     const secondResponse = await workerModule.default.fetch(new Request(requestUrl), env);
     assert.equal(secondResponse.status, 200);
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 3);
   } finally {
     globalThis.fetch = originalFetch;
     restoreCaches();
   }
 });
 
-test('public report reuses the edge cache without changing its response contract', async () => {
+test('public report includes App Store artwork and reuses the edge cache', async () => {
   const originalFetch = globalThis.fetch;
   const restoreCaches = replaceGlobalCaches(createMemoryCacheStorage());
   const calls = [];
@@ -198,6 +213,11 @@ test('public report reuses the edge cache without changing its response contract
       return Response.json([{ run_id: 'run-1', status: 'published', model_version: 'model-1', published_at: '2026-07-21T01:00:00.000Z' }]);
     }
     if (url.includes('/rest/v1/apps?')) return Response.json([{ app_name: '당근' }]);
+    if (url.includes('itunes.apple.com/lookup?')) {
+      return Response.json({
+        results: [{ trackId: 1018769995, trackName: '당근', artworkUrl100: 'https://example.test/carrot.jpg' }],
+      });
+    }
     return Response.json({ error: `unexpected ${url}` }, { status: 500 });
   };
 
@@ -217,13 +237,14 @@ test('public report reuses the edge cache without changing its response contract
     assert.equal(firstResponse.status, 200);
     assert.equal(firstResponse.headers.get('cache-control'), 'public, max-age=120, s-maxage=120');
     assert.equal(firstPayload.data.app.appName, '당근');
+    assert.equal(firstPayload.data.app.artworkUrl, 'https://example.test/carrot.jpg');
     assert.equal(firstPayload.data.summary.totalReviews, 20);
-    assert.equal(calls.length, 6);
+    assert.equal(calls.length, 7);
 
     const secondResponse = await workerModule.default.fetch(new Request(requestUrl), env);
     const secondPayload = await secondResponse.json();
     assert.deepEqual(secondPayload, firstPayload);
-    assert.equal(calls.length, 6);
+    assert.equal(calls.length, 7);
   } finally {
     globalThis.fetch = originalFetch;
     restoreCaches();

@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useId, useState } from 'react';
 import { ArrowRight, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { AppArtwork } from '@/components/AppArtwork';
 import { discoverApps } from '@/lib/api';
 import { parseAppIdentity, reportPath } from '@/lib/appIdentity';
 import type { DiscoveryItem } from '@/types';
@@ -110,7 +111,7 @@ export function GlobalSearch({ country = 'kr', variant = 'compact', autoFocus = 
               onClick={() => goToApp(item.appStoreId, item.country)}
               className="search-result"
             >
-              {item.artworkUrl ? <img src={item.artworkUrl} alt="" /> : <span className="app-initial">{item.appName?.[0] || 'A'}</span>}
+              <AppArtwork artworkUrl={item.artworkUrl} appName={item.appName} />
               <span className="search-result__copy">
                 <strong>{item.appName || `App ${item.appStoreId}`}</strong>
                 <small>{item.developerName || `${item.appStoreId} · ${item.country.toUpperCase()}`}</small>

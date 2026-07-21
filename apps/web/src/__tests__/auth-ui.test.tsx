@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { AppArtwork } from '@/components/AppArtwork';
 import { Shell } from '@/components/Shell';
 import { parseAppIdentity, reportPath } from '@/lib/appIdentity';
 import {
@@ -86,6 +87,18 @@ async function main() {
     const source = readFileSync('src/routes/ExplorePage.tsx', 'utf8');
     assert.match(source, /최근 분석/);
     assert.doesNotMatch(source, /고정 추천|실제 분석|필수 앱|추천 앱|APP DIRECTORY|PUBLIC REPORTS/);
+  });
+
+  await test('AppArtwork renders App Store artwork with an initial fallback', () => {
+    const artwork = renderToStaticMarkup(
+      <AppArtwork artworkUrl="https://example.test/app.jpg" appName="당근" size="large" />,
+    );
+    const fallback = renderToStaticMarkup(<AppArtwork artworkUrl={null} appName="당근" />);
+
+    assert.match(artwork, /class="app-artwork app-artwork--large"/);
+    assert.match(artwork, /src="https:\/\/example\.test\/app\.jpg"/);
+    assert.match(fallback, /class="app-initial"/);
+    assert.match(fallback, />당</);
   });
 
   await test('App registers public report and request-history routes', () => {

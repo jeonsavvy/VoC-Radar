@@ -83,7 +83,7 @@ export interface IssueClusterItem {
 }
 
 export interface PublicReport {
-  app: { appStoreId: string; country: string; appName: string | null };
+  app: { appStoreId: string; country: string; appName: string | null; artworkUrl: string | null };
   summary: {
     totalReviews: number;
     issueCount: number;

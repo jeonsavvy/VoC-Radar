@@ -1285,6 +1285,45 @@ type AppleCatalogItem = {
   sellerName?: string;
 };
 
+async function requestAppleCatalog(
+  env: Env,
+  url: string,
+  options: { timeoutMs?: number; retries?: number } = {},
+) {
+  const response = await fetchWithRetry(env, url, {
+    method: 'GET',
+    timeoutMs: options.timeoutMs ?? 15000,
+    retries: options.retries ?? 2,
+    idempotent: true,
+  });
+  if (!response.ok) return [];
+  const payload = (await response.json()) as { results?: AppleCatalogItem[] };
+  return Array.isArray(payload.results) ? payload.results : [];
+}
+
+async function fetchAppleCatalogByIds(
+  env: Env,
+  appIds: string[],
+  country: string,
+  options: { timeoutMs?: number; retries?: number } = {},
+) {
+  const normalizedIds = [
+    ...new Set(
+      appIds
+        .map((appId) => normalizeAppStoreId(appId))
+        .filter((appId): appId is string => Boolean(appId)),
+    ),
+  ];
+  if (normalizedIds.length === 0) return [];
+
+  const ids = normalizedIds.map(encodeURIComponent).join(',');
+  return requestAppleCatalog(
+    env,
+    `https://itunes.apple.com/lookup?id=${ids}&country=${country.toUpperCase()}`,
+    options,
+  );
+}
+
 function extractAppStoreId(value: string) {
   const trimmed = value.trim();
   const direct = normalizeAppStoreId(trimmed);
@@ -1295,18 +1334,10 @@ function extractAppStoreId(value: string) {
 
 async function fetchAppleCatalog(env: Env, query: string, country: string, limit: number) {
   const appId = extractAppStoreId(query);
-  const url = appId
-    ? `https://itunes.apple.com/lookup?id=${encodeURIComponent(appId)}&country=${country.toUpperCase()}`
-    : `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=${country.toUpperCase()}&entity=software&limit=${limit}`;
-  const response = await fetchWithRetry(env, url, {
-    method: 'GET',
-    timeoutMs: 15000,
-    retries: 2,
-    idempotent: true,
-  });
-  if (!response.ok) return [];
-  const payload = (await response.json()) as { results?: AppleCatalogItem[] };
-  return Array.isArray(payload.results) ? payload.results : [];
+  if (appId) return fetchAppleCatalogByIds(env, [appId], country);
+
+  const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=${country.toUpperCase()}&entity=software&limit=${limit}`;
+  return requestAppleCatalog(env, url);
 }
 
 async function handlePublicDiscover(env: Env, request: Request) {
@@ -1356,30 +1387,55 @@ async function handlePublicDiscover(env: Env, request: Request) {
 
     const appIds = [...new Set(recentRuns.map((run) => run.appStoreId))];
     const countries = [...new Set(recentRuns.map((run) => run.country))];
-    const apps = appIds.length
-      ? await supabaseRequest<Array<Record<string, unknown>>>(
-          env,
-          `/rest/v1/apps?select=app_store_id,country,app_name&app_store_id=in.(${appIds.map(encodeURIComponent).join(',')})&country=in.(${countries.map(encodeURIComponent).join(',')})`,
-          { method: 'GET', idempotent: true },
-        )
-      : [];
+    const idsByCountry = new Map<string, string[]>();
+    for (const run of recentRuns) {
+      idsByCountry.set(run.country, [...(idsByCountry.get(run.country) || []), run.appStoreId]);
+    }
+    const [apps, catalogGroups] = await Promise.all([
+      appIds.length
+        ? supabaseRequest<Array<Record<string, unknown>>>(
+            env,
+            `/rest/v1/apps?select=app_store_id,country,app_name&app_store_id=in.(${appIds.map(encodeURIComponent).join(',')})&country=in.(${countries.map(encodeURIComponent).join(',')})`,
+            { method: 'GET', idempotent: true },
+          )
+        : [],
+      Promise.all(
+        [...idsByCountry].map(async ([appCountry, ids]) => ({
+          country: appCountry,
+          items: await fetchAppleCatalogByIds(env, ids, appCountry, { timeoutMs: 2500, retries: 0 }).catch(
+            () => [],
+          ),
+        })),
+      ),
+    ]);
     const appNames = new Map(
       apps.map((app) => [
         `${normalizeAppStoreId(String(app.app_store_id || ''))}:${normalizeCountry(String(app.country || country))}`,
         normalizeOptionalText(app.app_name, 120),
       ]),
     );
-    const recent = recentRuns.map((run) => ({
-      appStoreId: run.appStoreId,
-      country: run.country,
-      appName: appNames.get(`${run.appStoreId}:${run.country}`) || null,
-      artworkUrl: null,
-      bundleId: null,
-      developerName: null,
-      analyzed: true,
-      lastAnalyzedAt: run.lastAnalyzedAt,
-      source: 'catalog',
-    }));
+    const catalogApps = new Map<string, AppleCatalogItem>();
+    for (const group of catalogGroups) {
+      for (const app of group.items) {
+        const id = normalizeAppStoreId(String(app.trackId || ''));
+        if (id) catalogApps.set(`${id}:${group.country}`, app);
+      }
+    }
+    const recent = recentRuns.map((run) => {
+      const key = `${run.appStoreId}:${run.country}`;
+      const catalogApp = catalogApps.get(key);
+      return {
+        appStoreId: run.appStoreId,
+        country: run.country,
+        appName: appNames.get(key) || normalizeOptionalText(catalogApp?.trackName, 120),
+        artworkUrl: normalizeOptionalText(catalogApp?.artworkUrl100, 500),
+        bundleId: normalizeOptionalText(catalogApp?.bundleId, 180),
+        developerName: normalizeOptionalText(catalogApp?.sellerName, 180),
+        analyzed: true,
+        lastAnalyzedAt: run.lastAnalyzedAt,
+        source: 'catalog',
+      };
+    });
     return respond(recent);
   }
 
@@ -1498,7 +1554,7 @@ async function handlePublicReport(env: Env, request: Request) {
     return withCors(env, cached);
   }
 
-  const [overviewRows, categories, trends, issues, runs, apps] = await Promise.all([
+  const [overviewRows, categories, trends, issues, runs, apps, catalog] = await Promise.all([
     supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_overview', {
       method: 'POST',
       body: JSON.stringify({ p_app_store_id: appId, p_country: country, p_from: from, p_to: to }),
@@ -1525,15 +1581,13 @@ async function handlePublicReport(env: Env, request: Request) {
       `/rest/v1/apps?select=app_name&app_store_id=eq.${encodeURIComponent(appId)}&country=eq.${encodeURIComponent(country)}&limit=1`,
       { method: 'GET', idempotent: true },
     ),
+    fetchAppleCatalogByIds(env, [appId], country, { timeoutMs: 2500, retries: 0 }).catch(() => []),
   ]);
 
   const overview = overviewRows[0] || {};
   const run = runs[0] || null;
-  let appName = normalizeOptionalText(apps[0]?.app_name, 120);
-  if (!appName) {
-    const catalog = await fetchAppleCatalog(env, appId, country, 1);
-    appName = normalizeOptionalText(catalog[0]?.trackName, 120);
-  }
+  const catalogApp = catalog.find((app) => normalizeAppStoreId(String(app.trackId || '')) === appId) || null;
+  const appName = normalizeOptionalText(apps[0]?.app_name, 120) || normalizeOptionalText(catalogApp?.trackName, 120);
   const lastAnalyzedAt = run?.published_at || run?.updated_at || null;
   const totalReviews = Number(overview.total_reviews || 0);
   const lowRatingCount = Number(overview.low_rating_count || 0);
@@ -1542,6 +1596,7 @@ async function handlePublicReport(env: Env, request: Request) {
       appStoreId: appId,
       country,
       appName,
+      artworkUrl: normalizeOptionalText(catalogApp?.artworkUrl100, 500),
     },
     summary: {
       totalReviews,

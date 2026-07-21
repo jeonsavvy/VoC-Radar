@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowRight, ArrowUp, Clock3, RefreshCw, Search, Star, X } from 'lucide-react';
 import { Link, NavLink, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { AppArtwork } from '@/components/AppArtwork';
 import { getIssueDetail, getPublicReport, getPublicReviews, requestAnalysis } from '@/lib/api';
 import { reportPath } from '@/lib/appIdentity';
 import type { IssueClusterItem, IssueDetail, PublicReport, ReviewItem } from '@/types';
@@ -222,7 +223,7 @@ export function AppReportPage({ loggedIn }: Props) {
     {loading ? <ReportSkeleton /> : error ? <div className="error-state"><strong>리포트를 열 수 없습니다.</strong><p>{error}</p><Link to="/">앱 다시 찾기</Link></div> : report ? <>
       <header className="app-report-header">
         <div className="app-report-header__identity">
-          <span className="app-initial app-initial--large">{report.app.appName?.[0] || 'A'}</span>
+          <AppArtwork artworkUrl={report.app.artworkUrl} appName={report.app.appName} size="large" />
           <div><h1>{report.app.appName || `App ${appId}`}</h1><p>{appId} · {country.toUpperCase()} · 최근 30일</p></div>
         </div>
         <div className="app-report-header__meta">
