@@ -1,4 +1,5 @@
 import { hasSupabaseConfig, supabase } from './supabase';
+import { buildEmailSignUpCredentials } from './authRedirect';
 
 // auth.ts는 Web에서 사용하는 이메일 기반 인증 동작만 모아둔 파일이다.
 // 로그인/회원가입 후 추가 화면 분기 없이 바로 사용할 수 있는 상태인지 확인한다.
@@ -32,15 +33,14 @@ export async function signInWithPassword(email: string, password: string) {
 }
 
 // 회원가입은 계정을 생성하고, 이메일 확인이 끝나야 실제 로그인 단계로 넘어가게 한다.
-export async function signUpWithPassword(email: string, password: string) {
+export async function signUpWithPassword(email: string, password: string, returnTo = '/requests') {
   if (!hasSupabaseConfig || !supabase) {
     throw new Error('회원가입을 사용할 수 없습니다.');
   }
 
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-  });
+  const { data, error } = await supabase.auth.signUp(
+    buildEmailSignUpCredentials(email, password, window.location.origin, returnTo),
+  );
 
   if (error) {
     throw error;

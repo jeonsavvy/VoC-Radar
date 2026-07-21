@@ -4,6 +4,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { Shell } from '@/components/Shell';
 import { parseAppIdentity, reportPath } from '@/lib/appIdentity';
+import {
+  buildEmailSignUpCredentials,
+  hasSupabaseAuthCallback,
+  sanitizeAuthReturnTo,
+} from '@/lib/authRedirect';
 import * as LoginPageModule from '@/routes/LoginPage';
 import { LoginPage } from '@/routes/LoginPage';
 import { PrivacyPage } from '@/routes/PrivacyPage';
@@ -142,6 +147,50 @@ async function main() {
     assert.equal(parseAppIdentity('not an id', 'kr'), null);
     assert.equal(reportPath('123456789', 'kr'), '/apps/kr/123456789/overview');
     assert.doesNotMatch(readFileSync('src/lib/appIdentity.ts', 'utf8'), /1234567890/);
+  });
+
+  await test('email signup returns to the current deployment instead of a configured localhost fallback', () => {
+    assert.deepEqual(
+      buildEmailSignUpCredentials(
+        'new-user@example.com',
+        'secret123',
+        'https://voc-radar.jeonsavvy.workers.dev',
+        '/apps/kr/123456789/overview',
+      ),
+      {
+        email: 'new-user@example.com',
+        password: 'secret123',
+        options: {
+          emailRedirectTo: 'https://voc-radar.jeonsavvy.workers.dev/apps/kr/123456789/overview',
+        },
+      },
+    );
+
+    assert.equal(
+      buildEmailSignUpCredentials(
+        'new-user@example.com',
+        'secret123',
+        'https://voc-radar.jeonsavvy.workers.dev',
+        '//attacker.example',
+      ).options.emailRedirectTo,
+      'https://voc-radar.jeonsavvy.workers.dev/requests',
+    );
+
+    assert.equal(sanitizeAuthReturnTo('/\\attacker.example'), '/requests');
+    assert.equal(sanitizeAuthReturnTo('https://attacker.example'), '/requests');
+  });
+
+  await test('App recognizes Supabase confirmation callbacks before local session storage exists', () => {
+    assert.equal(hasSupabaseAuthCallback({ hash: '#access_token=fixture', search: '' }), true);
+    assert.equal(hasSupabaseAuthCallback({ hash: '', search: '?code=fixture' }), true);
+    assert.equal(hasSupabaseAuthCallback({ hash: '', search: '?q=review' }), false);
+
+    const appSource = readFileSync('src/App.tsx', 'utf8');
+    const authSource = readFileSync('src/lib/auth.ts', 'utf8');
+    const loginSource = readFileSync('src/routes/LoginPage.tsx', 'utf8');
+    assert.match(appSource, /hasStoredAuthSession\(\) \|\| hasSupabaseAuthCallback\(window\.location\)/);
+    assert.match(authSource, /buildEmailSignUpCredentials\(email, password, window\.location\.origin, returnTo\)/);
+    assert.match(loginSource, /sanitizeAuthReturnTo\(searchParams\.get\('returnTo'\)\)/);
   });
 
   await test('report UI keeps evidence counts and canonical severity while hiding confidence percentages', () => {

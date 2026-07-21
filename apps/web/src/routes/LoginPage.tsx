@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { signInWithPassword, signUpWithPassword } from '@/lib/auth';
+import { sanitizeAuthReturnTo } from '@/lib/authRedirect';
 import { hasSupabaseConfig } from '@/lib/supabase';
 
 // LoginPage는 신규·갱신 분석 요청에 필요한 계정 인증 화면이다.
@@ -24,10 +25,7 @@ export function LoginPage({ onSignedIn }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const mode = useMemo(() => (searchParams.get('mode') === 'signup' ? 'signup' : 'login'), [searchParams]);
-  const returnTo = useMemo(() => {
-    const value = searchParams.get('returnTo') || '/requests';
-    return value.startsWith('/') && !value.startsWith('//') ? value : '/requests';
-  }, [searchParams]);
+  const returnTo = useMemo(() => sanitizeAuthReturnTo(searchParams.get('returnTo')), [searchParams]);
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -58,7 +56,7 @@ export function LoginPage({ onSignedIn }: Props) {
       }
 
       if (mode === 'signup') {
-        await signUpWithPassword(email, password);
+        await signUpWithPassword(email, password, returnTo);
         setConfirmPassword('');
         setMessage('회원가입이 완료되었습니다. 이메일 인증 후 로그인하세요.');
         setSearchParams(returnTo === '/requests' ? {} : { returnTo });

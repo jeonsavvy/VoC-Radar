@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { Shell } from '@/components/Shell';
 import { ExplorePage } from '@/routes/ExplorePage';
+import { hasSupabaseAuthCallback } from '@/lib/authRedirect';
 
 const AppReportPage = lazy(() =>
   import('@/routes/AppReportPage').then((module) => ({ default: module.AppReportPage })),
@@ -52,7 +53,7 @@ export default function App() {
 
   useEffect(() => {
     let active = true;
-    if (hasStoredAuthSession()) {
+    if (hasStoredAuthSession() || hasSupabaseAuthCallback(window.location)) {
       void refreshSession(() => active);
     }
 

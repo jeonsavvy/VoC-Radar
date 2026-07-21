@@ -87,6 +87,15 @@ npm run deploy:worker
 
 운영 통합 Worker는 same-origin API를 사용하므로 `VITE_API_BASE_URL`을 설정하지 않습니다.
 
+### Supabase Auth 반환 URL
+
+운영 이메일 인증 링크가 로컬 개발 주소로 돌아가지 않도록 Supabase Dashboard의 **Authentication > URL Configuration**을 아래처럼 유지합니다.
+
+- Site URL: `https://voc-radar.jeonsavvy.workers.dev`
+- Redirect URLs: `https://voc-radar.jeonsavvy.workers.dev/**`
+
+로컬 주소가 필요하면 Redirect URLs에만 별도로 추가하고 운영 Site URL을 `localhost`로 바꾸지 않습니다. Web도 가입 요청 시 현재 origin과 검증된 `returnTo`를 `emailRedirectTo`로 전달해 잘못된 provider fallback을 방어합니다. 롤백 시에는 직전 Site URL과 Redirect URLs를 복원합니다.
+
 이 Worker는 `apps/worker/wrangler.toml`의 cron 설정으로 **1시간마다 Supabase keepalive 조회 2회**를 실행합니다. Supabase Free 플랜의 저활동 자동 pause 경고를 줄이기 위한 용도입니다.
 
 주의 사항은 아래와 같습니다.
@@ -207,6 +216,7 @@ docker compose --env-file n8n/.env -f n8n/compose.yaml up -d
 - [ ] 로그인 `GET /api/private/reviews`가 200을 반환하는지 확인합니다.
 - [ ] 로그인 `POST /api/private/jobs`가 `fresh | existing | queued`를 반환하는지 확인합니다.
 - [ ] 로그인 `POST /api/private/jobs/cancel`가 200을 반환하는지 확인합니다.
+- [ ] 신규 가입 확인 링크가 `voc-radar.jeonsavvy.workers.dev`로 돌아오며 세션을 복구하는지 확인합니다.
 - [ ] n8n 실행 시 `queued → fetching → extracting → clustering → publishing → completed/failed`가 보이는지 확인합니다.
 - [ ] publish 후 `pipeline_runs.status='published'`가 반영되는지 확인합니다.
 - [ ] parse 오류 시 `parse_errors` 적재를 확인합니다.
