@@ -6,15 +6,17 @@ const containerName = `voc-radar-db-verify-${randomUUID().slice(0, 8)}`;
 const repositoryRoot = process.cwd();
 let containerCreated = false;
 
-function docker(args, { input, allowFailure = false } = {}) {
+function docker(args, { input, allowFailure = false, timeout } = {}) {
   const result = spawnSync('docker', args, {
     cwd: repositoryRoot,
     encoding: 'utf8',
     input,
     maxBuffer: 8 * 1024 * 1024,
+    timeout,
   });
 
   if (result.error) {
+    if (allowFailure && result.error.code === 'ETIMEDOUT') return result;
     throw result.error;
   }
   if (!allowFailure && result.status !== 0) {
@@ -58,12 +60,23 @@ try {
   containerCreated = true;
 
   let ready = false;
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  let consecutiveReadyProbes = 0;
+  const readyDeadline = Date.now() + 30_000;
+  // The official image briefly starts an initialization server before PID 1
+  // becomes the final postmaster. Require that transition plus stable SQL probes.
+  while (Date.now() < readyDeadline) {
     const probe = docker(
-      ['exec', containerName, 'pg_isready', '-U', 'postgres', '-d', 'postgres'],
-      { allowFailure: true },
+      [
+        'exec',
+        containerName,
+        'sh',
+        '-ec',
+        'test "$(cat /proc/1/comm)" = postgres && exec psql -U postgres -d postgres -Atqc "select 1"',
+      ],
+      { allowFailure: true, timeout: 2_000 },
     );
-    if (probe.status === 0) {
+    consecutiveReadyProbes = probe.status === 0 ? consecutiveReadyProbes + 1 : 0;
+    if (consecutiveReadyProbes >= 3) {
       ready = true;
       break;
     }
