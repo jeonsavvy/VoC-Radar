@@ -15,15 +15,20 @@ const optimizedRlsMigrationName = readdirSync('supabase/migrations').find((name)
 const stabilizationMigrationName = readdirSync('supabase/migrations').find((name) =>
   name.endsWith('_pipeline_stabilization.sql'),
 );
+const stabilizationFixMigrationName = readdirSync('supabase/migrations').find((name) =>
+  name.endsWith('_pipeline_stabilization_runtime_fixes.sql'),
+);
 
 assert.ok(hardeningMigrationName, 'internal RPC hardening migration must exist');
 assert.ok(latestRunMigrationName, 'latest-run public read migration must exist');
 assert.ok(optimizedRlsMigrationName, 'pipeline job RLS optimization migration must exist');
 assert.ok(stabilizationMigrationName, 'pipeline stabilization migration must exist');
+assert.ok(stabilizationFixMigrationName, 'pipeline stabilization runtime fix migration must exist');
 const hardeningMigration = readFileSync(`supabase/migrations/${hardeningMigrationName}`, 'utf8');
 const latestRunMigration = readFileSync(`supabase/migrations/${latestRunMigrationName}`, 'utf8');
 const optimizedRlsMigration = readFileSync(`supabase/migrations/${optimizedRlsMigrationName}`, 'utf8');
 const stabilizationMigration = readFileSync(`supabase/migrations/${stabilizationMigrationName}`, 'utf8');
+const stabilizationFixMigration = readFileSync(`supabase/migrations/${stabilizationFixMigrationName}`, 'utf8');
 
 function extractLatestFunction(source, functionName) {
   const start = source.toLowerCase().lastIndexOf(`create or replace function public.${functionName.toLowerCase()}(`);
@@ -32,6 +37,13 @@ function extractLatestFunction(source, functionName) {
   assert.notEqual(end, -1, `unterminated function ${functionName}`);
   return source.slice(start, end + 4);
 }
+
+test('bootstrap embeds the stabilization migration without drift', () => {
+  const marker = '-- Queue leases, claim fencing, and atomic pipeline persistence.';
+  const start = bootstrap.lastIndexOf(marker);
+  assert.notEqual(start, -1, 'bootstrap stabilization marker must exist');
+  assert.equal(bootstrap.slice(start), stabilizationMigration);
+});
 
 const legacyInternalFunctions = [
   'get_existing_review_ids\\(text, text, text\\[\\]\\)',
@@ -91,6 +103,50 @@ for (const [name, source] of [
       source,
       /grant execute on function public\.get_existing_review_ids\([^)]+\)\s+to anon/i,
     );
+  });
+}
+
+for (const [name, source] of [
+  ['bootstrap', bootstrap],
+  ['pipeline stabilization migration', stabilizationMigration],
+  ['pipeline stabilization runtime fix migration', stabilizationFixMigration],
+]) {
+  test(`${name} avoids PL/pgSQL output-column ambiguity and covers the staging FK`, () => {
+    const persistReviewsSql = extractLatestFunction(source, 'persist_pipeline_reviews');
+    const persistClustersSql = extractLatestFunction(source, 'persist_issue_clusters');
+    const parseErrorSql = extractLatestFunction(source, 'record_pipeline_parse_error');
+
+    assert.match(persistReviewsSql, /on conflict on constraint pipeline_runs_run_id_key/i);
+    assert.match(persistReviewsSql, /on conflict on constraint pipeline_review_ai_staging_pkey/i);
+    assert.match(
+      persistClustersSql,
+      /delete from public\.issue_cluster_reviews as membership where membership\.run_id = p_run_id/i,
+    );
+    assert.match(
+      persistClustersSql,
+      /delete from public\.issue_cluster_snapshots as snapshot where snapshot\.run_id = p_run_id/i,
+    );
+    assert.match(parseErrorSql, /on conflict on constraint parse_errors_parse_error_id_key/i);
+    assert.match(
+      source,
+      /idx_pipeline_review_ai_staging_review_scope[\s\S]*?\(review_id, app_store_id, country\)/i,
+    );
+
+    assert.doesNotMatch(persistReviewsSql, /on conflict\s*\(\s*run_id/i);
+    assert.doesNotMatch(persistClustersSql, /where\s+run_id\s*=\s*p_run_id/i);
+    assert.doesNotMatch(parseErrorSql, /on conflict\s*\(\s*parse_error_id/i);
+  });
+}
+
+for (const [name, source] of [
+  ['bootstrap', bootstrap.slice(bootstrap.lastIndexOf('-- Queue leases, claim fencing'))],
+  ['pipeline stabilization migration', stabilizationMigration],
+]) {
+  test(`${name} can replace already-removed legacy queue RPCs`, () => {
+    assert.match(source, /drop function if exists public\.claim_pipeline_job\(text, text, text\)/i);
+    assert.match(source, /drop function if exists public\.complete_pipeline_job\(uuid, text, text, text\)/i);
+    assert.doesNotMatch(source, /revoke execute on function public\.claim_pipeline_job\(text, text, text\)/i);
+    assert.doesNotMatch(source, /revoke execute on function public\.complete_pipeline_job\(uuid, text, text, text\)/i);
   });
 }
 

@@ -57,6 +57,7 @@ having count(*) > 1;
 ```text
 supabase/migrations/202607180001_public_intelligence_v2.sql
 supabase/migrations/202607260001_pipeline_stabilization.sql
+supabase/migrations/202607270001_pipeline_stabilization_runtime_fixes.sql
 ```
 
 점검 SQL은 아래와 같습니다.
@@ -78,6 +79,7 @@ select count(*) from public.issue_cluster_reviews;
 
 ```bash
 npm run verify
+npm run verify:database:runtime
 ```
 
 초기 보호 배포에서는 V2 flag를 명시적으로 비활성화합니다.

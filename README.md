@@ -19,6 +19,7 @@ VoC Radar는 앱 이름, App Store URL 또는 ID로 공개 분석 리포트를 �
 - `supabase/20260307_voc_radar_bootstrap.sql`: 신규 설치용 최신 스키마
 - `supabase/migrations/202607180001_public_intelligence_v2.sql`: V2 additive migration
 - `supabase/migrations/202607260001_pipeline_stabilization.sql`: claim lease, CAS, 원자적 pipeline write를 추가하는 additive migration
+- `supabase/migrations/202607270001_pipeline_stabilization_runtime_fixes.sql`: pipeline RPC conflict target과 staging FK index를 보정하는 additive migration
 - `n8n/workflow.supabase-only.json`: 리뷰 추출 → 클러스터링 → 검증·게시 workflow
 - `scripts/cluster-contract.mjs`: 리뷰 ID와 enum을 검증하는 deterministic contract
 - `DESIGN.md`: 제품 UI 계약
@@ -96,4 +97,5 @@ npm run typecheck
 npm test
 npm run build
 npm run verify:workflow
+npm run verify:database:runtime
 ```

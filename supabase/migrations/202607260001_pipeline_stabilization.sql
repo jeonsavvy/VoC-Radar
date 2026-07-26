@@ -128,6 +128,8 @@ alter table public.pipeline_review_ai_staging
 
 create index if not exists idx_pipeline_review_ai_staging_review
   on public.pipeline_review_ai_staging (review_id);
+create index if not exists idx_pipeline_review_ai_staging_review_scope
+  on public.pipeline_review_ai_staging (review_id, app_store_id, country);
 
 alter table public.pipeline_review_ai_staging enable row level security;
 revoke all on table public.pipeline_review_ai_staging from public, anon, authenticated;
@@ -235,10 +237,6 @@ revoke execute on function public.guard_pipeline_job_transition() from public, a
 
 -- Replace the unfenced queue RPCs. Old signatures are removed so callers
 -- cannot bypass claim-token checks through PostgREST overload resolution.
-revoke execute on function public.claim_pipeline_job(text, text, text)
-  from public, anon, authenticated, service_role;
-revoke execute on function public.complete_pipeline_job(uuid, text, text, text)
-  from public, anon, authenticated, service_role;
 drop function if exists public.claim_pipeline_job(text, text, text);
 drop function if exists public.complete_pipeline_job(uuid, text, text, text);
 
@@ -798,7 +796,7 @@ begin
     p_run_id, p_app_store_id, normalized_country, coalesce(nullif(trim(p_source), ''), 'n8n'),
     'upserted', review_total, now(), now()
   )
-  on conflict (run_id) do update
+  on conflict on constraint pipeline_runs_run_id_key do update
   set source = excluded.source,
       status = 'upserted',
       review_count = excluded.review_count,
@@ -848,7 +846,7 @@ begin
     raw_source jsonb, priority text, category text, issue_label text, reason_summary text,
     action_hint text, summary text, confidence numeric, model_version text
   )
-  on conflict (run_id, review_id) do update
+  on conflict on constraint pipeline_review_ai_staging_pkey do update
   set rating = excluded.rating,
       author = excluded.author,
       content = excluded.content,
@@ -929,8 +927,8 @@ begin
     raise exception using errcode = '23514', message = 'cluster review scope mismatch';
   end if;
 
-  delete from public.issue_cluster_reviews where run_id = p_run_id;
-  delete from public.issue_cluster_snapshots where run_id = p_run_id;
+  delete from public.issue_cluster_reviews as membership where membership.run_id = p_run_id;
+  delete from public.issue_cluster_snapshots as snapshot where snapshot.run_id = p_run_id;
 
   for item in select value from jsonb_array_elements(p_clusters)
   loop
@@ -1249,7 +1247,7 @@ begin
     nullif(lower(trim(coalesce(p_country, ''))), ''), left(coalesce(p_message, ''), 1000),
     left(coalesce(p_raw_response, ''), 8000), now()
   )
-  on conflict (parse_error_id) do update
+  on conflict on constraint parse_errors_parse_error_id_key do update
   set message = excluded.message, raw_response = excluded.raw_response;
 
   perform 1
