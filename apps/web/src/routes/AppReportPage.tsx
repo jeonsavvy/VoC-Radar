@@ -369,7 +369,6 @@ export function AppReportPage({ loggedIn }: Props) {
           </button>
         </div>
       </header>
-      {report.analysis.stale ? <div className="stale-banner">마지막 분석 후 24시간이 지났습니다.</div> : null}
       {requestMessage ? <div className="request-banner" role="status">{requestMessage}<Link to="/requests">요청 내역 <ArrowRight /></Link></div> : null}
 
       <nav className="report-tabs" aria-label="리포트 보기">

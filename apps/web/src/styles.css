@@ -153,8 +153,7 @@ button { border: 0; }
 .refresh-button, .not-analyzed button { min-height: 40px; display: inline-flex; align-items: center; gap: 8px; padding: 0 14px; border-radius: 6px; background: #2457d6; color: white; font-size: 12px; font-weight: 600; }
 .refresh-button:disabled { opacity: .55; }
 .refresh-button svg, .not-analyzed button svg { width: 15px; }
-.stale-banner, .request-banner { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 14px; border: 1px solid #ead7a7; background: #fff9e9; color: #735b24; font-size: 12px; }
-.request-banner { border-color: #cbd9f6; background: #f0f5ff; color: #284a90; }
+.request-banner { min-height: 42px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 14px; border: 1px solid #cbd9f6; background: #f0f5ff; color: #284a90; font-size: 12px; }
 .request-banner--error { margin-top: 8px; border-color: #e3c9cb; background: #fdf0f1; color: #8f242b; }
 .request-banner a { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
 .request-banner button { padding: 6px 8px; border-radius: 5px; background: #fff; color: inherit; font-size: 11px; font-weight: 600; white-space: nowrap; }
@@ -307,7 +306,7 @@ button { border: 0; }
   .app-report-header__meta { width: 100%; flex-direction: row; align-items: center; justify-content: space-between; }
   .app-report-header__meta > span { max-width: 175px; }
   .refresh-button { min-height: 38px; padding: 0 11px; }
-  .request-banner, .stale-banner { align-items: flex-start; flex-direction: column; }
+  .request-banner { align-items: flex-start; flex-direction: column; }
   .report-tabs { gap: 22px; overflow-x: auto; }
   .report-content { padding-top: 16px; }
   .issues-table { border: 0; background: transparent; }

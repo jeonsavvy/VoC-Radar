@@ -213,9 +213,11 @@ async function main() {
     assert.match(source, /severityLabel/);
     assert.match(source, /changePercent == null/);
     assert.doesNotMatch(source, /confidence/);
+    assert.doesNotMatch(source, /마지막 분석 후 24시간이 지났습니다|stale-banner/);
     const css = readFileSync('src/styles.css', 'utf8');
     assert.match(css, /@media \(max-width: 640px\)/);
     assert.match(css, /\.issue-dialog \{ width: 100vw;/);
+    assert.doesNotMatch(css, /\.stale-banner/);
   });
 
   await test('user-facing routes keep product copy concise', () => {
