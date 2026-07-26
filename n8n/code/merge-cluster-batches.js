@@ -22,6 +22,7 @@ const errorItem = (message) => [
       원본: '',
       runId: first.runId,
       jobId: first.jobId,
+      claimToken: first.claimToken,
       appStoreId: reviewItems[0]?.appStoreId,
       country: reviewItems[0]?.country,
     },

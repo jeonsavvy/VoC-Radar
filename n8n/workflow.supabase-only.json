@@ -32,11 +32,11 @@
             },
             {
               "name": "x-voc-token",
-              "value": "={{ $json.fetchToken }}"
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
             },
             {
-              "name": "x-voc-timestamp",
-              "value": "={{ $json.fetchTimestamp }}"
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
             }
           ]
         },
@@ -49,20 +49,21 @@
               "responseFormat": "json"
             }
           },
-          "timeout": 30000,
-          "retryOnFail": true,
-          "maxTries": 3
+          "timeout": 30000
         }
       },
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1100,
+        880,
         0
       ],
       "id": "638e245b-1e11-4e26-92d5-36de6e727396",
       "name": "HTTP Request",
-      "notes": "앱스토어 리뷰 API 호출\n\nURL 형식: https://itunes.apple.com/{국가코드}/rss/customerreviews/limit={개수}/id={앱ID}/sortBy=mostRecent/json\n\n다른 앱으로 변경: URL에서 앱 ID와 국가코드 수정\nlimit: 최대 50개 (파라미터 지정해도 최대 50개 반환 가능)"
+      "notes": "앱스토어 리뷰 API 호출\n\nURL 형식: https://itunes.apple.com/{국가코드}/rss/customerreviews/limit={개수}/id={앱ID}/sortBy=mostRecent/json\n\n다른 앱으로 변경: URL에서 앱 ID와 국가코드 수정\nlimit: 최대 50개 (파라미터 지정해도 최대 50개 반환 가능)",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
       "parameters": {
@@ -87,7 +88,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const llmItems = $input.all();\nconst contextItems = $('Ensure New Reviews').all();\nconst categories = ['버그 및 성능', '계정 및 결제', '기능 및 사용성', '콘텐츠 및 운영 정책', '긍정 리뷰 및 기타'];\nconst priorities = ['Critical', 'High', 'Normal'];\nconst parseJson = (value) => {\n  const raw = (value || '').toString().replace(/```json/gi, '').replace(/```/g, '').trim();\n  const start = raw.indexOf('['); const end = raw.lastIndexOf(']');\n  return JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw);\n};\nconst errorItem = (context, message, raw, index) => ({ json: {\n  ID: 'PARSE_ERROR_' + Date.now() + '_' + index,\n  긴급도: 'ERROR', 유형: '파싱실패', 요약: message, 원본: (raw || '').toString().slice(0, 4000),\n  작성자: 'system', 작성일시: new Date().toISOString(), 별점: '',\n  runId: context.runId || null, jobId: context.jobId || null,\n  appStoreId: context.appStoreId || null, country: context.country || null, appName: context.appName || ''\n} });\nconst output = [];\nfor (let batchIndex = 0; batchIndex < llmItems.length; batchIndex += 1) {\n  const llm = llmItems[batchIndex]?.json || {};\n  const raw = llm.text || llm.output || '';\n  const context = (contextItems[batchIndex] || contextItems[0] || { json: {} }).json || {};\n  const source = Array.isArray(context.reviews) ? context.reviews : [];\n  try {\n    const parsed = parseJson(raw);\n    if (!Array.isArray(parsed) || parsed.length !== source.length) throw new Error('extraction count mismatch');\n    const byId = new Map(parsed.map((item) => [(item.reviewId || '').toString().trim(), item]));\n    if (byId.size !== source.length) throw new Error('duplicate or missing extraction reviewId');\n    for (const review of source) {\n      const reviewId = (review.reviewId || '').toString().trim();\n      const item = byId.get(reviewId);\n      if (!reviewId || !item) throw new Error('unknown or missing extraction reviewId');\n      if (!categories.includes(item.category)) throw new Error('invalid extraction category: ' + item.category);\n      if (!priorities.includes(item.priority)) throw new Error('invalid extraction priority: ' + item.priority);\n      const summary = (item.summary || '').toString().trim();\n      if (!summary) throw new Error('extraction summary is required');\n      output.push({ json: {\n        ID: reviewId, id: reviewId, priority: item.priority, category: item.category, summary: summary.slice(0, 240),\n        author: (review.author || '').toString(), date: (review.reviewedAt || '').toString(),\n        rating: (review.rating ?? '').toString(), content: (review.content || '').toString(),\n        긴급도: item.priority, 유형: item.category, 요약: summary.slice(0, 240),\n        작성자: (review.author || '').toString(), 작성일시: (review.reviewedAt || '').toString(),\n        별점: (review.rating ?? '').toString(), 원본: (review.content || '').toString(),\n        runId: context.runId || null, jobId: context.jobId || null,\n        appStoreId: context.appStoreId || null, country: context.country || null, appName: context.appName || ''\n      } });\n    }\n  } catch (error) {\n    output.push(errorItem(context, error.message || 'extraction parse failed', raw, batchIndex));\n  }\n}\nreturn output;",
+        "jsCode": "const llmItems = $input.all();\nconst contextItems = $('Ensure New Reviews').all();\nconst categories = ['버그 및 성능', '계정 및 결제', '기능 및 사용성', '콘텐츠 및 운영 정책', '긍정 리뷰 및 기타'];\nconst priorities = ['Critical', 'High', 'Normal'];\nconst parseJson = (value) => {\n  const raw = (value || '').toString().replace(/```json/gi, '').replace(/```/g, '').trim();\n  const start = raw.indexOf('['); const end = raw.lastIndexOf(']');\n  return JSON.parse(start >= 0 && end > start ? raw.slice(start, end + 1) : raw);\n};\nconst errorItem = (context, message, raw, index) => ({ json: {\n  ID: 'PARSE_ERROR_' + Date.now() + '_' + index,\n  긴급도: 'ERROR', 유형: '파싱실패', 요약: message, 원본: (raw || '').toString().slice(0, 4000),\n  작성자: 'system', 작성일시: new Date().toISOString(), 별점: '',\n  runId: context.runId || null, jobId: context.jobId || null, claimToken: context.claimToken || null,\n  appStoreId: context.appStoreId || null, country: context.country || null, appName: context.appName || ''\n} });\nconst output = [];\nfor (let batchIndex = 0; batchIndex < llmItems.length; batchIndex += 1) {\n  const llm = llmItems[batchIndex]?.json || {};\n  const raw = llm.text || llm.output || '';\n  const context = (contextItems[batchIndex] || contextItems[0] || { json: {} }).json || {};\n  const source = Array.isArray(context.reviews) ? context.reviews : [];\n  try {\n    const parsed = parseJson(raw);\n    if (!Array.isArray(parsed) || parsed.length !== source.length) throw new Error('extraction count mismatch');\n    const byId = new Map(parsed.map((item) => [(item.reviewId || '').toString().trim(), item]));\n    if (byId.size !== source.length) throw new Error('duplicate or missing extraction reviewId');\n    for (const review of source) {\n      const reviewId = (review.reviewId || '').toString().trim();\n      const item = byId.get(reviewId);\n      if (!reviewId || !item) throw new Error('unknown or missing extraction reviewId');\n      if (!categories.includes(item.category)) throw new Error('invalid extraction category: ' + item.category);\n      if (!priorities.includes(item.priority)) throw new Error('invalid extraction priority: ' + item.priority);\n      const summary = (item.summary || '').toString().trim();\n      if (!summary) throw new Error('extraction summary is required');\n      output.push({ json: {\n        ID: reviewId, id: reviewId, priority: item.priority, category: item.category, summary: summary.slice(0, 240),\n        author: (review.author || '').toString(), date: (review.reviewedAt || '').toString(),\n        rating: (review.rating ?? '').toString(), content: (review.content || '').toString(),\n        긴급도: item.priority, 유형: item.category, 요약: summary.slice(0, 240),\n        작성자: (review.author || '').toString(), 작성일시: (review.reviewedAt || '').toString(),\n        별점: (review.rating ?? '').toString(), 원본: (review.content || '').toString(),\n        runId: context.runId || null, jobId: context.jobId || null, claimToken: context.claimToken || null,\n        appStoreId: context.appStoreId || null, country: context.country || null, appName: context.appName || ''\n      } });\n    }\n  } catch (error) {\n    output.push(errorItem(context, error.message || 'extraction parse failed', raw, batchIndex));\n  }\n}\nreturn output;",
         "mode": "runOnceForAllItems"
       },
       "type": "n8n-nodes-base.code",
@@ -121,7 +122,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const normalizeValue = (value) => (value ?? '').toString().trim();\n\nconst context = (() => {\n  try {\n    return $('Prepare Run Context').first().json || {};\n  } catch {\n    return {};\n  }\n})();\n\nconst currentItems = $input.all();\nif (!Array.isArray(currentItems) || currentItems.length === 0) {\n  return [];\n}\n\nconst seenCurrentIds = new Set();\nconst output = [];\n\nfor (const item of currentItems) {\n  const row = item.json || {};\n  const id = normalizeValue(row.id || row.ID);\n\n  if (!id || seenCurrentIds.has(id)) {\n    continue;\n  }\n\n  seenCurrentIds.add(id);\n\n  const priority = row.priority || row.긴급도 || '';\n  const category = row.category || row.유형 || '';\n  const issueLabel = row.issueLabel || row.문제 || '';\n  const reasonSummary = row.reasonSummary || row.원인 || '';\n  const actionHint = row.actionHint || row.액션 || '';\n  const summary = row.summary || row.요약 || '';\n  const content = row.content || row.원본 || '';\n  const rating = row.rating || row.별점 || '';\n  const author = row.author || row.작성자 || '';\n  const date = row.date || row.작성일시 || '';\n\n  output.push({\n    json: {\n      ID: id,\n      긴급도: priority,\n      유형: category,\n      문제: issueLabel,\n      원인: reasonSummary,\n      액션: actionHint,\n      요약: summary,\n      원본: content,\n      별점: rating,\n      작성자: author,\n      작성일시: date,\n      priority,\n      category,\n      issueLabel,\n      reasonSummary,\n      actionHint,\n      summary,\n      content,\n      rating,\n      author,\n      date,\n      runId: row.runId || context.runId || null,\n      jobId: row.jobId || context.jobId || null,\n      appStoreId: row.appStoreId || context.appStoreId || null,\n      country: row.country || context.country || null,\n      appName: row.appName || context.appName || null,\n    }\n  });\n}\n\nreturn output;"
+        "jsCode": "const normalizeValue = (value) => (value ?? '').toString().trim();\n\nconst context = (() => {\n  try {\n    return $('Prepare Run Context').first().json || {};\n  } catch {\n    return {};\n  }\n})();\n\nconst currentItems = $input.all();\nif (!Array.isArray(currentItems) || currentItems.length === 0) {\n  return [];\n}\n\nconst seenCurrentIds = new Set();\nconst output = [];\n\nfor (const item of currentItems) {\n  const row = item.json || {};\n  const id = normalizeValue(row.id || row.ID);\n\n  if (!id || seenCurrentIds.has(id)) {\n    continue;\n  }\n\n  seenCurrentIds.add(id);\n\n  const priority = row.priority || row.긴급도 || '';\n  const category = row.category || row.유형 || '';\n  const issueLabel = row.issueLabel || row.문제 || '';\n  const reasonSummary = row.reasonSummary || row.원인 || '';\n  const actionHint = row.actionHint || row.액션 || '';\n  const summary = row.summary || row.요약 || '';\n  const content = row.content || row.원본 || '';\n  const rating = row.rating || row.별점 || '';\n  const author = row.author || row.작성자 || '';\n  const date = row.date || row.작성일시 || '';\n\n  output.push({\n    json: {\n      ID: id,\n      긴급도: priority,\n      유형: category,\n      문제: issueLabel,\n      원인: reasonSummary,\n      액션: actionHint,\n      요약: summary,\n      원본: content,\n      별점: rating,\n      작성자: author,\n      작성일시: date,\n      priority,\n      category,\n      issueLabel,\n      reasonSummary,\n      actionHint,\n      summary,\n      content,\n      rating,\n      author,\n      date,\n      runId: row.runId || context.runId || null,\n      jobId: row.jobId || context.jobId || null,\n      claimToken: row.claimToken || context.claimToken || null,\n      appStoreId: row.appStoreId || context.appStoreId || null,\n      country: row.country || context.country || null,\n      appName: row.appName || context.appName || null,\n    }\n  });\n}\n\nreturn output;"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -198,7 +199,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const context = $input.first().json || {};\nconst allReviews = Array.isArray(context.reviewItems) ? context.reviewItems : [];\nconst reviewsInput = allReviews.filter((item) => item.isExisting !== true);\nif (!reviewsInput.length || !allReviews.length) return [];\nconst first = reviewsInput[0];\nconst clusters = context.result?.clusters || [];\nconst runId = (context.runId || 'RUN_' + Date.now()).toString();\nconst jobId = (context.jobId || '').toString().trim() || null;\nconst appStoreId = (first.appStoreId || '').toString().trim();\nconst country = (first.country || 'kr').toString().toLowerCase();\nconst modelVersion = ($env.VOC_MODEL_VERSION || 'gemini-3-flash-preview').toString();\nconst reviews = reviewsInput.map((item) => {\n  const id = (item.ID || '').toString();\n  const cluster = clusters.find((entry) => Array.isArray(entry.reviewIds) && entry.reviewIds.includes(id));\n  return {\n    reviewId: id, rating: Number(item.rating) || 0, author: item.author || '', content: item.content || '', reviewedAt: item.date,\n    priority: item.priority, category: item.category, issueLabel: cluster?.title || item.category,\n    reasonSummary: cluster?.summary || item.summary, actionHint: cluster?.actionHint || '', summary: item.summary,\n    modelVersion, rawSource: { id, content: item.content, author: item.author, rating: item.rating, date: item.date }\n  };\n});\nreturn [{ json: { runId, jobId, inputReviewIds: context.inputReviewIds, clusterResult: context.result, modelVersion,\n  comparisonEligible: context.forceReanalysis !== true, payload: {\n  runId, jobId, source: 'n8n', app: { appStoreId, country, appName: first.appName || '' }, reviews\n} } }];"
+        "jsCode": "const context = $input.first().json || {};\nconst allReviews = Array.isArray(context.reviewItems) ? context.reviewItems : [];\nconst reviewsInput = allReviews.filter((item) => item.isExisting !== true);\nif (!reviewsInput.length || !allReviews.length) return [];\nconst first = reviewsInput[0];\nconst clusters = context.result?.clusters || [];\nconst runId = (context.runId || '').toString().trim();\nconst jobId = (context.jobId || '').toString().trim() || null;\nconst claimToken = (context.claimToken || '').toString().trim() || null;\nif (!runId || !jobId || !claimToken) throw new Error('upsert context is incomplete');\nconst appStoreId = (first.appStoreId || '').toString().trim();\nconst country = (first.country || 'kr').toString().toLowerCase();\nconst modelVersion = ($env.VOC_MODEL_VERSION || 'gemini-3-flash-preview').toString();\nconst reviews = reviewsInput.map((item) => {\n  const id = (item.ID || '').toString();\n  const cluster = clusters.find((entry) => Array.isArray(entry.reviewIds) && entry.reviewIds.includes(id));\n  return {\n    reviewId: id, rating: Number(item.rating) || 0, author: item.author || '', content: item.content || '', reviewedAt: item.date,\n    priority: item.priority, category: item.category, issueLabel: cluster?.title || item.category,\n    reasonSummary: cluster?.summary || item.summary, actionHint: cluster?.actionHint || '', summary: item.summary,\n    modelVersion, rawSource: { id, content: item.content, author: item.author, rating: item.rating, date: item.date }\n  };\n});\nreturn [{ json: { runId, jobId, claimToken, inputReviewIds: context.inputReviewIds, clusterResult: context.result, modelVersion,\n  comparisonEligible: context.forceReanalysis !== true, payload: {\n  runId, jobId, claimToken, source: 'n8n', app: { appStoreId, country, appName: first.appName || '' }, reviews\n} } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -209,20 +210,6 @@
       "id": "prepare-upsert-payload-v2",
       "name": "Prepare Upsert Payload",
       "notes": "Supabase upsert용 payload 생성"
-    },
-    {
-      "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1100,
-        560
-      ],
-      "id": "sign-upsert-payload-v2",
-      "name": "Sign Upsert Payload",
-      "notes": "BFF 내부 엔드포인트 HMAC 서명 생성"
     },
     {
       "parameters": {
@@ -237,15 +224,11 @@
             },
             {
               "name": "x-voc-token",
-              "value": "={{ $json.token }}"
-            },
-            {
-              "name": "x-voc-timestamp",
-              "value": "={{ $json.timestamp }}"
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
             },
             {
               "name": "x-idempotency-key",
-              "value": "={{ $json.runId }}"
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
             }
           ]
         },
@@ -254,8 +237,6 @@
         "jsonBody": "={{ $json.payload }}",
         "options": {
           "timeout": 30000,
-          "retryOnFail": true,
-          "maxTries": 3,
           "response": {
             "response": {
               "responseFormat": "json"
@@ -266,40 +247,29 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1320,
+        1100,
         560
       ],
       "id": "upsert-reviews-to-bff-v2",
       "name": "Upsert Reviews to BFF",
-      "notes": "Supabase upsert (BFF internal endpoint)"
+      "notes": "Supabase upsert (BFF internal endpoint)",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
       "parameters": {
-        "jsCode": "const upsertContext = $('Prepare Upsert Payload').first().json || {};\nconst payload = upsertContext.payload || {};\n\nconst runId = ($json.runId || upsertContext.runId || `RUN_${Date.now()}`).toString();\nconst appStoreId = (payload.app?.appStoreId || '').toString().trim();\nconst country = (payload.app?.country || 'kr').toString().trim().toLowerCase();\nconst jobId = (upsertContext.jobId || payload.jobId || '').toString().trim() || null;\n\nif (!appStoreId) {\n  throw new Error('Prepare Publish Payload missing appStoreId');\n}\n\nreturn [{\n  json: {\n    runId,\n    payload: {\n      runId,\n      appStoreId,\n      country,\n      jobId,\n      publishedAt: new Date().toISOString(),\n    },\n  },\n}];"
+        "jsCode": "const upsertContext = $('Prepare Upsert Payload').first().json || {};\nconst payload = upsertContext.payload || {};\nconst runId = ($json.runId || upsertContext.runId || '').toString().trim();\nconst jobId = (upsertContext.jobId || payload.jobId || '').toString().trim();\nconst claimToken = (upsertContext.claimToken || payload.claimToken || '').toString().trim();\nconst appStoreId = (payload.app?.appStoreId || '').toString().trim();\nconst country = (payload.app?.country || 'kr').toString().trim().toLowerCase();\n\nif (!runId || !jobId || !claimToken || !appStoreId) {\n  throw new Error('publish context is incomplete');\n}\n\nreturn [{ json: {\n  runId,\n  jobId,\n  claimToken,\n  payload: {\n    runId,\n    jobId,\n    claimToken,\n    appStoreId,\n    country,\n    publishedAt: new Date().toISOString(),\n  },\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
+        1100,
         860
       ],
       "id": "prepare-publish-payload-v2",
       "name": "Prepare Publish Payload",
       "notes": "캐시 무효화 payload 생성"
-    },
-    {
-      "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1760,
-        860
-      ],
-      "id": "sign-publish-payload-v2",
-      "name": "Sign Publish Payload",
-      "notes": "캐시 무효화 요청 HMAC 서명"
     },
     {
       "parameters": {
@@ -314,15 +284,11 @@
             },
             {
               "name": "x-voc-token",
-              "value": "={{ $json.token }}"
-            },
-            {
-              "name": "x-voc-timestamp",
-              "value": "={{ $json.timestamp }}"
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
             },
             {
               "name": "x-idempotency-key",
-              "value": "={{ $json.runId }}"
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
             }
           ]
         },
@@ -331,8 +297,6 @@
         "jsonBody": "={{ $json.payload }}",
         "options": {
           "timeout": 30000,
-          "retryOnFail": true,
-          "maxTries": 3,
           "response": {
             "response": {
               "responseFormat": "json"
@@ -343,40 +307,29 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1980,
+        1320,
         860
       ],
       "id": "notify-publish-bff-v2",
       "name": "Notify Publish to BFF",
-      "notes": "리포트 반영 직후 캐시 버전 갱신"
+      "notes": "리포트 반영 직후 캐시 버전 갱신",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
       "parameters": {
-        "jsCode": "const item = $input.first().json || {};\nconst appStoreId = (item.appStoreId || '').toString().trim() || null;\nconst country = (item.country || '').toString().trim().toLowerCase() || null;\nconst runId = (item.runId || '').toString().trim() || undefined;\nconst jobId = (item.jobId || '').toString().trim() || undefined;\n\nconst parseErrorId = (item.ID || `PARSE_ERROR_${Date.now()}`).toString();\n\nconst payload = {\n  parseErrorId,\n  jobId,\n  runId,\n  appStoreId,\n  country,\n  message: (item.요약 || item.message || 'No valid data parsed').toString(),\n  rawResponse: (item.원본 || '').toString(),\n};\n\nreturn [{ json: { payload } }];"
+        "jsCode": "const item = $input.first().json || {};\nconst context = $('Prepare Run Context').first().json || {};\nconst appStoreId = (item.appStoreId || context.appStoreId || '').toString().trim() || null;\nconst country = (item.country || context.country || '').toString().trim().toLowerCase() || null;\nconst runId = (item.runId || context.runId || '').toString().trim();\nconst jobId = (item.jobId || context.jobId || '').toString().trim();\nconst claimToken = (item.claimToken || context.claimToken || '').toString().trim();\nif (!runId || !jobId || !claimToken) throw new Error('parse error context is incomplete');\n\nconst payload = {\n  parseErrorId: (item.ID || 'PARSE_ERROR_' + Date.now()).toString(),\n  jobId,\n  claimToken,\n  runId,\n  appStoreId,\n  country,\n  message: (item.요약 || item.message || 'No valid data parsed').toString(),\n  rawResponse: (item.원본 || '').toString(),\n};\n\nreturn [{ json: { runId, jobId, claimToken, payload } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
+        660,
         860
       ],
       "id": "prepare-parse-error-payload-v2",
       "name": "Prepare Parse Error Payload",
       "notes": "parse error dead-letter 적재 payload 생성"
-    },
-    {
-      "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1100,
-        860
-      ],
-      "id": "sign-parse-error-payload-v2",
-      "name": "Sign Parse Error Payload",
-      "notes": "parse error 요청 HMAC 서명"
     },
     {
       "parameters": {
@@ -391,11 +344,11 @@
             },
             {
               "name": "x-voc-token",
-              "value": "={{ $json.token }}"
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
             },
             {
-              "name": "x-voc-timestamp",
-              "value": "={{ $json.timestamp }}"
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
             }
           ]
         },
@@ -404,8 +357,6 @@
         "jsonBody": "={{ $json.payload }}",
         "options": {
           "timeout": 30000,
-          "retryOnFail": true,
-          "maxTries": 3,
           "response": {
             "response": {
               "responseFormat": "json"
@@ -416,16 +367,19 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1320,
+        880,
         860
       ],
       "id": "send-parse-error-to-bff-v2",
       "name": "Send Parse Error to BFF",
-      "notes": "Supabase parse_errors 저장"
+      "notes": "Supabase parse_errors 저장",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
       "parameters": {
-        "jsCode": "const inputItems = $input.all();\nif (!Array.isArray(inputItems) || inputItems.length === 0) {\n  return [];\n}\n\nconst first = inputItems[0].json || {};\nconst appStoreId = (first.appStoreId || '').toString().trim();\nconst country = (first.country || 'kr').toString().trim().toLowerCase();\nconst runId = (first.runId || `RUN_${Date.now()}`).toString();\n\nif (!appStoreId) {\n  return [];\n}\n\nconst alerts = inputItems.map(({ json = {} }) => ({\n  reviewId: (json.reviewId || json.ID || json.id || '').toString().trim(),\n  rating: Number((json.rating || json.별점 || '0').toString().trim()) || 0,\n  priority: (json.priority || json.긴급도 || '').toString().trim(),\n  category: (json.category || json.유형 || '').toString().trim(),\n  summary: (json.summary || json.요약 || '').toString().trim(),\n  sentAt: new Date().toISOString(),\n})).filter((alert) => alert.reviewId && alert.rating > 0);\n\nif (alerts.length === 0) {\n  return [];\n}\n\nreturn [{\n  json: {\n    runId,\n    payload: {\n      runId,\n      appStoreId,\n      country,\n      alerts,\n    },\n  },\n}];"
+        "jsCode": "const inputItems = $input.all();\nif (!Array.isArray(inputItems) || inputItems.length === 0) return [];\n\nconst context = $('Prepare Run Context').first().json || {};\nconst first = inputItems[0].json || {};\nconst appStoreId = (first.appStoreId || context.appStoreId || '').toString().trim();\nconst country = (first.country || context.country || 'kr').toString().trim().toLowerCase();\nconst runId = (first.runId || context.runId || '').toString().trim();\nconst jobId = (first.jobId || context.jobId || '').toString().trim();\nconst claimToken = (first.claimToken || context.claimToken || '').toString().trim();\nif (!appStoreId || !runId || !jobId || !claimToken) return [];\n\nconst alerts = inputItems.map(({ json = {} }) => ({\n  reviewId: (json.reviewId || json.ID || json.id || '').toString().trim(),\n  rating: Number((json.rating || json.별점 || '0').toString().trim()) || 0,\n  priority: (json.priority || json.긴급도 || '').toString().trim(),\n  category: (json.category || json.유형 || '').toString().trim(),\n  summary: (json.summary || json.요약 || '').toString().trim(),\n  sentAt: new Date().toISOString(),\n})).filter((alert) => alert.reviewId && alert.rating > 0);\nif (alerts.length === 0) return [];\n\nreturn [{ json: {\n  runId,\n  jobId,\n  claimToken,\n  payload: { runId, jobId, claimToken, appStoreId, country, alerts },\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -436,20 +390,6 @@
       "id": "prepare-alert-events-payload-v2",
       "name": "Prepare Alert Events Payload",
       "notes": "텔레그램 전송 이벤트를 Supabase에 기록"
-    },
-    {
-      "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        440,
-        860
-      ],
-      "id": "sign-alert-events-payload-v2",
-      "name": "Sign Alert Events Payload",
-      "notes": "alert_events 요청 HMAC 서명"
     },
     {
       "parameters": {
@@ -464,15 +404,11 @@
             },
             {
               "name": "x-voc-token",
-              "value": "={{ $json.token }}"
-            },
-            {
-              "name": "x-voc-timestamp",
-              "value": "={{ $json.timestamp }}"
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
             },
             {
               "name": "x-idempotency-key",
-              "value": "={{ $json.runId }}"
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
             }
           ]
         },
@@ -481,8 +417,6 @@
         "jsonBody": "={{ $json.payload }}",
         "options": {
           "timeout": 30000,
-          "retryOnFail": true,
-          "maxTries": 3,
           "response": {
             "response": {
               "responseFormat": "json"
@@ -493,16 +427,19 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        660,
+        440,
         860
       ],
       "id": "send-alert-events-to-bff-v2",
       "name": "Send Alert Events to BFF",
-      "notes": "alert_events upsert"
+      "notes": "alert_events upsert",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
       "parameters": {
-        "jsCode": "return [{\n  json: {\n    payload: {},\n  },\n}];"
+        "jsCode": "const claimKey = ($execution.id || '').toString().trim();\nif (!claimKey) throw new Error('execution id is required');\nreturn [{ json: { claimKey, payload: { claimKey } } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -513,20 +450,6 @@
       "id": "prepare-claim-job-payload-v2",
       "name": "Prepare Claim Job Payload",
       "notes": "큐에서 다음 처리 대상 job을 가져오기 위한 payload 준비"
-    },
-    {
-      "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        440,
-        0
-      ],
-      "id": "sign-claim-job-payload-v2",
-      "name": "Sign Claim Job Payload",
-      "notes": "claim-job 내부 엔드포인트 HMAC 서명 생성"
     },
     {
       "parameters": {
@@ -541,11 +464,11 @@
             },
             {
               "name": "x-voc-token",
-              "value": "={{ $json.token }}"
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
             },
             {
-              "name": "x-voc-timestamp",
-              "value": "={{ $json.timestamp }}"
+              "name": "x-idempotency-key",
+              "value": "={{ $json.claimKey }}"
             }
           ]
         },
@@ -554,8 +477,6 @@
         "jsonBody": "={{ $json.payload }}",
         "options": {
           "timeout": 30000,
-          "retryOnFail": true,
-          "maxTries": 3,
           "response": {
             "response": {
               "responseFormat": "json"
@@ -566,21 +487,24 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        660,
+        440,
         0
       ],
       "id": "claim-job-from-bff-v2",
       "name": "Claim Job from BFF",
-      "notes": "queue에서 처리할 job을 claim"
+      "notes": "queue에서 처리할 job을 claim",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
       "parameters": {
-        "jsCode": "const data = $json.data || {};\nconst status = (data.status || '').toString().trim().toLowerCase();\nconst jobId = (data.jobId || '').toString().trim() || null;\n\nif (!jobId) {\n  console.log('No queued job. Stop this run.');\n  return [];\n}\n\nconst appStoreId = (data.appStoreId || '').toString().trim();\nif (!appStoreId) {\n  throw new Error('claim-job response missing appStoreId');\n}\n\nconst country = (data.country || 'kr').toString().trim().toLowerCase();\nconst appName = (data.appName || '').toString().trim();\nconst source = (data.source || '').toString().trim().toLowerCase();\nconst forceReanalysis = source === 'reanalysis';\nconst runId = `RUN_${Date.now()}`;\n\nconst rawWindowDays = ($env.VOC_FETCH_WINDOW_DAYS || '30').toString().trim();\nconst parsedWindowDays = Number(rawWindowDays);\nconst fetchWindowDays = Number.isFinite(parsedWindowDays)\n  ? Math.min(Math.max(Math.floor(parsedWindowDays), 1), 90)\n  : 30;\n\nconst rawMaxPages = ($env.VOC_FETCH_MAX_PAGES || '120').toString().trim();\nconst parsedMaxPages = Number(rawMaxPages);\nconst fetchMaxPages = Number.isFinite(parsedMaxPages)\n  ? Math.min(Math.max(Math.floor(parsedMaxPages), 1), 200)\n  : 120;\n\nconst fetchPayload = {\n  appStoreId,\n  country,\n  windowDays: fetchWindowDays,\n  maxPages: fetchMaxPages,\n};\n\nconst fetchToken = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!fetchToken) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst fetchTimestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    runId,\n    jobId,\n    appStoreId,\n    country,\n    appName,\n    source,\n    forceReanalysis,\n    status,\n    fetchPayload,\n    fetchTimestamp,\n    fetchToken,\n  },\n}];"
+        "jsCode": "const data = $json.data || {};\nconst status = (data.status || '').toString().trim().toLowerCase();\nconst jobId = (data.jobId || '').toString().trim() || null;\n\nif (!jobId || status !== 'running') {\n  console.log('No active claim. Stop this run.');\n  return [];\n}\n\nconst claimToken = (data.claimToken || '').toString().trim();\nconst leaseExpiresAt = (data.leaseExpiresAt || '').toString().trim();\nconst attemptCount = Number(data.attemptCount);\nif (!claimToken || !leaseExpiresAt || !Number.isInteger(attemptCount) || attemptCount < 1) {\n  throw new Error('claim response is incomplete');\n}\n\nconst appStoreId = (data.appStoreId || '').toString().trim();\nif (!appStoreId) {\n  throw new Error('claim response missing appStoreId');\n}\n\nconst country = (data.country || 'kr').toString().trim().toLowerCase();\nconst appName = (data.appName || '').toString().trim();\nconst source = (data.source || '').toString().trim().toLowerCase();\nconst forceReanalysis = source === 'reanalysis';\nconst claimKey = $('Prepare Claim Job Payload').first().json.claimKey;\nconst runId = 'RUN_' + jobId + '_' + attemptCount;\n\nconst rawWindowDays = ($env.VOC_FETCH_WINDOW_DAYS || '30').toString().trim();\nconst parsedWindowDays = Number(rawWindowDays);\nconst fetchWindowDays = Number.isFinite(parsedWindowDays)\n  ? Math.min(Math.max(Math.floor(parsedWindowDays), 1), 90)\n  : 30;\n\nconst rawMaxPages = ($env.VOC_FETCH_MAX_PAGES || '120').toString().trim();\nconst parsedMaxPages = Number(rawMaxPages);\nconst fetchMaxPages = Number.isFinite(parsedMaxPages)\n  ? Math.min(Math.max(Math.floor(parsedMaxPages), 1), 200)\n  : 120;\n\nconst fetchPayload = {\n  jobId,\n  claimToken,\n  runId,\n  appStoreId,\n  country,\n  windowDays: fetchWindowDays,\n  maxPages: fetchMaxPages,\n};\n\nreturn [{ json: {\n  runId,\n  jobId,\n  claimKey,\n  claimToken,\n  leaseExpiresAt,\n  attemptCount,\n  appStoreId,\n  country,\n  appName,\n  source,\n  forceReanalysis,\n  status,\n  fetchPayload,\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        880,
+        660,
         0
       ],
       "id": "prepare-run-context-v2",
@@ -589,31 +513,17 @@
     },
     {
       "parameters": {
-        "jsCode": "const context = $('Prepare Run Context').first().json || {};\nconst appStoreId = (context.appStoreId || '').toString().trim();\nconst country = (context.country || 'kr').toString().trim().toLowerCase();\nconst runId = (context.runId || '').toString().trim() || null;\nconst jobId = (context.jobId || '').toString().trim() || null;\n\nif (!appStoreId) {\n  throw new Error('Prepare Run Context missing appStoreId');\n}\n\nconst responseData = $input.first().json?.data || {};\nconst inputReviews = Array.isArray(responseData.reviews) ? responseData.reviews : [];\n\nconst seen = new Set();\nconst reviews = inputReviews\n  .map((review) => ({\n    reviewId: (review.reviewId || '').toString().trim(),\n    author: (review.author || '').toString().trim() || 'unknown',\n    reviewedAt: (review.reviewedAt || new Date().toISOString()).toString(),\n    rating: Number((review.rating || '0').toString().trim()) || 0,\n    content: (review.content || '').toString().trim(),\n  }))\n  .filter((review) => {\n    if (!review.reviewId || review.rating <= 0) {\n      return false;\n    }\n    if (seen.has(review.reviewId)) {\n      return false;\n    }\n    seen.add(review.reviewId);\n    return true;\n  });\n\nreturn [{\n  json: {\n    payload: {\n      appStoreId,\n      country,\n      runId,\n      jobId,\n      reviews,\n      forceReanalysis: context.forceReanalysis === true,\n    },\n  },\n}];"
+        "jsCode": "const context = $('Prepare Run Context').first().json || {};\nconst appStoreId = (context.appStoreId || '').toString().trim();\nconst country = (context.country || 'kr').toString().trim().toLowerCase();\nconst runId = (context.runId || '').toString().trim();\nconst jobId = (context.jobId || '').toString().trim();\nconst claimToken = (context.claimToken || '').toString().trim();\n\nif (!appStoreId || !runId || !jobId || !claimToken) {\n  throw new Error('preflight context is incomplete');\n}\n\nconst responseData = $input.first().json?.data || {};\nconst inputReviews = Array.isArray(responseData.reviews) ? responseData.reviews : [];\nconst seen = new Set();\nconst reviews = inputReviews\n  .map((review) => ({\n    reviewId: (review.reviewId || '').toString().trim(),\n    author: (review.author || '').toString().trim() || 'unknown',\n    reviewedAt: (review.reviewedAt || new Date().toISOString()).toString(),\n    rating: Number((review.rating || '0').toString().trim()) || 0,\n    content: (review.content || '').toString().trim(),\n  }))\n  .filter((review) => {\n    if (!review.reviewId || review.rating <= 0 || seen.has(review.reviewId)) return false;\n    seen.add(review.reviewId);\n    return true;\n  });\n\nreturn [{ json: {\n  runId,\n  jobId,\n  claimToken,\n  payload: {\n    appStoreId,\n    country,\n    runId,\n    jobId,\n    claimToken,\n    reviews,\n    forceReanalysis: context.forceReanalysis === true,\n  },\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1320,
+        1100,
         0
       ],
       "id": "prepare-preflight-reviews-payload-v2",
       "name": "Prepare Preflight Reviews Payload",
       "notes": "리뷰 ID 기준으로 prefilter payload 준비"
-    },
-    {
-      "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) {\n  return [];\n}\n\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) {\n  throw new Error('PIPELINE_WEBHOOK_SECRET is required');\n}\n\nconst timestamp = Date.now().toString();\n\nreturn [{\n  json: {\n    payload,\n    runId: $json.runId || payload.runId || null,\n    timestamp,\n    token,\n  }\n}];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1540,
-        0
-      ],
-      "id": "sign-preflight-reviews-payload-v2",
-      "name": "Sign Preflight Reviews Payload",
-      "notes": "prefilter 내부 엔드포인트 HMAC 서명"
     },
     {
       "parameters": {
@@ -628,11 +538,11 @@
             },
             {
               "name": "x-voc-token",
-              "value": "={{ $json.token }}"
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
             },
             {
-              "name": "x-voc-timestamp",
-              "value": "={{ $json.timestamp }}"
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
             }
           ]
         },
@@ -641,8 +551,6 @@
         "jsonBody": "={{ $json.payload }}",
         "options": {
           "timeout": 30000,
-          "retryOnFail": true,
-          "maxTries": 3,
           "response": {
             "response": {
               "responseFormat": "json"
@@ -653,12 +561,15 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1760,
+        1320,
         0
       ],
       "id": "filter-new-reviews-via-bff-v2",
       "name": "Filter New Reviews via BFF",
-      "notes": "이미 저장된 review_id 제거 (LLM 비용/중복알림 절감)"
+      "notes": "이미 저장된 review_id 제거 (LLM 비용/중복알림 절감)",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
       "parameters": {
@@ -667,7 +578,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1980,
+        1540,
         0
       ],
       "id": "ensure-new-reviews-v2",
@@ -676,7 +587,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const expected = ($env.N8N_PIPELINE_TRIGGER_SECRET || '').toString().trim();\n\nif (!expected) {\n  return [{ json: { triggerSource: 'webhook', secretCheck: 'skipped' } }];\n}\n\nconst headers = $json.headers || {};\nconst provided = (\n  headers['x-voc-trigger-secret'] ||\n  headers['X-Voc-Trigger-Secret'] ||\n  ''\n).toString().trim();\n\nif (!provided || provided !== expected) {\n  throw new Error('invalid trigger secret');\n}\n\nreturn [{ json: { triggerSource: 'webhook', secretCheck: 'passed' } }];"
+        "jsCode": "const expected = ($env.N8N_PIPELINE_TRIGGER_SECRET || '').toString().trim();\nif (!expected) {\n  throw new Error('trigger secret is not configured');\n}\n\nconst headers = $json.headers || {};\nconst provided = (headers['x-voc-trigger-secret'] || headers['X-Voc-Trigger-Secret'] || '')\n  .toString()\n  .trim();\nif (!provided || provided !== expected) {\n  throw new Error('trigger secret rejected');\n}\n\nreturn [{ json: { triggerSource: 'webhook' } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -686,7 +597,7 @@
       ],
       "id": "validate-trigger-secret",
       "name": "Validate Trigger Secret",
-      "notes": "N8N_PIPELINE_TRIGGER_SECRET이 설정된 경우 webhook 호출 헤더를 검증함"
+      "notes": "Webhook secret은 필수이며 누락 또는 불일치 시 claim 전에 실행을 중단한다."
     },
     {
       "parameters": {
@@ -719,7 +630,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const freshReviews = $input.all().map((item) => ({ ...(item.json || {}), isExisting: false }));\nconst runContext = $('Prepare Run Context').first().json || {};\nconst preflight = $('Filter New Reviews via BFF').first().json?.data || {};\nconst existingReviews = Array.isArray(preflight.existingExtractions) ? preflight.existingExtractions : [];\nconst seen = new Set();\nconst reviews = [...freshReviews, ...existingReviews].filter((item) => {\n  const id = (item.ID || item.id || '').toString();\n  if (!id || seen.has(id)) return false;\n  seen.add(id); return true;\n});\nif (reviews.length === 0) return [];\nconst first = freshReviews[0] || reviews[0];\nreturn [{ json: {\n  runId: first.runId, jobId: first.jobId || null,\n  source: runContext.source || '',\n  forceReanalysis: runContext.forceReanalysis === true,\n  reviewItems: reviews,\n  payload: { appStoreId: first.appStoreId, country: first.country || 'kr' }\n} }];"
+        "jsCode": "const freshReviews = $input.all().map((item) => ({ ...(item.json || {}), isExisting: false }));\nconst runContext = $('Prepare Run Context').first().json || {};\nconst preflight = $('Filter New Reviews via BFF').first().json?.data || {};\nconst existingReviews = Array.isArray(preflight.existingExtractions) ? preflight.existingExtractions : [];\nconst seen = new Set();\nconst reviews = [...freshReviews, ...existingReviews].filter((item) => {\n  const id = (item.ID || item.id || '').toString();\n  if (!id || seen.has(id)) return false;\n  seen.add(id); return true;\n});\nif (reviews.length === 0) return [];\nconst first = freshReviews[0] || reviews[0];\nreturn [{ json: {\n  runId: runContext.runId, jobId: runContext.jobId || null, claimToken: runContext.claimToken || null,\n  source: runContext.source || '',\n  forceReanalysis: runContext.forceReanalysis === true,\n  reviewItems: reviews,\n  payload: {\n    jobId: runContext.jobId,\n    claimToken: runContext.claimToken,\n    runId: runContext.runId,\n    appStoreId: first.appStoreId,\n    country: first.country || 'kr'\n  }\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -730,19 +641,6 @@
       "id": "prepare-cluster-context-v2",
       "name": "Prepare Cluster Context",
       "notes": "기존 클러스터 매칭을 위한 read-only context payload"
-    },
-    {
-      "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) return [];\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) throw new Error('PIPELINE_WEBHOOK_SECRET is required');\nreturn [{ json: { ...$json, payload, timestamp: Date.now().toString(), token } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1100,
-        260
-      ],
-      "id": "sign-cluster-context-v2",
-      "name": "Sign Cluster Context"
     },
     {
       "parameters": {
@@ -757,11 +655,11 @@
             },
             {
               "name": "x-voc-token",
-              "value": "={{ $json.token }}"
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
             },
             {
-              "name": "x-voc-timestamp",
-              "value": "={{ $json.timestamp }}"
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
             }
           ]
         },
@@ -770,8 +668,6 @@
         "jsonBody": "={{ $json.payload }}",
         "options": {
           "timeout": 30000,
-          "retryOnFail": true,
-          "maxTries": 3,
           "response": {
             "response": {
               "responseFormat": "json"
@@ -782,11 +678,14 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1320,
+        1100,
         260
       ],
       "id": "fetch-cluster-context-v2",
-      "name": "Fetch Cluster Context"
+      "name": "Fetch Cluster Context",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
       "parameters": {
@@ -795,7 +694,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
+        1320,
         260
       ],
       "id": "prepare-cluster-input-v2",
@@ -811,7 +710,7 @@
       "type": "@n8n/n8n-nodes-langchain.chainLlm",
       "typeVersion": 1.8,
       "position": [
-        1760,
+        1540,
         260
       ],
       "id": "cluster-review-issues-v2",
@@ -826,12 +725,12 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const contexts = $('Prepare Cluster Input').all().map((item) => item.json || {});\nconst llmItems = $input.all();\nconst categories = ['버그 및 성능', '계정 및 결제', '기능 및 사용성', '콘텐츠 및 운영 정책', '긍정 리뷰 및 기타'];\nconst severities = ['high', 'medium', 'low'];\nconst output = [];\n\nfor (let batchIndex = 0; batchIndex < contexts.length; batchIndex += 1) {\n  const context = contexts[batchIndex] || {};\n  const llm = llmItems[batchIndex]?.json || {};\n  const raw = (llm.text || llm.output || '').toString();\n  const errorItem = (message) => ({\n    json: {\n      ID: `PARSE_ERROR_CLUSTER_${Date.now()}_${batchIndex}`,\n      긴급도: 'ERROR',\n      유형: '파싱실패',\n      요약: message,\n      원본: raw.slice(0, 4000),\n      runId: context.runId,\n      jobId: context.jobId,\n      appStoreId: context.reviewItems?.[0]?.appStoreId,\n      country: context.reviewItems?.[0]?.country,\n      clusterBatchIndex: batchIndex,\n    },\n  });\n\n  try {\n    const clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();\n    const start = clean.indexOf('{');\n    const end = clean.lastIndexOf('}');\n    const parsed = JSON.parse(start >= 0 && end > start ? clean.slice(start, end + 1) : clean);\n    const clusters = Array.isArray(parsed.clusters) ? parsed.clusters : [];\n    if (!clusters.length) throw new Error('clusters must not be empty');\n\n    const inputReviewIds = context.reviewItems.map((item) => (item.ID || '').toString());\n    const expected = new Set(inputReviewIds);\n    const assigned = new Set();\n    const keys = new Set();\n\n    for (const cluster of clusters) {\n      if (!/^[a-z0-9][a-z0-9-]{1,79}$/.test((cluster.canonicalKey || '').toString())) {\n        throw new Error('invalid canonicalKey');\n      }\n      if (keys.has(cluster.canonicalKey)) throw new Error('duplicate canonicalKey');\n      keys.add(cluster.canonicalKey);\n      if (!categories.includes(cluster.category)) throw new Error('invalid cluster category');\n      if (!severities.includes(cluster.severity)) throw new Error('invalid severity');\n      if (!(cluster.title || '').toString().trim() || !(cluster.summary || '').toString().trim()) {\n        throw new Error('cluster title and summary are required');\n      }\n      if (!Array.isArray(cluster.reviewIds) || cluster.reviewIds.length === 0) {\n        throw new Error('cluster reviewIds required');\n      }\n      for (const id of cluster.reviewIds) {\n        if (!expected.has(id)) throw new Error(`unknown cluster reviewId: ${id}`);\n        if (assigned.has(id)) throw new Error(`duplicate cluster assignment: ${id}`);\n        assigned.add(id);\n      }\n      const representatives = Array.isArray(cluster.representativeReviewIds)\n        ? cluster.representativeReviewIds\n        : cluster.reviewIds.slice(0, 3);\n      if (representatives.some((id) => !cluster.reviewIds.includes(id))) {\n        throw new Error('representative review must be a member');\n      }\n      cluster.representativeReviewIds = representatives.slice(0, 3);\n    }\n\n    const missing = inputReviewIds.filter((id) => !assigned.has(id));\n    if (missing.length) throw new Error(`unassigned reviewIds: ${missing.join(',')}`);\n\n    output.push({\n      json: {\n        ...context,\n        inputReviewIds,\n        result: {\n          extractions: context.reviewItems.map((item) => ({\n            reviewId: item.ID,\n            category: item.category,\n            summary: item.summary,\n          })),\n          clusters,\n        },\n        validation: {\n          passed: true,\n          inputReviewCount: inputReviewIds.length,\n          extractionCount: inputReviewIds.length,\n          assignedReviewCount: assigned.size,\n          clusterCount: clusters.length,\n        },\n      },\n    });\n  } catch (error) {\n    output.push(errorItem(error.message || 'cluster validation failed'));\n  }\n}\n\nreturn output;\n"
+        "jsCode": "const contexts = $('Prepare Cluster Input').all().map((item) => item.json || {});\nconst llmItems = $input.all();\nconst categories = ['버그 및 성능', '계정 및 결제', '기능 및 사용성', '콘텐츠 및 운영 정책', '긍정 리뷰 및 기타'];\nconst severities = ['high', 'medium', 'low'];\nconst output = [];\n\nfor (let batchIndex = 0; batchIndex < contexts.length; batchIndex += 1) {\n  const context = contexts[batchIndex] || {};\n  const llm = llmItems[batchIndex]?.json || {};\n  const raw = (llm.text || llm.output || '').toString();\n  const errorItem = (message) => ({\n    json: {\n      ID: `PARSE_ERROR_CLUSTER_${Date.now()}_${batchIndex}`,\n      긴급도: 'ERROR',\n      유형: '파싱실패',\n      요약: message,\n      원본: raw.slice(0, 4000),\n      runId: context.runId,\n      jobId: context.jobId,\n      claimToken: context.claimToken,\n      appStoreId: context.reviewItems?.[0]?.appStoreId,\n      country: context.reviewItems?.[0]?.country,\n      clusterBatchIndex: batchIndex,\n    },\n  });\n\n  try {\n    const clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();\n    const start = clean.indexOf('{');\n    const end = clean.lastIndexOf('}');\n    const parsed = JSON.parse(start >= 0 && end > start ? clean.slice(start, end + 1) : clean);\n    const clusters = Array.isArray(parsed.clusters) ? parsed.clusters : [];\n    if (!clusters.length) throw new Error('clusters must not be empty');\n\n    const inputReviewIds = context.reviewItems.map((item) => (item.ID || '').toString());\n    const expected = new Set(inputReviewIds);\n    const assigned = new Set();\n    const keys = new Set();\n\n    for (const cluster of clusters) {\n      if (!/^[a-z0-9][a-z0-9-]{1,79}$/.test((cluster.canonicalKey || '').toString())) {\n        throw new Error('invalid canonicalKey');\n      }\n      if (keys.has(cluster.canonicalKey)) throw new Error('duplicate canonicalKey');\n      keys.add(cluster.canonicalKey);\n      if (!categories.includes(cluster.category)) throw new Error('invalid cluster category');\n      if (!severities.includes(cluster.severity)) throw new Error('invalid severity');\n      if (!(cluster.title || '').toString().trim() || !(cluster.summary || '').toString().trim()) {\n        throw new Error('cluster title and summary are required');\n      }\n      if (!Array.isArray(cluster.reviewIds) || cluster.reviewIds.length === 0) {\n        throw new Error('cluster reviewIds required');\n      }\n      for (const id of cluster.reviewIds) {\n        if (!expected.has(id)) throw new Error(`unknown cluster reviewId: ${id}`);\n        if (assigned.has(id)) throw new Error(`duplicate cluster assignment: ${id}`);\n        assigned.add(id);\n      }\n      const representatives = Array.isArray(cluster.representativeReviewIds)\n        ? cluster.representativeReviewIds\n        : cluster.reviewIds.slice(0, 3);\n      if (representatives.some((id) => !cluster.reviewIds.includes(id))) {\n        throw new Error('representative review must be a member');\n      }\n      cluster.representativeReviewIds = representatives.slice(0, 3);\n    }\n\n    const missing = inputReviewIds.filter((id) => !assigned.has(id));\n    if (missing.length) throw new Error(`unassigned reviewIds: ${missing.join(',')}`);\n\n    output.push({\n      json: {\n        ...context,\n        inputReviewIds,\n        result: {\n          extractions: context.reviewItems.map((item) => ({\n            reviewId: item.ID,\n            category: item.category,\n            summary: item.summary,\n          })),\n          clusters,\n        },\n        validation: {\n          passed: true,\n          inputReviewCount: inputReviewIds.length,\n          extractionCount: inputReviewIds.length,\n          assignedReviewCount: assigned.size,\n          clusterCount: clusters.length,\n        },\n      },\n    });\n  } catch (error) {\n    output.push(errorItem(error.message || 'cluster validation failed'));\n  }\n}\n\nreturn output;\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1980,
+        1760,
         260
       ],
       "id": "validate-cluster-output-v2",
@@ -871,29 +770,16 @@
     },
     {
       "parameters": {
-        "jsCode": "const upsert = $('Prepare Upsert Payload').first().json || {};\nconst app = upsert.payload?.app || {};\nreturn [{ json: { runId: upsert.runId, payload: {\n  runId: upsert.runId, jobId: upsert.jobId, appStoreId: app.appStoreId, country: app.country,\n  modelVersion: upsert.modelVersion, comparisonEligible: upsert.comparisonEligible,\n  inputReviewIds: upsert.inputReviewIds, result: upsert.clusterResult\n} } }];"
+        "jsCode": "const upsert = $('Prepare Upsert Payload').first().json || {};\nconst app = upsert.payload?.app || {};\nreturn [{ json: { runId: upsert.runId, jobId: upsert.jobId, claimToken: upsert.claimToken, payload: {\n  runId: upsert.runId, jobId: upsert.jobId, claimToken: upsert.claimToken,\n  appStoreId: app.appStoreId, country: app.country,\n  modelVersion: upsert.modelVersion, comparisonEligible: upsert.comparisonEligible,\n  inputReviewIds: upsert.inputReviewIds, result: upsert.clusterResult\n} } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
+        1320,
         560
       ],
       "id": "prepare-cluster-upsert-v2",
       "name": "Prepare Cluster Upsert"
-    },
-    {
-      "parameters": {
-        "jsCode": "const payload = $json.payload;\nif (!payload) return [];\nconst token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();\nif (!token) throw new Error('PIPELINE_WEBHOOK_SECRET is required');\nreturn [{ json: { ...$json, payload, timestamp: Date.now().toString(), token } }];"
-      },
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1760,
-        560
-      ],
-      "id": "sign-cluster-upsert-v2",
-      "name": "Sign Cluster Upsert"
     },
     {
       "parameters": {
@@ -908,15 +794,11 @@
             },
             {
               "name": "x-voc-token",
-              "value": "={{ $json.token }}"
-            },
-            {
-              "name": "x-voc-timestamp",
-              "value": "={{ $json.timestamp }}"
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
             },
             {
               "name": "x-idempotency-key",
-              "value": "={{ $json.runId }}"
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
             }
           ]
         },
@@ -925,8 +807,6 @@
         "jsonBody": "={{ $json.payload }}",
         "options": {
           "timeout": 30000,
-          "retryOnFail": true,
-          "maxTries": 3,
           "response": {
             "response": {
               "responseFormat": "json"
@@ -937,16 +817,19 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1980,
+        1540,
         560
       ],
       "id": "upsert-clusters-to-bff-v2",
-      "name": "Upsert Clusters to BFF"
+      "name": "Upsert Clusters to BFF",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
     },
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const batches = $input.all().map((item) => item.json || {});\nif (batches.length === 0) return [];\n\nconst failed = batches.find((item) => (item.ID || '').toString().startsWith('PARSE_ERROR_CLUSTER_'));\nif (failed) return [{ json: failed }];\n\nconst first = batches[0] || {};\nconst reviewItems = batches.flatMap((batch) => (Array.isArray(batch.reviewItems) ? batch.reviewItems : []));\nconst extractions = batches.flatMap((batch) =>\n  Array.isArray(batch.result?.extractions) ? batch.result.extractions : [],\n);\nconst severityRank = { low: 1, medium: 2, high: 3 };\nconst merged = new Map();\n\nconst errorItem = (message) => [\n  {\n    json: {\n      ID: `PARSE_ERROR_CLUSTER_MERGE_${Date.now()}`,\n      긴급도: 'ERROR',\n      유형: '파싱실패',\n      요약: message,\n      원본: '',\n      runId: first.runId,\n      jobId: first.jobId,\n      appStoreId: reviewItems[0]?.appStoreId,\n      country: reviewItems[0]?.country,\n    },\n  },\n];\n\ntry {\n  for (const batch of batches) {\n    for (const cluster of batch.result?.clusters || []) {\n      const existingClusterId = (cluster.existingClusterId || '').toString().trim() || null;\n      const identity = existingClusterId ? `id:${existingClusterId}` : `key:${cluster.canonicalKey}`;\n      const current = merged.get(identity);\n\n      if (!current) {\n        merged.set(identity, {\n          ...cluster,\n          existingClusterId,\n          reviewIds: [...cluster.reviewIds],\n          representativeReviewIds: [...(cluster.representativeReviewIds || [])],\n        });\n        continue;\n      }\n\n      if (current.canonicalKey !== cluster.canonicalKey) {\n        throw new Error('existing cluster canonicalKey mismatch');\n      }\n      current.reviewIds = [...new Set([...current.reviewIds, ...cluster.reviewIds])];\n      current.representativeReviewIds = [\n        ...new Set([...(current.representativeReviewIds || []), ...(cluster.representativeReviewIds || [])]),\n      ]\n        .filter((id) => current.reviewIds.includes(id))\n        .slice(0, 3);\n      if ((severityRank[cluster.severity] || 0) > (severityRank[current.severity] || 0)) {\n        current.severity = cluster.severity;\n      }\n    }\n  }\n\n  const clusters = [...merged.values()];\n  const canonicalKeys = new Set();\n  const expectedIds = reviewItems.map((item) => (item.ID || '').toString());\n  const expected = new Set(expectedIds);\n  const assigned = new Set();\n\n  if (expected.size !== expectedIds.length) throw new Error('duplicate reviewId across cluster batches');\n  if (extractions.length !== expectedIds.length) throw new Error('merged extraction count mismatch');\n\n  for (const cluster of clusters) {\n    if (canonicalKeys.has(cluster.canonicalKey)) throw new Error('duplicate canonicalKey after batch merge');\n    canonicalKeys.add(cluster.canonicalKey);\n    for (const id of cluster.reviewIds || []) {\n      if (!expected.has(id)) throw new Error(`unknown merged reviewId: ${id}`);\n      if (assigned.has(id)) throw new Error(`duplicate merged assignment: ${id}`);\n      assigned.add(id);\n    }\n    if ((cluster.representativeReviewIds || []).some((id) => !cluster.reviewIds.includes(id))) {\n      throw new Error('merged representative review must be a member');\n    }\n  }\n\n  const missing = expectedIds.filter((id) => !assigned.has(id));\n  if (missing.length) throw new Error(`unassigned merged reviewIds: ${missing.join(',')}`);\n\n  const { clusterBatchIndex, clusterBatchCount, clusterBatchLimit, ...base } = first;\n  return [\n    {\n      json: {\n        ...base,\n        reviewItems,\n        inputReviewIds: expectedIds,\n        result: { extractions, clusters },\n        validation: {\n          passed: true,\n          inputReviewCount: expectedIds.length,\n          extractionCount: extractions.length,\n          assignedReviewCount: assigned.size,\n          clusterCount: clusters.length,\n          clusterBatchCount: batches.length,\n        },\n      },\n    },\n  ];\n} catch (error) {\n  return errorItem(error.message || 'cluster batch merge failed');\n}\n"
+        "jsCode": "const batches = $input.all().map((item) => item.json || {});\nif (batches.length === 0) return [];\n\nconst failed = batches.find((item) => (item.ID || '').toString().startsWith('PARSE_ERROR_CLUSTER_'));\nif (failed) return [{ json: failed }];\n\nconst first = batches[0] || {};\nconst reviewItems = batches.flatMap((batch) => (Array.isArray(batch.reviewItems) ? batch.reviewItems : []));\nconst extractions = batches.flatMap((batch) =>\n  Array.isArray(batch.result?.extractions) ? batch.result.extractions : [],\n);\nconst severityRank = { low: 1, medium: 2, high: 3 };\nconst merged = new Map();\n\nconst errorItem = (message) => [\n  {\n    json: {\n      ID: `PARSE_ERROR_CLUSTER_MERGE_${Date.now()}`,\n      긴급도: 'ERROR',\n      유형: '파싱실패',\n      요약: message,\n      원본: '',\n      runId: first.runId,\n      jobId: first.jobId,\n      claimToken: first.claimToken,\n      appStoreId: reviewItems[0]?.appStoreId,\n      country: reviewItems[0]?.country,\n    },\n  },\n];\n\ntry {\n  for (const batch of batches) {\n    for (const cluster of batch.result?.clusters || []) {\n      const existingClusterId = (cluster.existingClusterId || '').toString().trim() || null;\n      const identity = existingClusterId ? `id:${existingClusterId}` : `key:${cluster.canonicalKey}`;\n      const current = merged.get(identity);\n\n      if (!current) {\n        merged.set(identity, {\n          ...cluster,\n          existingClusterId,\n          reviewIds: [...cluster.reviewIds],\n          representativeReviewIds: [...(cluster.representativeReviewIds || [])],\n        });\n        continue;\n      }\n\n      if (current.canonicalKey !== cluster.canonicalKey) {\n        throw new Error('existing cluster canonicalKey mismatch');\n      }\n      current.reviewIds = [...new Set([...current.reviewIds, ...cluster.reviewIds])];\n      current.representativeReviewIds = [\n        ...new Set([...(current.representativeReviewIds || []), ...(cluster.representativeReviewIds || [])]),\n      ]\n        .filter((id) => current.reviewIds.includes(id))\n        .slice(0, 3);\n      if ((severityRank[cluster.severity] || 0) > (severityRank[current.severity] || 0)) {\n        current.severity = cluster.severity;\n      }\n    }\n  }\n\n  const clusters = [...merged.values()];\n  const canonicalKeys = new Set();\n  const expectedIds = reviewItems.map((item) => (item.ID || '').toString());\n  const expected = new Set(expectedIds);\n  const assigned = new Set();\n\n  if (expected.size !== expectedIds.length) throw new Error('duplicate reviewId across cluster batches');\n  if (extractions.length !== expectedIds.length) throw new Error('merged extraction count mismatch');\n\n  for (const cluster of clusters) {\n    if (canonicalKeys.has(cluster.canonicalKey)) throw new Error('duplicate canonicalKey after batch merge');\n    canonicalKeys.add(cluster.canonicalKey);\n    for (const id of cluster.reviewIds || []) {\n      if (!expected.has(id)) throw new Error(`unknown merged reviewId: ${id}`);\n      if (assigned.has(id)) throw new Error(`duplicate merged assignment: ${id}`);\n      assigned.add(id);\n    }\n    if ((cluster.representativeReviewIds || []).some((id) => !cluster.reviewIds.includes(id))) {\n      throw new Error('merged representative review must be a member');\n    }\n  }\n\n  const missing = expectedIds.filter((id) => !assigned.has(id));\n  if (missing.length) throw new Error(`unassigned merged reviewIds: ${missing.join(',')}`);\n\n  const { clusterBatchIndex, clusterBatchCount, clusterBatchLimit, ...base } = first;\n  return [\n    {\n      json: {\n        ...base,\n        reviewItems,\n        inputReviewIds: expectedIds,\n        result: { extractions, clusters },\n        validation: {\n          passed: true,\n          inputReviewCount: expectedIds.length,\n          extractionCount: extractions.length,\n          assignedReviewCount: assigned.size,\n          clusterCount: clusters.length,\n          clusterBatchCount: batches.length,\n        },\n      },\n    },\n  ];\n} catch (error) {\n  return errorItem(error.message || 'cluster batch merge failed');\n}\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -982,7 +865,7 @@
     {
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const context = $('Merge Cluster Batches').first().json || {};\nconst llm = $input.first().json || {};\nconst raw = (llm.text || llm.output || '').toString();\nconst candidates = (context.result?.clusters || []).map((cluster, index) => ({\n  candidateId: `candidate-${index}`,\n  cluster,\n}));\nconst categories = ['버그 및 성능', '계정 및 결제', '기능 및 사용성', '콘텐츠 및 운영 정책', '긍정 리뷰 및 기타'];\nconst severities = ['high', 'medium', 'low'];\n\nconst errorItem = (message) => [\n  {\n    json: {\n      ID: `PARSE_ERROR_CLUSTER_CONSOLIDATION_${Date.now()}`,\n      긴급도: 'ERROR',\n      유형: '파싱실패',\n      요약: message,\n      원본: raw.slice(0, 4000),\n      runId: context.runId,\n      jobId: context.jobId,\n      appStoreId: context.reviewItems?.[0]?.appStoreId,\n      country: context.reviewItems?.[0]?.country,\n    },\n  },\n];\n\ntry {\n  if (candidates.length === 0) throw new Error('cluster candidates must not be empty');\n  const clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();\n  const start = clean.indexOf('{');\n  const end = clean.lastIndexOf('}');\n  const parsed = JSON.parse(start >= 0 && end > start ? clean.slice(start, end + 1) : clean);\n  const groups = Array.isArray(parsed.groups) ? parsed.groups : [];\n  if (groups.length === 0) throw new Error('consolidation groups must not be empty');\n\n  const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate.cluster]));\n  const assignedCandidates = new Set();\n  const canonicalKeys = new Set();\n  const clusters = [];\n\n  for (const group of groups) {\n    if (!Array.isArray(group.candidateIds) || group.candidateIds.length === 0) {\n      throw new Error('consolidation candidateIds required');\n    }\n    const sourceClusters = [];\n    for (const candidateId of group.candidateIds) {\n      if (!byId.has(candidateId)) throw new Error(`unknown consolidation candidateId: ${candidateId}`);\n      if (assignedCandidates.has(candidateId)) {\n        throw new Error(`duplicate consolidation candidate assignment: ${candidateId}`);\n      }\n      assignedCandidates.add(candidateId);\n      sourceClusters.push(byId.get(candidateId));\n    }\n\n    const existingIds = [\n      ...new Set(sourceClusters.map((cluster) => cluster.existingClusterId).filter(Boolean)),\n    ];\n    const existingClusterId = (group.existingClusterId || '').toString().trim() || null;\n    if (existingIds.length > 0 && !existingIds.includes(existingClusterId)) {\n      throw new Error('consolidation must retain one source existingClusterId');\n    }\n    if (existingIds.length === 0 && existingClusterId) {\n      throw new Error('consolidation invented existingClusterId');\n    }\n\n    const canonicalKey = (group.canonicalKey || '').toString().trim();\n    if (!/^[a-z0-9][a-z0-9-]{1,79}$/.test(canonicalKey)) throw new Error('invalid consolidated canonicalKey');\n    if (canonicalKeys.has(canonicalKey)) throw new Error('duplicate consolidated canonicalKey');\n    canonicalKeys.add(canonicalKey);\n    if (existingClusterId) {\n      const retained = sourceClusters.find((cluster) => cluster.existingClusterId === existingClusterId);\n      if (!retained || retained.canonicalKey !== canonicalKey) {\n        throw new Error('consolidation changed retained existing canonicalKey');\n      }\n    }\n    if (!categories.includes(group.category)) throw new Error('invalid consolidated category');\n    if (!severities.includes(group.severity)) throw new Error('invalid consolidated severity');\n    if (!(group.title || '').toString().trim() || !(group.summary || '').toString().trim()) {\n      throw new Error('consolidated title and summary are required');\n    }\n\n    const reviewIds = [...new Set(sourceClusters.flatMap((cluster) => cluster.reviewIds || []))];\n    const representativeReviewIds = [\n      ...new Set(sourceClusters.flatMap((cluster) => cluster.representativeReviewIds || [])),\n    ]\n      .filter((reviewId) => reviewIds.includes(reviewId))\n      .slice(0, 3);\n    clusters.push({\n      existingClusterId,\n      canonicalKey,\n      title: group.title.toString().trim(),\n      category: group.category,\n      severity: group.severity,\n      summary: group.summary.toString().trim(),\n      actionHint: (group.actionHint || '').toString().trim(),\n      reviewIds,\n      representativeReviewIds,\n    });\n  }\n\n  const missingCandidates = candidates\n    .map((candidate) => candidate.candidateId)\n    .filter((candidateId) => !assignedCandidates.has(candidateId));\n  if (missingCandidates.length) {\n    throw new Error(`unassigned consolidation candidateIds: ${missingCandidates.join(',')}`);\n  }\n\n  const inputReviewIds = context.inputReviewIds || [];\n  const expected = new Set(inputReviewIds);\n  const assignedReviews = new Set();\n  for (const cluster of clusters) {\n    for (const reviewId of cluster.reviewIds) {\n      if (!expected.has(reviewId)) throw new Error(`unknown consolidated reviewId: ${reviewId}`);\n      if (assignedReviews.has(reviewId)) throw new Error(`duplicate consolidated reviewId: ${reviewId}`);\n      assignedReviews.add(reviewId);\n    }\n  }\n  const missingReviews = inputReviewIds.filter((reviewId) => !assignedReviews.has(reviewId));\n  if (missingReviews.length) throw new Error(`unassigned consolidated reviewIds: ${missingReviews.join(',')}`);\n\n  return [\n    {\n      json: {\n        ...context,\n        result: { extractions: context.result.extractions, clusters },\n        validation: {\n          ...context.validation,\n          passed: true,\n          assignedReviewCount: assignedReviews.size,\n          clusterCount: clusters.length,\n          candidateClusterCount: candidates.length,\n        },\n      },\n    },\n  ];\n} catch (error) {\n  return errorItem(error.message || 'cluster consolidation failed');\n}\n"
+        "jsCode": "const context = $('Merge Cluster Batches').first().json || {};\nconst llm = $input.first().json || {};\nconst raw = (llm.text || llm.output || '').toString();\nconst candidates = (context.result?.clusters || []).map((cluster, index) => ({\n  candidateId: `candidate-${index}`,\n  cluster,\n}));\nconst categories = ['버그 및 성능', '계정 및 결제', '기능 및 사용성', '콘텐츠 및 운영 정책', '긍정 리뷰 및 기타'];\nconst severities = ['high', 'medium', 'low'];\n\nconst errorItem = (message) => [\n  {\n    json: {\n      ID: `PARSE_ERROR_CLUSTER_CONSOLIDATION_${Date.now()}`,\n      긴급도: 'ERROR',\n      유형: '파싱실패',\n      요약: message,\n      원본: raw.slice(0, 4000),\n      runId: context.runId,\n      jobId: context.jobId,\n      claimToken: context.claimToken,\n      appStoreId: context.reviewItems?.[0]?.appStoreId,\n      country: context.reviewItems?.[0]?.country,\n    },\n  },\n];\n\ntry {\n  if (candidates.length === 0) throw new Error('cluster candidates must not be empty');\n  const clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();\n  const start = clean.indexOf('{');\n  const end = clean.lastIndexOf('}');\n  const parsed = JSON.parse(start >= 0 && end > start ? clean.slice(start, end + 1) : clean);\n  const groups = Array.isArray(parsed.groups) ? parsed.groups : [];\n  if (groups.length === 0) throw new Error('consolidation groups must not be empty');\n\n  const byId = new Map(candidates.map((candidate) => [candidate.candidateId, candidate.cluster]));\n  const assignedCandidates = new Set();\n  const canonicalKeys = new Set();\n  const clusters = [];\n\n  for (const group of groups) {\n    if (!Array.isArray(group.candidateIds) || group.candidateIds.length === 0) {\n      throw new Error('consolidation candidateIds required');\n    }\n    const sourceClusters = [];\n    for (const candidateId of group.candidateIds) {\n      if (!byId.has(candidateId)) throw new Error(`unknown consolidation candidateId: ${candidateId}`);\n      if (assignedCandidates.has(candidateId)) {\n        throw new Error(`duplicate consolidation candidate assignment: ${candidateId}`);\n      }\n      assignedCandidates.add(candidateId);\n      sourceClusters.push(byId.get(candidateId));\n    }\n\n    const existingIds = [\n      ...new Set(sourceClusters.map((cluster) => cluster.existingClusterId).filter(Boolean)),\n    ];\n    const existingClusterId = (group.existingClusterId || '').toString().trim() || null;\n    if (existingIds.length > 0 && !existingIds.includes(existingClusterId)) {\n      throw new Error('consolidation must retain one source existingClusterId');\n    }\n    if (existingIds.length === 0 && existingClusterId) {\n      throw new Error('consolidation invented existingClusterId');\n    }\n\n    const canonicalKey = (group.canonicalKey || '').toString().trim();\n    if (!/^[a-z0-9][a-z0-9-]{1,79}$/.test(canonicalKey)) throw new Error('invalid consolidated canonicalKey');\n    if (canonicalKeys.has(canonicalKey)) throw new Error('duplicate consolidated canonicalKey');\n    canonicalKeys.add(canonicalKey);\n    if (existingClusterId) {\n      const retained = sourceClusters.find((cluster) => cluster.existingClusterId === existingClusterId);\n      if (!retained || retained.canonicalKey !== canonicalKey) {\n        throw new Error('consolidation changed retained existing canonicalKey');\n      }\n    }\n    if (!categories.includes(group.category)) throw new Error('invalid consolidated category');\n    if (!severities.includes(group.severity)) throw new Error('invalid consolidated severity');\n    if (!(group.title || '').toString().trim() || !(group.summary || '').toString().trim()) {\n      throw new Error('consolidated title and summary are required');\n    }\n\n    const reviewIds = [...new Set(sourceClusters.flatMap((cluster) => cluster.reviewIds || []))];\n    const representativeReviewIds = [\n      ...new Set(sourceClusters.flatMap((cluster) => cluster.representativeReviewIds || [])),\n    ]\n      .filter((reviewId) => reviewIds.includes(reviewId))\n      .slice(0, 3);\n    clusters.push({\n      existingClusterId,\n      canonicalKey,\n      title: group.title.toString().trim(),\n      category: group.category,\n      severity: group.severity,\n      summary: group.summary.toString().trim(),\n      actionHint: (group.actionHint || '').toString().trim(),\n      reviewIds,\n      representativeReviewIds,\n    });\n  }\n\n  const missingCandidates = candidates\n    .map((candidate) => candidate.candidateId)\n    .filter((candidateId) => !assignedCandidates.has(candidateId));\n  if (missingCandidates.length) {\n    throw new Error(`unassigned consolidation candidateIds: ${missingCandidates.join(',')}`);\n  }\n\n  const inputReviewIds = context.inputReviewIds || [];\n  const expected = new Set(inputReviewIds);\n  const assignedReviews = new Set();\n  for (const cluster of clusters) {\n    for (const reviewId of cluster.reviewIds) {\n      if (!expected.has(reviewId)) throw new Error(`unknown consolidated reviewId: ${reviewId}`);\n      if (assignedReviews.has(reviewId)) throw new Error(`duplicate consolidated reviewId: ${reviewId}`);\n      assignedReviews.add(reviewId);\n    }\n  }\n  const missingReviews = inputReviewIds.filter((reviewId) => !assignedReviews.has(reviewId));\n  if (missingReviews.length) throw new Error(`unassigned consolidated reviewIds: ${missingReviews.join(',')}`);\n\n  return [\n    {\n      json: {\n        ...context,\n        result: { extractions: context.result.extractions, clusters },\n        validation: {\n          ...context.validation,\n          passed: true,\n          assignedReviewCount: assignedReviews.size,\n          clusterCount: clusters.length,\n          candidateClusterCount: candidates.length,\n        },\n      },\n    },\n  ];\n} catch (error) {\n  return errorItem(error.message || 'cluster consolidation failed');\n}\n"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -1101,17 +984,6 @@
       "main": [
         [
           {
-            "node": "Sign Upsert Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign Upsert Payload": {
-      "main": [
-        [
-          {
             "node": "Upsert Reviews to BFF",
             "type": "main",
             "index": 0
@@ -1134,17 +1006,6 @@
       "main": [
         [
           {
-            "node": "Sign Publish Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign Publish Payload": {
-      "main": [
-        [
-          {
             "node": "Notify Publish to BFF",
             "type": "main",
             "index": 0
@@ -1153,17 +1014,6 @@
       ]
     },
     "Prepare Parse Error Payload": {
-      "main": [
-        [
-          {
-            "node": "Sign Parse Error Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign Parse Error Payload": {
       "main": [
         [
           {
@@ -1178,17 +1028,6 @@
       "main": [
         [
           {
-            "node": "Sign Alert Events Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign Alert Events Payload": {
-      "main": [
-        [
-          {
             "node": "Send Alert Events to BFF",
             "type": "main",
             "index": 0
@@ -1197,17 +1036,6 @@
       ]
     },
     "Prepare Claim Job Payload": {
-      "main": [
-        [
-          {
-            "node": "Sign Claim Job Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign Claim Job Payload": {
       "main": [
         [
           {
@@ -1241,17 +1069,6 @@
       ]
     },
     "Prepare Preflight Reviews Payload": {
-      "main": [
-        [
-          {
-            "node": "Sign Preflight Reviews Payload",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign Preflight Reviews Payload": {
       "main": [
         [
           {
@@ -1318,17 +1135,6 @@
       ]
     },
     "Prepare Cluster Context": {
-      "main": [
-        [
-          {
-            "node": "Sign Cluster Context",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign Cluster Context": {
       "main": [
         [
           {
@@ -1405,17 +1211,6 @@
       "main": [
         [
           {
-            "node": "Sign Cluster Upsert",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Sign Cluster Upsert": {
-      "main": [
-        [
-          {
             "node": "Upsert Clusters to BFF",
             "type": "main",
             "index": 0
@@ -1471,7 +1266,11 @@
   "active": false,
   "settings": {
     "executionOrder": "v1",
-    "availableInMCP": false
+    "availableInMCP": false,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveExecutionProgress": false,
+    "saveManualExecutions": false
   },
   "versionId": "564907cd-e480-4dd7-b4a9-ac110f8753d8",
   "meta": {

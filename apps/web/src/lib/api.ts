@@ -19,18 +19,92 @@ const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || '10000'
 const REQUEST_RETRY_COUNT = Number(import.meta.env.VITE_API_RETRY_COUNT || '2');
 
 const SERVICE_RESPONSE_ERROR = '서비스 응답을 처리하지 못했습니다.';
+const SERVICE_REQUEST_ERROR = '서비스 요청을 완료하지 못했습니다. 잠시 후 다시 시도하세요.';
+const SERVICE_CONNECTION_ERROR = '서비스에 연결하지 못했습니다. 잠시 후 다시 시도하세요.';
 
-const shouldRetry = (method: string, status?: number) => {
-  const upper = method.toUpperCase();
-  const idempotent = upper === 'GET' || upper === 'HEAD' || upper === 'OPTIONS';
-  const serverError = typeof status === 'number' ? status >= 500 : true;
-  return idempotent && serverError;
+export type ApiErrorEnvelope = {
+  ok: false;
+  error: string;
+  message: string;
+  requestId: string;
+  retryable: boolean;
+};
+
+export class ApiError extends Error {
+  readonly status: number | null;
+  readonly code: string;
+  readonly requestId: string | null;
+  readonly retryable: boolean;
+
+  constructor(
+    message: string,
+    options: { status?: number | null; code?: string; requestId?: string | null; retryable?: boolean } = {},
+  ) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = options.status ?? null;
+    this.code = options.code || 'request_failed';
+    this.requestId = options.requestId ?? null;
+    this.retryable = options.retryable ?? false;
+  }
+}
+
+const isIdempotentMethod = (method: string) => ['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
+
+const shouldRetry = (method: string, error: ApiError) => isIdempotentMethod(method) && error.retryable;
+
+const parseApiErrorEnvelope = (body: string): ApiErrorEnvelope | null => {
+  try {
+    const parsed = JSON.parse(body) as Partial<ApiErrorEnvelope> | null;
+    if (
+      !parsed
+      || parsed.ok !== false
+      || typeof parsed.error !== 'string'
+      || typeof parsed.message !== 'string'
+      || typeof parsed.requestId !== 'string'
+      || typeof parsed.retryable !== 'boolean'
+    ) return null;
+
+    const error = parsed.error.trim().slice(0, 120);
+    const message = parsed.message.trim().slice(0, 300);
+    const requestId = parsed.requestId.trim().slice(0, 120);
+    if (!error || !message || !requestId) return null;
+    return { ok: false, error, message, requestId, retryable: parsed.retryable };
+  } catch {
+    return null;
+  }
 };
 
 const isHtmlPayload = (contentType: string | null, body: string) => {
   const lowerType = (contentType || '').toLowerCase();
   const trimmed = body.trim().toLowerCase();
   return lowerType.includes('text/html') || trimmed.startsWith('<!doctype html') || trimmed.startsWith('<html');
+};
+
+const createResponseError = (response: Response, body: string) => {
+  if (isHtmlPayload(response.headers.get('content-type'), body)) {
+    return new ApiError(SERVICE_RESPONSE_ERROR, {
+      status: response.status,
+      code: 'invalid_response',
+      retryable: response.status >= 500,
+    });
+  }
+
+  const envelope = parseApiErrorEnvelope(body);
+  if (envelope) {
+    return new ApiError(envelope.message, {
+      status: response.status,
+      code: envelope.error,
+      requestId: envelope.requestId,
+      retryable: envelope.retryable,
+    });
+  }
+
+  return new ApiError(SERVICE_REQUEST_ERROR, {
+    status: response.status,
+    code: 'invalid_error_response',
+    retryable: response.status >= 500,
+  });
 };
 
 // fetchJson은 Web이 Worker와 통신할 때 지키는 기본 계약이다.
@@ -65,39 +139,42 @@ async function fetchJson<T>(
 
       if (!response.ok) {
         const text = await response.text();
-        if (attempt < retries && shouldRetry(method, response.status)) {
-          continue;
-        }
-
-        if (isHtmlPayload(response.headers.get('content-type'), text)) {
-          throw new Error(SERVICE_RESPONSE_ERROR);
-        }
-
-        throw new Error(`API ${response.status}: ${text || response.statusText}`);
+        const responseError = createResponseError(response, text);
+        if (attempt < retries && shouldRetry(method, responseError)) continue;
+        throw responseError;
       }
 
       const contentType = response.headers.get('content-type');
       const text = await response.text();
 
       if (isHtmlPayload(contentType, text)) {
-        throw new Error(SERVICE_RESPONSE_ERROR);
+        throw new ApiError(SERVICE_RESPONSE_ERROR, {
+          status: response.status,
+          code: 'invalid_response',
+          retryable: true,
+        });
       }
 
       try {
         return JSON.parse(text) as T;
       } catch {
-        throw new Error(SERVICE_RESPONSE_ERROR);
+        throw new ApiError(SERVICE_RESPONSE_ERROR, {
+          status: response.status,
+          code: 'invalid_response',
+          retryable: true,
+        });
       }
     } catch (error) {
-      if (attempt >= retries || !shouldRetry(method)) {
-        throw error;
-      }
+      const normalizedError = error instanceof ApiError
+        ? error
+        : new ApiError(SERVICE_CONNECTION_ERROR, { code: 'network_error', retryable: true });
+      if (attempt >= retries || !shouldRetry(method, normalizedError)) throw normalizedError;
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  throw new Error('요청에 실패했습니다.');
+  throw new ApiError(SERVICE_REQUEST_ERROR);
 }
 
 export async function getPublicReviews(
@@ -151,6 +228,15 @@ export async function requestAnalysis(
     method: 'POST',
     headers: { Authorization: `Bearer ${accessToken}` },
     body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAccount(accessToken: string) {
+  return fetchJson<{ ok: true; data: { deleted: true; canceledJobs: number } }>(`/api/private/account`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
   });
 }
 

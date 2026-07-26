@@ -17,6 +17,7 @@ for (let batchIndex = 0; batchIndex < contexts.length; batchIndex += 1) {
       원본: raw.slice(0, 4000),
       runId: context.runId,
       jobId: context.jobId,
+      claimToken: context.claimToken,
       appStoreId: context.reviewItems?.[0]?.appStoreId,
       country: context.reviewItems?.[0]?.country,
       clusterBatchIndex: batchIndex,

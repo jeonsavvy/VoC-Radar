@@ -15,7 +15,7 @@ async function test(name: string, fn: () => void | Promise<void>) {
 async function main() {
   const repoRoot = path.resolve(process.cwd(), '..', '..');
   const bootstrapSql = readFileSync(path.join(repoRoot, 'supabase/20260307_voc_radar_bootstrap.sql'), 'utf8');
-  const workerSource = readFileSync(path.join(repoRoot, 'apps/worker/src/index.ts'), 'utf8');
+  const workerSource = readFileSync(path.join(repoRoot, 'apps/worker/src/private.ts'), 'utf8');
 
   await test('private_review_feed view uses security_invoker to avoid security definer warnings', () => {
     assert.match(
@@ -33,11 +33,11 @@ async function main() {
 
   await test('private review endpoint does not query private_review_feed with end-user JWT', () => {
     const privateHandlerStart = workerSource.indexOf('async function handlePrivateReviews');
-    const internalHandlerStart = workerSource.indexOf('async function handleInternalUpsertReviews');
+    const privateHandlerEnd = workerSource.indexOf('/** Returns null when the request is not a private API route.', privateHandlerStart);
     assert.notEqual(privateHandlerStart, -1);
-    assert.notEqual(internalHandlerStart, -1);
+    assert.notEqual(privateHandlerEnd, -1);
 
-    const privateHandlerSource = workerSource.slice(privateHandlerStart, internalHandlerStart);
+    const privateHandlerSource = workerSource.slice(privateHandlerStart, privateHandlerEnd);
     assert.match(
       privateHandlerSource,
       /supabaseRequest<Array<Record<string, unknown>>>\(env, `\/rest\/v1\/private_review_feed\?\$\{filters\.toString\(\)\}`/,

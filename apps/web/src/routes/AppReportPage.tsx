@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowRight, ArrowUp, Clock3, RefreshCw, Search, Star, X } from 'lucide-react';
 import { Link, NavLink, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { AppArtwork } from '@/components/AppArtwork';
@@ -29,6 +29,7 @@ function IssuePanel({ issue, onClose }: { issue: IssueClusterItem | null; onClos
   const ref = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<IssueDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const dialog = ref.current;
@@ -44,9 +45,11 @@ function IssuePanel({ issue, onClose }: { issue: IssueClusterItem | null; onClos
     setError(null);
     getIssueDetail(issue.issueId)
       .then((response) => active && setDetail(response.data))
-      .catch((err) => active && setError(err instanceof Error ? err.message : '이슈 상세를 불러오지 못했습니다.'));
+      .catch(() => active && setError(
+        '이슈 상세를 불러오지 못했습니다. 현재 리포트는 그대로 유지됩니다. 잠시 후 다시 시도하세요.',
+      ));
     return () => { active = false; };
-  }, [issue]);
+  }, [issue, reloadKey]);
 
   return (
     <dialog ref={ref} className="issue-dialog" onClose={onClose} aria-labelledby="issue-dialog-title">
@@ -59,7 +62,10 @@ function IssuePanel({ issue, onClose }: { issue: IssueClusterItem | null; onClos
           </div>
           <button type="button" className="icon-button" onClick={() => ref.current?.close()} aria-label="이슈 상세 닫기"><X /></button>
         </header>
-        {error ? <div className="error-state">{error}</div> : detail ? <>
+        {error ? <div className="error-state" role="alert">
+          <p>{error}</p>
+          <button type="button" onClick={() => setReloadKey((value) => value + 1)}>다시 시도</button>
+        </div> : detail ? <>
           <section className="issue-summary">
             <h3>이슈 요약</h3>
             <p>{detail.issue.summary}</p>
@@ -80,11 +86,6 @@ function IssuePanel({ issue, onClose }: { issue: IssueClusterItem | null; onClos
               </article>)}
             </div>
           </section>
-          <footer className="model-meta">
-            <span>Run {detail.issue.runId}</span>
-            <span>{detail.issue.modelVersion}</span>
-            <span>검증 {detail.issue.validation?.passed === true ? '통과' : '기록됨'}</span>
-          </footer>
         </> : <ReportSkeleton />}
       </div> : null}
     </dialog>
@@ -143,28 +144,152 @@ function OverviewView({ report }: { report: PublicReport }) {
   </div>;
 }
 
+function useDebouncedValue<T>(value: T, revision: number, delayMs: number) {
+  const [debouncedValue, setDebouncedValue] = useState({ value, revision });
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedValue((current) =>
+      Object.is(current.value, value) && current.revision === revision ? current : { value, revision },
+    ), delayMs);
+    return () => window.clearTimeout(timer);
+  }, [delayMs, revision, value]);
+
+  return debouncedValue;
+}
+
+export function mergeReviewItems(current: ReviewItem[], incoming: ReviewItem[]) {
+  const seen = new Set(current.map((review) => review.review_id));
+  return current.concat(incoming.filter((review) => {
+    if (seen.has(review.review_id)) return false;
+    seen.add(review.review_id);
+    return true;
+  }));
+}
+
 function ReviewsView({ appId, country }: { appId: string; country: string }) {
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [query, setQuery] = useState('');
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasNext, setHasNext] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [queryRevision, setQueryRevision] = useState(0);
+  const [error, setError] = useState<{ scope: 'initial' | 'more'; message: string } | null>(null);
+  const requestSequence = useRef(0);
+  const loadMoreInFlight = useRef<string | null>(null);
+  const debouncedSearch = useDebouncedValue(query.trim(), queryRevision, 350);
+  const debouncedQuery = debouncedSearch.value;
+
   useEffect(() => {
     let active = true;
+    const requestId = ++requestSequence.current;
+    loadMoreInFlight.current = null;
+    setItems([]);
+    setNextCursor(null);
+    setHasNext(false);
     setLoading(true);
-    getPublicReviews(appId, { country, limit: 50, search: query.trim() || undefined })
-      .then((response) => active && setItems(response.data))
-      .catch((err) => active && setError(err instanceof Error ? err.message : '리뷰를 불러오지 못했습니다.'))
-      .finally(() => active && setLoading(false));
+    setLoadingMore(false);
+    setError(null);
+
+    getPublicReviews(appId, { country, limit: 50, search: debouncedQuery || undefined })
+      .then((response) => {
+        if (!active || requestId !== requestSequence.current) return;
+        setItems(mergeReviewItems([], response.data));
+        setNextCursor(response.nextCursor);
+        setHasNext(Boolean(response.hasNext && response.nextCursor));
+      })
+      .catch(() => {
+        if (!active || requestId !== requestSequence.current) return;
+        setError({
+          scope: 'initial',
+          message: '리뷰를 불러오지 못했습니다. 현재 목록은 비어 있습니다. 잠시 후 다시 시도하세요.',
+        });
+      })
+      .finally(() => {
+        if (active && requestId === requestSequence.current) setLoading(false);
+      });
+
     return () => { active = false; };
-  }, [appId, country, query]);
+  }, [appId, country, debouncedQuery, debouncedSearch.revision, reloadKey]);
+
+  const loadMore = useCallback(async () => {
+    if (loading || loadingMore || !hasNext || !nextCursor) return;
+
+    const requestId = requestSequence.current;
+    const requestKey = `${requestId}:${nextCursor}`;
+    if (loadMoreInFlight.current === requestKey) return;
+    loadMoreInFlight.current = requestKey;
+    setLoadingMore(true);
+    setError(null);
+
+    try {
+      const response = await getPublicReviews(appId, {
+        country,
+        limit: 50,
+        search: debouncedQuery || undefined,
+        cursor: nextCursor,
+      });
+      if (requestId !== requestSequence.current) return;
+
+      setItems((current) => mergeReviewItems(current, response.data));
+      setNextCursor(response.nextCursor);
+      setHasNext(Boolean(response.hasNext && response.nextCursor && response.nextCursor !== nextCursor));
+    } catch {
+      if (requestId !== requestSequence.current) return;
+      setError({
+        scope: 'more',
+        message: '리뷰를 더 불러오지 못했습니다. 기존 리뷰는 그대로 유지됩니다. 다시 시도하세요.',
+      });
+    } finally {
+      if (loadMoreInFlight.current === requestKey) loadMoreInFlight.current = null;
+      if (requestId === requestSequence.current) setLoadingMore(false);
+    }
+  }, [appId, country, debouncedQuery, hasNext, loading, loadingMore, nextCursor]);
+
   return <div className="reviews-view">
-    <label className="review-search"><Search /><span className="sr-only">리뷰 검색</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="리뷰 내용 검색" /></label>
-    {error ? <div className="error-state">{error}</div> : loading ? <ReportSkeleton /> : items.length ? <div className="public-review-list">
-      {items.map((review) => <article key={review.review_id}>
-        <div className="review-meta"><span><Star /> {review.rating}</span><span>{review.category}</span><time>{formatDate(review.reviewed_at)}</time></div>
-        <p>{review.content}</p><small>{review.author || '작성자 미상'} · {review.review_id}</small>
-      </article>)}
-    </div> : <div className="quiet-empty">조건에 맞는 리뷰가 없습니다.</div>}
+    <label className="review-search">
+      <Search aria-hidden="true" />
+      <span className="sr-only">리뷰 검색</span>
+      <input
+        value={query}
+        onChange={(event) => {
+          requestSequence.current += 1;
+          loadMoreInFlight.current = null;
+          setLoadingMore(false);
+          setItems([]);
+          setNextCursor(null);
+          setHasNext(false);
+          setLoading(true);
+          setQuery(event.target.value);
+          setQueryRevision((value) => value + 1);
+          setError(null);
+        }}
+        placeholder="리뷰 내용 검색"
+      />
+    </label>
+    {loading ? <ReportSkeleton /> : error?.scope === 'initial' ? <div className="error-state" role="alert">
+      <strong>리뷰를 표시하지 못했습니다.</strong>
+      <p>{error.message}</p>
+      <button type="button" onClick={() => setReloadKey((value) => value + 1)}>다시 시도</button>
+    </div> : items.length ? <>
+      <div className="public-review-list">
+        {items.map((review) => <article key={review.review_id}>
+          <div className="review-meta"><span><Star aria-hidden="true" /> {review.rating}</span><span>{review.category}</span><time>{formatDate(review.reviewed_at)}</time></div>
+          <p>{review.content}</p><small>{review.author || '작성자 미상'} · {review.review_id}</small>
+        </article>)}
+      </div>
+      {error?.scope === 'more' ? <p className="review-load-error" role="alert">{error.message}</p> : null}
+      {hasNext ? <button
+        type="button"
+        className="review-load-more"
+        disabled={loadingMore}
+        aria-busy={loadingMore}
+        onClick={() => void loadMore()}
+      >
+        {loadingMore ? '리뷰 불러오는 중…' : error?.scope === 'more' ? '다시 시도' : '리뷰 더 보기'}
+      </button> : null}
+    </> : <div className="quiet-empty">조건에 맞는 리뷰가 없습니다.</div>}
   </div>;
 }
 
@@ -180,6 +305,8 @@ export function AppReportPage({ loggedIn }: Props) {
   const [selectedIssue, setSelectedIssue] = useState<IssueClusterItem | null>(null);
   const [requestMessage, setRequestMessage] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const requestInFlight = useRef(false);
 
   const activeTab = TABS.includes(tab as ReportTab) ? (tab as ReportTab) : null;
 
@@ -193,18 +320,22 @@ export function AppReportPage({ loggedIn }: Props) {
     setLoading(true); setError(null);
     getPublicReport(appId, country)
       .then((response) => active && setReport(response.data))
-      .catch((err) => active && setError(err instanceof Error ? err.message : '리포트를 불러오지 못했습니다.'))
+      .catch(() => active && setError(
+        '리포트를 불러오지 못했습니다. 공개 데이터는 변경되지 않았습니다. 잠시 후 다시 시도하세요.',
+      ))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [appId, country]);
+  }, [appId, country, reloadKey]);
 
   if (!activeTab) return <Navigate to={reportPath(appId, country)} replace />;
 
   const requestRefresh = async () => {
+    if (requestInFlight.current) return;
     if (!loggedIn) {
       navigate(`/login?returnTo=${encodeURIComponent(location.pathname)}`);
       return;
     }
+    requestInFlight.current = true;
     setRequesting(true); setRequestMessage(null);
     try {
       const { getAccessToken } = await import('@/lib/auth');
@@ -214,13 +345,18 @@ export function AppReportPage({ loggedIn }: Props) {
       setRequestMessage(response.result === 'fresh'
         ? `재분석 가능: ${formatDate(response.data.nextAllowedAt, true)}`
         : response.result === 'existing' ? '이미 진행 중인 분석 요청이 있습니다.' : '분석 요청을 대기열에 등록했습니다.');
-    } catch (err) {
-      setRequestMessage(err instanceof Error ? err.message : '분석 요청에 실패했습니다.');
-    } finally { setRequesting(false); }
+    } catch {
+      setRequestMessage(
+        '분석 요청 상태를 확인하지 못했습니다. 동일 요청이 이미 등록되었을 수 있습니다. 요청 내역을 확인한 뒤 다시 시도하세요.',
+      );
+    } finally {
+      requestInFlight.current = false;
+      setRequesting(false);
+    }
   };
 
   return <div className="report-page">
-    {loading ? <ReportSkeleton /> : error ? <div className="error-state"><strong>리포트를 열 수 없습니다.</strong><p>{error}</p><Link to="/">앱 다시 찾기</Link></div> : report ? <>
+    {loading ? <ReportSkeleton /> : error ? <div className="error-state" role="alert"><strong>리포트를 열 수 없습니다.</strong><p>{error}</p><button type="button" onClick={() => setReloadKey((value) => value + 1)}>다시 시도</button><Link to="/">앱 다시 찾기</Link></div> : report ? <>
       <header className="app-report-header">
         <div className="app-report-header__identity">
           <AppArtwork artworkUrl={report.app.artworkUrl} appName={report.app.appName} size="large" />
@@ -244,7 +380,7 @@ export function AppReportPage({ loggedIn }: Props) {
 
       {report.analysis.status === 'not_analyzed' ? <section className="not-analyzed">
         <h2>분석 결과 없음</h2>
-        <button type="button" onClick={requestRefresh}><RefreshCw /> 분석 요청</button>
+        <button type="button" onClick={requestRefresh} disabled={requesting}><RefreshCw className={requesting ? 'is-spinning' : ''} /> {requesting ? '요청 중' : '분석 요청'}</button>
       </section> : <section className="report-content">
         {activeTab === 'issues' ? <IssuesView issues={report.issues} onSelect={setSelectedIssue} /> : null}
         {activeTab === 'overview' ? <OverviewView report={report} /> : null}

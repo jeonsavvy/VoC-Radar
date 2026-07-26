@@ -20,6 +20,63 @@ const setNode = (node) => {
   }
 };
 
+const removeNodes = (names) => {
+  const removed = new Set(names);
+  workflow.nodes = workflow.nodes.filter((node) => !removed.has(node.name));
+  for (const name of removed) {
+    byName.delete(name);
+    delete workflow.connections[name];
+  }
+  for (const connection of Object.values(workflow.connections)) {
+    for (const outputs of Object.values(connection || {})) {
+      if (!Array.isArray(outputs)) continue;
+      for (const output of outputs) {
+        if (!Array.isArray(output)) continue;
+        for (let index = output.length - 1; index >= 0; index -= 1) {
+          if (removed.has(output[index]?.node)) output.splice(index, 1);
+        }
+      }
+    }
+  }
+};
+
+const directSecretExpression =
+  "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}";
+
+const configureInternalHttpNode = (name, idempotencyExpression) => {
+  const node = byName.get(name);
+  if (!node) throw new Error(`Cannot configure missing HTTP node: ${name}`);
+
+  const headers = node.parameters.headerParameters?.parameters || [];
+  node.parameters.sendHeaders = true;
+  node.parameters.headerParameters = {
+    parameters: [
+      ...headers.filter((header) => {
+        const headerName = (header.name || '').toString().toLowerCase();
+        return !['x-voc-token', 'x-voc-timestamp', 'x-voc-signature', 'x-idempotency-key'].includes(
+          headerName,
+        );
+      }),
+      { name: 'x-voc-token', value: directSecretExpression },
+      { name: 'x-idempotency-key', value: idempotencyExpression },
+    ],
+  };
+  node.parameters.options ||= {};
+  delete node.parameters.options.retryOnFail;
+  delete node.parameters.options.maxTries;
+  node.retryOnFail = true;
+  node.maxTries = 3;
+  node.waitBetweenTries = 1000;
+  delete node.continueOnFail;
+  delete node.onError;
+};
+
+workflow.settings ||= {};
+workflow.settings.saveDataSuccessExecution = 'none';
+workflow.settings.saveDataErrorExecution = 'all';
+workflow.settings.saveExecutionProgress = false;
+workflow.settings.saveManualExecutions = false;
+
 // Run-context and HTTP-response nodes are singletons. Using `.item` asks n8n
 // to resolve paired-item ancestry and can fail when batches are merged; `.first()`
 // makes the singleton contract explicit and deterministic.
@@ -30,24 +87,141 @@ for (const node of workflow.nodes) {
     .replace(/\$input\.item\b/g, '$input.first()');
 }
 
-const prepareRunContext = byName.get('Prepare Run Context');
-if (!prepareRunContext.parameters.jsCode.includes('forceReanalysis')) {
-  prepareRunContext.parameters.jsCode = prepareRunContext.parameters.jsCode
-    .replace(
-      "const appName = (data.appName || '').toString().trim();\nconst runId = `RUN_${Date.now()}`;",
-      "const appName = (data.appName || '').toString().trim();\nconst source = (data.source || '').toString().trim().toLowerCase();\nconst forceReanalysis = source === 'reanalysis';\nconst runId = `RUN_${Date.now()}`;",
-    )
-    .replace(
-      '    appName,\n    status,',
-      '    appName,\n    source,\n    forceReanalysis,\n    status,',
-    );
+byName.get('Validate Trigger Secret').parameters.jsCode = `const expected = ($env.N8N_PIPELINE_TRIGGER_SECRET || '').toString().trim();
+if (!expected) {
+  throw new Error('trigger secret is not configured');
 }
 
-const preparePreflight = byName.get('Prepare Preflight Reviews Payload');
-if (!preparePreflight.parameters.jsCode.includes('forceReanalysis:')) {
-  preparePreflight.parameters.jsCode = preparePreflight.parameters.jsCode.replace(
-    '      reviews,\n    },',
-    '      reviews,\n      forceReanalysis: context.forceReanalysis === true,\n    },',
+const headers = $json.headers || {};
+const provided = (headers['x-voc-trigger-secret'] || headers['X-Voc-Trigger-Secret'] || '')
+  .toString()
+  .trim();
+if (!provided || provided !== expected) {
+  throw new Error('trigger secret rejected');
+}
+
+return [{ json: { triggerSource: 'webhook' } }];`;
+byName.get('Validate Trigger Secret').notes =
+  'Webhook secret은 필수이며 누락 또는 불일치 시 claim 전에 실행을 중단한다.';
+
+byName.get('Prepare Claim Job Payload').parameters.jsCode = `const claimKey = ($execution.id || '').toString().trim();
+if (!claimKey) throw new Error('execution id is required');
+return [{ json: { claimKey, payload: { claimKey } } }];`;
+
+byName.get('Prepare Run Context').parameters.jsCode = `const data = $json.data || {};
+const status = (data.status || '').toString().trim().toLowerCase();
+const jobId = (data.jobId || '').toString().trim() || null;
+
+if (!jobId || status !== 'running') {
+  console.log('No active claim. Stop this run.');
+  return [];
+}
+
+const claimToken = (data.claimToken || '').toString().trim();
+const leaseExpiresAt = (data.leaseExpiresAt || '').toString().trim();
+const attemptCount = Number(data.attemptCount);
+if (!claimToken || !leaseExpiresAt || !Number.isInteger(attemptCount) || attemptCount < 1) {
+  throw new Error('claim response is incomplete');
+}
+
+const appStoreId = (data.appStoreId || '').toString().trim();
+if (!appStoreId) {
+  throw new Error('claim response missing appStoreId');
+}
+
+const country = (data.country || 'kr').toString().trim().toLowerCase();
+const appName = (data.appName || '').toString().trim();
+const source = (data.source || '').toString().trim().toLowerCase();
+const forceReanalysis = source === 'reanalysis';
+const claimKey = $('Prepare Claim Job Payload').first().json.claimKey;
+const runId = 'RUN_' + jobId + '_' + attemptCount;
+
+const rawWindowDays = ($env.VOC_FETCH_WINDOW_DAYS || '30').toString().trim();
+const parsedWindowDays = Number(rawWindowDays);
+const fetchWindowDays = Number.isFinite(parsedWindowDays)
+  ? Math.min(Math.max(Math.floor(parsedWindowDays), 1), 90)
+  : 30;
+
+const rawMaxPages = ($env.VOC_FETCH_MAX_PAGES || '120').toString().trim();
+const parsedMaxPages = Number(rawMaxPages);
+const fetchMaxPages = Number.isFinite(parsedMaxPages)
+  ? Math.min(Math.max(Math.floor(parsedMaxPages), 1), 200)
+  : 120;
+
+const fetchPayload = {
+  jobId,
+  claimToken,
+  runId,
+  appStoreId,
+  country,
+  windowDays: fetchWindowDays,
+  maxPages: fetchMaxPages,
+};
+
+return [{ json: {
+  runId,
+  jobId,
+  claimKey,
+  claimToken,
+  leaseExpiresAt,
+  attemptCount,
+  appStoreId,
+  country,
+  appName,
+  source,
+  forceReanalysis,
+  status,
+  fetchPayload,
+} }];`;
+
+byName.get('Prepare Preflight Reviews Payload').parameters.jsCode = `const context = $('Prepare Run Context').first().json || {};
+const appStoreId = (context.appStoreId || '').toString().trim();
+const country = (context.country || 'kr').toString().trim().toLowerCase();
+const runId = (context.runId || '').toString().trim();
+const jobId = (context.jobId || '').toString().trim();
+const claimToken = (context.claimToken || '').toString().trim();
+
+if (!appStoreId || !runId || !jobId || !claimToken) {
+  throw new Error('preflight context is incomplete');
+}
+
+const responseData = $input.first().json?.data || {};
+const inputReviews = Array.isArray(responseData.reviews) ? responseData.reviews : [];
+const seen = new Set();
+const reviews = inputReviews
+  .map((review) => ({
+    reviewId: (review.reviewId || '').toString().trim(),
+    author: (review.author || '').toString().trim() || 'unknown',
+    reviewedAt: (review.reviewedAt || new Date().toISOString()).toString(),
+    rating: Number((review.rating || '0').toString().trim()) || 0,
+    content: (review.content || '').toString().trim(),
+  }))
+  .filter((review) => {
+    if (!review.reviewId || review.rating <= 0 || seen.has(review.reviewId)) return false;
+    seen.add(review.reviewId);
+    return true;
+  });
+
+return [{ json: {
+  runId,
+  jobId,
+  claimToken,
+  payload: {
+    appStoreId,
+    country,
+    runId,
+    jobId,
+    claimToken,
+    reviews,
+    forceReanalysis: context.forceReanalysis === true,
+  },
+} }];`;
+
+const filterDuplicates = byName.get('Filter Duplicates');
+if (!filterDuplicates.parameters.jsCode.includes('claimToken:')) {
+  filterDuplicates.parameters.jsCode = filterDuplicates.parameters.jsCode.replace(
+    '      jobId: row.jobId || context.jobId || null,',
+    '      jobId: row.jobId || context.jobId || null,\n      claimToken: row.claimToken || context.claimToken || null,',
   );
 }
 
@@ -113,7 +287,7 @@ const errorItem = (context, message, raw, index) => ({ json: {
   ID: 'PARSE_ERROR_' + Date.now() + '_' + index,
   긴급도: 'ERROR', 유형: '파싱실패', 요약: message, 원본: (raw || '').toString().slice(0, 4000),
   작성자: 'system', 작성일시: new Date().toISOString(), 별점: '',
-  runId: context.runId || null, jobId: context.jobId || null,
+  runId: context.runId || null, jobId: context.jobId || null, claimToken: context.claimToken || null,
   appStoreId: context.appStoreId || null, country: context.country || null, appName: context.appName || ''
 } });
 const output = [];
@@ -142,7 +316,7 @@ for (let batchIndex = 0; batchIndex < llmItems.length; batchIndex += 1) {
         긴급도: item.priority, 유형: item.category, 요약: summary.slice(0, 240),
         작성자: (review.author || '').toString(), 작성일시: (review.reviewedAt || '').toString(),
         별점: (review.rating ?? '').toString(), 원본: (review.content || '').toString(),
-        runId: context.runId || null, jobId: context.jobId || null,
+        runId: context.runId || null, jobId: context.jobId || null, claimToken: context.claimToken || null,
         appStoreId: context.appStoreId || null, country: context.country || null, appName: context.appName || ''
       } });
     }
@@ -151,12 +325,6 @@ for (let batchIndex = 0; batchIndex < llmItems.length; batchIndex += 1) {
   }
 }
 return output;`;
-
-const signCode = `const payload = $json.payload;
-if (!payload) return [];
-const token = ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim();
-if (!token) throw new Error('PIPELINE_WEBHOOK_SECRET is required');
-return [{ json: { ...$json, payload, timestamp: Date.now().toString(), token } }];`;
 
 setNode({
   parameters: { jsCode: `const freshReviews = $input.all().map((item) => ({ ...(item.json || {}), isExisting: false }));
@@ -172,18 +340,22 @@ const reviews = [...freshReviews, ...existingReviews].filter((item) => {
 if (reviews.length === 0) return [];
 const first = freshReviews[0] || reviews[0];
 return [{ json: {
-  runId: first.runId, jobId: first.jobId || null,
+  runId: runContext.runId, jobId: runContext.jobId || null, claimToken: runContext.claimToken || null,
   source: runContext.source || '',
   forceReanalysis: runContext.forceReanalysis === true,
   reviewItems: reviews,
-  payload: { appStoreId: first.appStoreId, country: first.country || 'kr' }
+  payload: {
+    jobId: runContext.jobId,
+    claimToken: runContext.claimToken,
+    runId: runContext.runId,
+    appStoreId: first.appStoreId,
+    country: first.country || 'kr'
+  }
 } }];` },
   type: 'n8n-nodes-base.code', typeVersion: 2, position: [3280, 0],
   id: 'prepare-cluster-context-v2', name: 'Prepare Cluster Context',
   notes: '기존 클러스터 매칭을 위한 read-only context payload'
 });
-setNode({ parameters: { jsCode: signCode }, type: 'n8n-nodes-base.code', typeVersion: 2,
-  position: [3520, 0], id: 'sign-cluster-context-v2', name: 'Sign Cluster Context' });
 setNode({
   parameters: {
     method: 'POST',
@@ -191,14 +363,15 @@ setNode({
     sendHeaders: true,
     headerParameters: { parameters: [
       { name: 'content-type', value: 'application/json' },
-      { name: 'x-voc-token', value: '={{ $json.token }}' },
-      { name: 'x-voc-timestamp', value: '={{ $json.timestamp }}' }
+      { name: 'x-voc-token', value: directSecretExpression },
+      { name: 'x-idempotency-key', value: '={{ $json.runId }}' }
     ] },
     sendBody: true, specifyBody: 'json', jsonBody: '={{ $json.payload }}',
-    options: { timeout: 30000, retryOnFail: true, maxTries: 3, response: { response: { responseFormat: 'json' } } }
+    options: { timeout: 30000, response: { response: { responseFormat: 'json' } } }
   },
   type: 'n8n-nodes-base.httpRequest', typeVersion: 4.3, position: [3760, 0],
-  id: 'fetch-cluster-context-v2', name: 'Fetch Cluster Context'
+  id: 'fetch-cluster-context-v2', name: 'Fetch Cluster Context',
+  retryOnFail: true, maxTries: 3, waitBetweenTries: 1000
 });
 setNode({
   parameters: { jsCode: `const reviewItems = $('Prepare Cluster Context').first().json.reviewItems || [];
@@ -316,8 +489,10 @@ const reviewsInput = allReviews.filter((item) => item.isExisting !== true);
 if (!reviewsInput.length || !allReviews.length) return [];
 const first = reviewsInput[0];
 const clusters = context.result?.clusters || [];
-const runId = (context.runId || 'RUN_' + Date.now()).toString();
+const runId = (context.runId || '').toString().trim();
 const jobId = (context.jobId || '').toString().trim() || null;
+const claimToken = (context.claimToken || '').toString().trim() || null;
+if (!runId || !jobId || !claimToken) throw new Error('upsert context is incomplete');
 const appStoreId = (first.appStoreId || '').toString().trim();
 const country = (first.country || 'kr').toString().toLowerCase();
 const modelVersion = ($env.VOC_MODEL_VERSION || 'gemini-3-flash-preview').toString();
@@ -331,26 +506,24 @@ const reviews = reviewsInput.map((item) => {
     modelVersion, rawSource: { id, content: item.content, author: item.author, rating: item.rating, date: item.date }
   };
 });
-return [{ json: { runId, jobId, inputReviewIds: context.inputReviewIds, clusterResult: context.result, modelVersion,
+return [{ json: { runId, jobId, claimToken, inputReviewIds: context.inputReviewIds, clusterResult: context.result, modelVersion,
   comparisonEligible: context.forceReanalysis !== true, payload: {
-  runId, jobId, source: 'n8n', app: { appStoreId, country, appName: first.appName || '' }, reviews
+  runId, jobId, claimToken, source: 'n8n', app: { appStoreId, country, appName: first.appName || '' }, reviews
 } } }];`;
-byName.get('Sign Upsert Payload').position = [5920, 0];
 byName.get('Upsert Reviews to BFF').position = [6160, 0];
 
 setNode({
   parameters: { jsCode: `const upsert = $('Prepare Upsert Payload').first().json || {};
 const app = upsert.payload?.app || {};
-return [{ json: { runId: upsert.runId, payload: {
-  runId: upsert.runId, jobId: upsert.jobId, appStoreId: app.appStoreId, country: app.country,
+return [{ json: { runId: upsert.runId, jobId: upsert.jobId, claimToken: upsert.claimToken, payload: {
+  runId: upsert.runId, jobId: upsert.jobId, claimToken: upsert.claimToken,
+  appStoreId: app.appStoreId, country: app.country,
   modelVersion: upsert.modelVersion, comparisonEligible: upsert.comparisonEligible,
   inputReviewIds: upsert.inputReviewIds, result: upsert.clusterResult
 } } }];` },
   type: 'n8n-nodes-base.code', typeVersion: 2, position: [6400, 0],
   id: 'prepare-cluster-upsert-v2', name: 'Prepare Cluster Upsert'
 });
-setNode({ parameters: { jsCode: signCode }, type: 'n8n-nodes-base.code', typeVersion: 2,
-  position: [6640, 0], id: 'sign-cluster-upsert-v2', name: 'Sign Cluster Upsert' });
 setNode({
   parameters: {
     method: 'POST',
@@ -358,27 +531,127 @@ setNode({
     sendHeaders: true,
     headerParameters: { parameters: [
       { name: 'content-type', value: 'application/json' },
-      { name: 'x-voc-token', value: '={{ $json.token }}' },
-      { name: 'x-voc-timestamp', value: '={{ $json.timestamp }}' },
+      { name: 'x-voc-token', value: directSecretExpression },
       { name: 'x-idempotency-key', value: '={{ $json.runId }}' }
     ] },
     sendBody: true, specifyBody: 'json', jsonBody: '={{ $json.payload }}',
-    options: { timeout: 30000, retryOnFail: true, maxTries: 3, response: { response: { responseFormat: 'json' } } }
+    options: { timeout: 30000, response: { response: { responseFormat: 'json' } } }
   },
   type: 'n8n-nodes-base.httpRequest', typeVersion: 4.3, position: [6880, 0],
-  id: 'upsert-clusters-to-bff-v2', name: 'Upsert Clusters to BFF'
+  id: 'upsert-clusters-to-bff-v2', name: 'Upsert Clusters to BFF',
+  retryOnFail: true, maxTries: 3, waitBetweenTries: 1000
 });
 
 byName.get('Prepare Publish Payload').position = [7120, 0];
-byName.get('Sign Publish Payload').position = [7360, 0];
 byName.get('Notify Publish to BFF').position = [7600, 0];
+
+byName.get('Prepare Publish Payload').parameters.jsCode = `const upsertContext = $('Prepare Upsert Payload').first().json || {};
+const payload = upsertContext.payload || {};
+const runId = ($json.runId || upsertContext.runId || '').toString().trim();
+const jobId = (upsertContext.jobId || payload.jobId || '').toString().trim();
+const claimToken = (upsertContext.claimToken || payload.claimToken || '').toString().trim();
+const appStoreId = (payload.app?.appStoreId || '').toString().trim();
+const country = (payload.app?.country || 'kr').toString().trim().toLowerCase();
+
+if (!runId || !jobId || !claimToken || !appStoreId) {
+  throw new Error('publish context is incomplete');
+}
+
+return [{ json: {
+  runId,
+  jobId,
+  claimToken,
+  payload: {
+    runId,
+    jobId,
+    claimToken,
+    appStoreId,
+    country,
+    publishedAt: new Date().toISOString(),
+  },
+} }];`;
+
+byName.get('Prepare Parse Error Payload').parameters.jsCode = `const item = $input.first().json || {};
+const context = $('Prepare Run Context').first().json || {};
+const appStoreId = (item.appStoreId || context.appStoreId || '').toString().trim() || null;
+const country = (item.country || context.country || '').toString().trim().toLowerCase() || null;
+const runId = (item.runId || context.runId || '').toString().trim();
+const jobId = (item.jobId || context.jobId || '').toString().trim();
+const claimToken = (item.claimToken || context.claimToken || '').toString().trim();
+if (!runId || !jobId || !claimToken) throw new Error('parse error context is incomplete');
+
+const payload = {
+  parseErrorId: (item.ID || 'PARSE_ERROR_' + Date.now()).toString(),
+  jobId,
+  claimToken,
+  runId,
+  appStoreId,
+  country,
+  message: (item.요약 || item.message || 'No valid data parsed').toString(),
+  rawResponse: (item.원본 || '').toString(),
+};
+
+return [{ json: { runId, jobId, claimToken, payload } }];`;
+
+byName.get('Prepare Alert Events Payload').parameters.jsCode = `const inputItems = $input.all();
+if (!Array.isArray(inputItems) || inputItems.length === 0) return [];
+
+const context = $('Prepare Run Context').first().json || {};
+const first = inputItems[0].json || {};
+const appStoreId = (first.appStoreId || context.appStoreId || '').toString().trim();
+const country = (first.country || context.country || 'kr').toString().trim().toLowerCase();
+const runId = (first.runId || context.runId || '').toString().trim();
+const jobId = (first.jobId || context.jobId || '').toString().trim();
+const claimToken = (first.claimToken || context.claimToken || '').toString().trim();
+if (!appStoreId || !runId || !jobId || !claimToken) return [];
+
+const alerts = inputItems.map(({ json = {} }) => ({
+  reviewId: (json.reviewId || json.ID || json.id || '').toString().trim(),
+  rating: Number((json.rating || json.별점 || '0').toString().trim()) || 0,
+  priority: (json.priority || json.긴급도 || '').toString().trim(),
+  category: (json.category || json.유형 || '').toString().trim(),
+  summary: (json.summary || json.요약 || '').toString().trim(),
+  sentAt: new Date().toISOString(),
+})).filter((alert) => alert.reviewId && alert.rating > 0);
+if (alerts.length === 0) return [];
+
+return [{ json: {
+  runId,
+  jobId,
+  claimToken,
+  payload: { runId, jobId, claimToken, appStoreId, country, alerts },
+} }];`;
+
+removeNodes([
+  'Sign Claim Job Payload',
+  'Sign Preflight Reviews Payload',
+  'Sign Cluster Context',
+  'Sign Upsert Payload',
+  'Sign Cluster Upsert',
+  'Sign Publish Payload',
+  'Sign Parse Error Payload',
+  'Sign Alert Events Payload',
+]);
+
+configureInternalHttpNode('Claim Job from BFF', '={{ $json.claimKey }}');
+for (const name of [
+  'HTTP Request',
+  'Filter New Reviews via BFF',
+  'Fetch Cluster Context',
+  'Upsert Reviews to BFF',
+  'Upsert Clusters to BFF',
+  'Notify Publish to BFF',
+  'Send Parse Error to BFF',
+  'Send Alert Events to BFF',
+]) {
+  configureInternalHttpNode(name, '={{ $json.runId || $json.payload?.runId || $execution.id }}');
+}
 
 workflow.connections['Filter Duplicates'].main[0] = [
   { node: 'Prepare Cluster Context', type: 'main', index: 0 },
   { node: 'Check Critical Priority', type: 'main', index: 0 }
 ];
-workflow.connections['Prepare Cluster Context'] = { main: [[{ node: 'Sign Cluster Context', type: 'main', index: 0 }]] };
-workflow.connections['Sign Cluster Context'] = { main: [[{ node: 'Fetch Cluster Context', type: 'main', index: 0 }]] };
+workflow.connections['Prepare Cluster Context'] = { main: [[{ node: 'Fetch Cluster Context', type: 'main', index: 0 }]] };
 workflow.connections['Fetch Cluster Context'] = { main: [[{ node: 'Prepare Cluster Input', type: 'main', index: 0 }]] };
 workflow.connections['Prepare Cluster Input'] = { main: [[{ node: 'Cluster Review Issues', type: 'main', index: 0 }]] };
 workflow.connections['Google Gemini Chat Model'].ai_languageModel[0] = [
@@ -396,9 +669,15 @@ workflow.connections['Has Cluster Error?'] = { main: [
   [{ node: 'Prepare Upsert Payload', type: 'main', index: 0 }]
 ] };
 workflow.connections['Upsert Reviews to BFF'] = { main: [[{ node: 'Prepare Cluster Upsert', type: 'main', index: 0 }]] };
-workflow.connections['Prepare Cluster Upsert'] = { main: [[{ node: 'Sign Cluster Upsert', type: 'main', index: 0 }]] };
-workflow.connections['Sign Cluster Upsert'] = { main: [[{ node: 'Upsert Clusters to BFF', type: 'main', index: 0 }]] };
+workflow.connections['Prepare Cluster Upsert'] = { main: [[{ node: 'Upsert Clusters to BFF', type: 'main', index: 0 }]] };
 workflow.connections['Upsert Clusters to BFF'] = { main: [[{ node: 'Prepare Publish Payload', type: 'main', index: 0 }]] };
+
+workflow.connections['Prepare Claim Job Payload'] = { main: [[{ node: 'Claim Job from BFF', type: 'main', index: 0 }]] };
+workflow.connections['Prepare Preflight Reviews Payload'] = { main: [[{ node: 'Filter New Reviews via BFF', type: 'main', index: 0 }]] };
+workflow.connections['Prepare Upsert Payload'] = { main: [[{ node: 'Upsert Reviews to BFF', type: 'main', index: 0 }]] };
+workflow.connections['Prepare Publish Payload'] = { main: [[{ node: 'Notify Publish to BFF', type: 'main', index: 0 }]] };
+workflow.connections['Prepare Parse Error Payload'] = { main: [[{ node: 'Send Parse Error to BFF', type: 'main', index: 0 }]] };
+workflow.connections['Prepare Alert Events Payload'] = { main: [[{ node: 'Send Alert Events to BFF', type: 'main', index: 0 }]] };
 
 // Keep the operational canvas compact enough to inspect at fit-to-screen zoom.
 // Positions are generated here so rebuilding the workflow cannot restore the
@@ -408,25 +687,22 @@ const layout = {
   'Webhook Trigger (Queue Event)': [-220, 100],
   'Validate Trigger Secret': [0, 100],
   'Prepare Claim Job Payload': [220, 0],
-  'Sign Claim Job Payload': [440, 0],
-  'Claim Job from BFF': [660, 0],
-  'Prepare Run Context': [880, 0],
-  'HTTP Request': [1100, 0],
-  'Prepare Preflight Reviews Payload': [1320, 0],
-  'Sign Preflight Reviews Payload': [1540, 0],
-  'Filter New Reviews via BFF': [1760, 0],
-  'Ensure New Reviews': [1980, 0],
+  'Claim Job from BFF': [440, 0],
+  'Prepare Run Context': [660, 0],
+  'HTTP Request': [880, 0],
+  'Prepare Preflight Reviews Payload': [1100, 0],
+  'Filter New Reviews via BFF': [1320, 0],
+  'Ensure New Reviews': [1540, 0],
 
   'Basic LLM Chain': [0, 260],
   'Parse JSON Response': [220, 260],
   'Has Parse Error?': [440, 260],
   'Filter Duplicates': [660, 260],
   'Prepare Cluster Context': [880, 260],
-  'Sign Cluster Context': [1100, 260],
-  'Fetch Cluster Context': [1320, 260],
-  'Prepare Cluster Input': [1540, 260],
-  'Cluster Review Issues': [1760, 260],
-  'Validate Cluster Output': [1980, 260],
+  'Fetch Cluster Context': [1100, 260],
+  'Prepare Cluster Input': [1320, 260],
+  'Cluster Review Issues': [1540, 260],
+  'Validate Cluster Output': [1760, 260],
   'Google Gemini Chat Model': [990, 410],
 
   'Merge Cluster Batches': [0, 560],
@@ -434,22 +710,17 @@ const layout = {
   'Validate Consolidated Clusters': [440, 560],
   'Has Cluster Error?': [660, 560],
   'Prepare Upsert Payload': [880, 560],
-  'Sign Upsert Payload': [1100, 560],
-  'Upsert Reviews to BFF': [1320, 560],
-  'Prepare Cluster Upsert': [1540, 560],
-  'Sign Cluster Upsert': [1760, 560],
-  'Upsert Clusters to BFF': [1980, 560],
+  'Upsert Reviews to BFF': [1100, 560],
+  'Prepare Cluster Upsert': [1320, 560],
+  'Upsert Clusters to BFF': [1540, 560],
 
   'Check Critical Priority': [0, 860],
   'Prepare Alert Events Payload': [220, 860],
-  'Sign Alert Events Payload': [440, 860],
-  'Send Alert Events to BFF': [660, 860],
-  'Prepare Parse Error Payload': [880, 860],
-  'Sign Parse Error Payload': [1100, 860],
-  'Send Parse Error to BFF': [1320, 860],
-  'Prepare Publish Payload': [1540, 860],
-  'Sign Publish Payload': [1760, 860],
-  'Notify Publish to BFF': [1980, 860],
+  'Send Alert Events to BFF': [440, 860],
+  'Prepare Parse Error Payload': [660, 860],
+  'Send Parse Error to BFF': [880, 860],
+  'Prepare Publish Payload': [1100, 860],
+  'Notify Publish to BFF': [1320, 860],
 };
 
 for (const [name, position] of Object.entries(layout)) {

@@ -55,6 +55,7 @@ async function main() {
     assert.match(html, /owner@example\.com/);
     assert.match(html, /로그아웃/);
     assert.match(html, /분석 요청 내역/);
+    assert.match(html, /계정 탈퇴/);
     assert.match(html, /개인정보처리방침/);
     assert.match(html, /href="\/privacy"/);
   });
@@ -217,7 +218,7 @@ async function main() {
     assert.match(css, /\.issue-dialog \{ width: 100vw;/);
   });
 
-  await test('user-facing routes omit portfolio-style explanatory labels', () => {
+  await test('user-facing routes keep product copy concise', () => {
     const source = [
       'src/routes/ExplorePage.tsx',
       'src/routes/AppReportPage.tsx',

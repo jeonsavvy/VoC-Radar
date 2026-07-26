@@ -20,7 +20,8 @@ export interface Env {
 export interface UpsertReviewRequest {
   runId: string;
   source: string;
-  jobId?: string | null;
+  jobId: string;
+  claimToken: string;
   app: {
     appStoreId: string;
     country: string;
@@ -46,7 +47,8 @@ export interface UpsertReviewRequest {
 
 export interface UpsertClustersRequest {
   runId: string;
-  jobId?: string | null;
+  jobId: string;
+  claimToken: string;
   appStoreId: string;
   country: string;
   modelVersion: string;
@@ -58,6 +60,9 @@ export interface UpsertClustersRequest {
 }
 
 export interface ClusterContextRequest {
+  jobId: string;
+  claimToken: string;
+  runId: string;
   appStoreId: string;
   country?: string;
 }
@@ -66,8 +71,9 @@ export interface ClusterContextRequest {
 // LLM 응답이나 후처리 단계에서 구조화하지 못한 원문을 기록한다.
 export interface ParseErrorRequest {
   parseErrorId: string;
-  jobId?: string;
-  runId?: string;
+  jobId: string;
+  claimToken: string;
+  runId: string;
   appStoreId?: string;
   country?: string;
   message: string;
@@ -80,7 +86,8 @@ export interface PublishRequest {
   runId: string;
   appStoreId: string;
   country: string;
-  jobId?: string | null;
+  jobId: string;
+  claimToken: string;
   publishedAt?: string;
 }
 
@@ -88,6 +95,8 @@ export interface PublishRequest {
 // Critical/High 등 후속 알림이 필요한 리뷰를 별도 기록한다.
 export interface AlertEventsRequest {
   runId: string;
+  jobId: string;
+  claimToken: string;
   appStoreId: string;
   country: string;
   alerts: Array<{
@@ -110,6 +119,7 @@ export interface CreatePipelineJobRequest {
 
 // n8n이 queue에서 작업을 가져갈 때 사용하는 payload다.
 export interface ClaimJobRequest {
+  claimKey: string;
   allowFallback?: boolean;
   fallbackAppStoreId?: string;
   fallbackCountry?: string;
@@ -119,9 +129,10 @@ export interface ClaimJobRequest {
 // 파이프라인이 queue 상태를 직접 갱신할 때 사용하는 payload다.
 export interface JobStatusRequest {
   jobId: string;
+  claimToken: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'canceled';
   stage?: 'queued' | 'fetching' | 'extracting' | 'clustering' | 'publishing' | null;
-  runId?: string;
+  runId: string;
   errorMessage?: string;
 }
 
@@ -129,8 +140,9 @@ export interface JobStatusRequest {
 export interface FilterNewReviewsRequest {
   appStoreId: string;
   country?: string;
-  runId?: string;
-  jobId?: string | null;
+  runId: string;
+  jobId: string;
+  claimToken: string;
   forceReanalysis?: boolean;
   reviews: Array<{
     reviewId: string;
@@ -143,6 +155,9 @@ export interface FilterNewReviewsRequest {
 
 // App Store RSS 수집 요청 payload다.
 export interface FetchReviewsRequest {
+  jobId: string;
+  claimToken: string;
+  runId: string;
   appStoreId: string;
   country?: string;
   windowDays?: number;

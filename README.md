@@ -15,9 +15,10 @@ VoC Radar는 앱 이름, App Store URL 또는 ID로 공개 분석 리포트를 �
 ## 구조
 
 - `apps/web`: React/Vite 공개 탐색·리포트 UI
-- `apps/worker`: Web 정적 자산과 공개/비공개/내부 API를 함께 제공하는 단일 Cloudflare Worker
+- `apps/worker`: Web 정적 자산과 `public`/`private`/`internal` API를 제공하며 공통 경계를 `platform` 모듈에 둔 Cloudflare Worker
 - `supabase/20260307_voc_radar_bootstrap.sql`: 신규 설치용 최신 스키마
 - `supabase/migrations/202607180001_public_intelligence_v2.sql`: V2 additive migration
+- `supabase/migrations/202607260001_pipeline_stabilization.sql`: claim lease, CAS, 원자적 pipeline write를 추가하는 additive migration
 - `n8n/workflow.supabase-only.json`: 리뷰 추출 → 클러스터링 → 검증·게시 workflow
 - `scripts/cluster-contract.mjs`: 리뷰 ID와 enum을 검증하는 deterministic contract
 - `DESIGN.md`: 제품 UI 계약
@@ -30,17 +31,17 @@ npm run dev:worker
 npm run dev:web
 ```
 
-Worker 로컬/운영 환경에는 기존 Supabase·pipeline secrets와 함께 아래 rollout flag를 둡니다. 현재 V2 rollout은 완료되어 기본값은 `true`이며, 장애 격리나 이전 read path 검증 때만 일시적으로 `false`로 내립니다.
+Worker feature flag는 `apps/worker/wrangler.toml`에서 관리합니다. migration·workflow·공개 API 검증 전에는 `REPORT_V2_ENABLED=false`로 배포하고, 검증을 통과한 뒤 `true`로 전환합니다. 장애 격리나 반대 모드 회귀 검증에서는 두 값을 명시적으로 override합니다.
 
 ```bash
 REPORT_V2_ENABLED=true
 DETAIL_VIEW_ENABLED=true
 ```
 
-Web은 가짜 기본 앱 ID를 사용하지 않습니다. 첫 화면에는 고정 추천 대신 게시 시각 기준의 최근 공개 리포트를 보여줍니다. 운영 배포에서는 API가 같은 Worker의 `/api`에 있으므로 `VITE_API_BASE_URL`을 비워 둡니다.
+첫 화면은 게시 시각 기준의 최근 공개 리포트를 보여줍니다. 통합 Worker 배포에서는 API가 같은 origin의 `/api`에 있으므로 `VITE_API_BASE_URL`을 설정하지 않습니다.
 
 ```bash
-# 선택: 분리된 로컬 API나 임시 검증 환경에서만 설정
+# 분리된 로컬 API나 검증 환경에서만 설정
 # VITE_API_BASE_URL=https://<your-worker-domain>
 VITE_SUPABASE_URL=https://<your-project>.supabase.co
 VITE_SUPABASE_ANON_KEY=<anon-key>
@@ -74,24 +75,25 @@ VITE_DEFAULT_COUNTRY=kr
 - `POST /api/internal/pipeline/parse-error`
 - `POST /api/internal/pipeline/publish`
 
-기존 `dashboard/overview/categories/trends/apps/search` read model은 rollout rollback 기간에만 유지합니다. V2 운영 검증 후 별도 migration과 Web/Worker 변경으로 제거하며 영구 이중 경로로 유지하지 않습니다.
-
 ## 파이프라인 계약
 
-1. App Store 리뷰를 수집하고 기존 리뷰와 신규 리뷰를 분리합니다.
-2. 신규 리뷰만 모델에 전달해 리뷰별 category·summary를 구조화합니다.
-3. 현재 수집 window의 기존 추출 결과와 신규 결과를 합칩니다.
-4. 기존 issue cluster context와 매칭하거나 신규 cluster를 생성합니다.
-5. Worker가 존재하지 않는 review ID, 누락·중복 배정, 잘못된 enum을 차단합니다.
-6. `issue_clusters`, `issue_cluster_snapshots`, `issue_cluster_reviews`를 갱신한 뒤 검증 통과 run만 publish합니다.
+1. n8n 실행 ID를 `claimKey`로 사용해 작업을 claim합니다. 같은 키의 재시도는 같은 job과 claim token을 반환하며 다른 작업을 가져가지 않습니다.
+2. claim lease는 15분이고 최대 시도 횟수는 3회입니다. 만료된 `running` 작업만 회수하며 3회를 소진한 작업은 `failed`로 종결합니다.
+3. App Store 리뷰를 수집하고 기존 리뷰와 신규 리뷰를 분리합니다.
+4. 신규 리뷰만 모델에 전달해 리뷰별 category·summary를 구조화합니다.
+5. 수집 window의 기존 추출 결과와 신규 결과를 합칩니다.
+6. 기존 issue cluster context와 매칭하거나 신규 cluster를 생성합니다.
+7. Worker가 claim token과 run을 검증하고, 존재하지 않는 review ID, 누락·중복 배정, 잘못된 enum을 차단합니다.
+8. review 원문·AI 결과는 run별 비공개 staging에 보관합니다. cluster snapshot·membership 저장은 원자적으로 처리하고, 검증된 run의 review 병합·공개 pointer 갱신·job 완료를 한 transaction으로 publish합니다.
+
+허용되는 job 상태 전이는 `queued → running → completed | failed | canceled`뿐입니다. Terminal 상태는 변경할 수 없고, 취소되거나 claim을 잃은 이전 실행의 후속 요청은 `409 job_claim_lost`로 중단됩니다.
 
 ## 검증
 
 ```bash
 npm run lint
 npm run typecheck
-npm run test --workspace @voc-radar/web
-npm run test --workspace @voc-radar/worker
+npm test
 npm run build
 npm run verify:workflow
 ```

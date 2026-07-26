@@ -10,9 +10,11 @@ import type { DiscoveryItem } from '@/types';
 export function ExplorePage() {
   const [recent, setRecent] = useState<DiscoveryItem[]>([]);
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let active = true;
+    setState('loading');
     discoverApps('', 'kr', 6)
       .then((response) => {
         if (!active) return;
@@ -25,7 +27,7 @@ export function ExplorePage() {
         setState('error');
       });
     return () => { active = false; };
-  }, []);
+  }, [reloadKey]);
 
   return (
     <div className="explore-page">
@@ -41,7 +43,10 @@ export function ExplorePage() {
         {state === 'loading' ? (
           <div className="quiet-empty">불러오는 중</div>
         ) : state === 'error' ? (
-          <div className="quiet-empty">리포트를 불러오지 못했습니다.</div>
+          <div className="quiet-empty" role="alert">
+            최근 분석을 불러오지 못했습니다. 현재 목록은 최신이 아닐 수 있습니다.
+            <button type="button" onClick={() => setReloadKey((value) => value + 1)}>다시 시도</button>
+          </div>
         ) : recent.length > 0 ? (
           <div className="recent-apps">
             {recent.map((app) => (

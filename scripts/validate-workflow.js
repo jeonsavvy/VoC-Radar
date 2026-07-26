@@ -3,6 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const WORKFLOW_PATH = path.resolve(__dirname, '../n8n/workflow.supabase-only.json');
+const COMPOSE_PATH = path.resolve(__dirname, '../n8n/compose.yaml');
+const ENV_EXAMPLE_PATH = path.resolve(__dirname, '../n8n/.env.example');
+const BUILDER_PATH = path.resolve(__dirname, './build-workflow-v2.mjs');
 
 const fail = (message) => {
   console.error(`[workflow-check] ${message}`);
@@ -23,6 +26,63 @@ try {
 const nodes = Array.isArray(workflow.nodes) ? workflow.nodes : [];
 if (nodes.length === 0) {
   fail('workflow nodes are empty');
+}
+
+const compose = fs.readFileSync(COMPOSE_PATH, 'utf8');
+const envExample = fs.readFileSync(ENV_EXAMPLE_PATH, 'utf8');
+const builderSource = fs.readFileSync(BUILDER_PATH, 'utf8');
+
+for (const requiredComposeLine of [
+  'N8N_PIPELINE_TRIGGER_SECRET: ${N8N_PIPELINE_TRIGGER_SECRET:?N8N_PIPELINE_TRIGGER_SECRET is required}',
+  'EXECUTIONS_DATA_SAVE_ON_SUCCESS: "none"',
+  'EXECUTIONS_DATA_SAVE_ON_ERROR: "all"',
+  'EXECUTIONS_DATA_SAVE_ON_PROGRESS: "false"',
+  'EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: "false"',
+  'EXECUTIONS_DATA_PRUNE: "true"',
+  'EXECUTIONS_DATA_MAX_AGE: "168"',
+]) {
+  if (!compose.includes(requiredComposeLine)) {
+    fail(`compose is missing required execution/security setting: ${requiredComposeLine.split(':')[0]}`);
+  }
+}
+
+if (!/^N8N_PIPELINE_TRIGGER_SECRET=<[^>]+>$/m.test(envExample)) {
+  fail('.env.example must declare N8N_PIPELINE_TRIGGER_SECRET');
+}
+
+if (
+  workflow.settings?.saveDataSuccessExecution !== 'none' ||
+  workflow.settings?.saveDataErrorExecution !== 'all' ||
+  workflow.settings?.saveExecutionProgress !== false ||
+  workflow.settings?.saveManualExecutions !== false
+) {
+  fail('workflow execution settings must disable success data and retain only failed execution data');
+}
+
+if (/\bconst\s+signCode\b|\$json\.(?:token|fetchToken)\b|\bfetchToken\b/.test(builderSource)) {
+  fail('workflow builder must not materialize the internal API secret in item data');
+}
+
+const signNodes = nodes.filter((node) => String(node.name || '').startsWith('Sign '));
+if (signNodes.length > 0) {
+  fail(`obsolete signing nodes must be removed: ${signNodes.map((node) => node.name).join(', ')}`);
+}
+
+const secretItemNodes = nodes.filter((node) => {
+  const jsCode = String(node?.parameters?.jsCode || '');
+  return [
+    /\$json\.(?:token|fetchToken)\b/,
+    /\b(?:const|let|var)\s+(?:token|fetchToken)\b/,
+    /(?:^|[,{}]\s*)(?:token|fetchToken)\s*:/m,
+    /['"](?:token|fetchToken)['"]\s*:/,
+  ].some((pattern) => pattern.test(jsCode));
+});
+if (secretItemNodes.length > 0) {
+  fail(
+    `internal API secret must not be stored in workflow items: ${secretItemNodes
+      .map((node) => node.name || node.id)
+      .join(', ')}`,
+  );
 }
 
 const executeOnceNodes = nodes.filter((node) => node.executeOnce === true);
@@ -47,6 +107,171 @@ for (const node of nodes) {
     new Function(jsCode);
   } catch (error) {
     fail(`invalid Code node JavaScript in ${node.name || node.id}: ${error.message}`);
+  }
+}
+
+const directSecretExpression = "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}";
+const internalHttpNodes = nodes.filter(
+  (node) =>
+    node.type === 'n8n-nodes-base.httpRequest' &&
+    String(node?.parameters?.url || '').includes('/api/internal/pipeline/'),
+);
+if (internalHttpNodes.length === 0) {
+  fail('internal pipeline HTTP nodes are missing');
+}
+
+for (const node of internalHttpNodes) {
+  const headers = node.parameters?.headerParameters?.parameters || [];
+  const headerByName = new Map(
+    headers.map((header) => [(header.name || '').toString().toLowerCase(), String(header.value || '')]),
+  );
+  if (headerByName.get('x-voc-token') !== directSecretExpression) {
+    fail(`${node.name} must read PIPELINE_WEBHOOK_SECRET directly in the HTTP header`);
+  }
+  if (headerByName.has('x-voc-timestamp') || headerByName.has('x-voc-signature')) {
+    fail(`${node.name} must not materialize signing metadata in workflow items`);
+  }
+  if (!headerByName.has('x-idempotency-key')) {
+    fail(`${node.name} must send an idempotency key`);
+  }
+  if (node.retryOnFail !== true || node.maxTries !== 3) {
+    fail(`${node.name} retryOnFail/maxTries must be configured at node top-level`);
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(node.parameters?.options || {}, 'retryOnFail') ||
+    Object.prototype.hasOwnProperty.call(node.parameters?.options || {}, 'maxTries')
+  ) {
+    fail(`${node.name} retry settings must not be nested under parameters.options`);
+  }
+  if (
+    node.continueOnFail === true ||
+    String(node.onError || '').startsWith('continue') ||
+    node.parameters?.options?.response?.response?.neverError === true
+  ) {
+    fail(`${node.name} must stop the execution on job_claim_lost or any HTTP error`);
+  }
+}
+
+const claimHttpNode = nodes.find((node) => node.name === 'Claim Job from BFF');
+const claimHeaders = claimHttpNode?.parameters?.headerParameters?.parameters || [];
+const claimIdempotencyHeader = claimHeaders.find(
+  (header) => (header.name || '').toString().toLowerCase() === 'x-idempotency-key',
+);
+if (String(claimIdempotencyHeader?.value || '') !== '={{ $json.claimKey }}') {
+  fail('claim request idempotency header must use claimKey');
+}
+
+const triggerValidationCode = String(
+  nodes.find((node) => node.name === 'Validate Trigger Secret')?.parameters?.jsCode || '',
+);
+if (
+  !triggerValidationCode.includes('$env.N8N_PIPELINE_TRIGGER_SECRET') ||
+  !/if\s*\(!expected\)\s*{\s*throw\b/.test(triggerValidationCode) ||
+  !/if\s*\(!provided\s*\|\|\s*provided\s*!==\s*expected\)\s*{\s*throw\b/.test(
+    triggerValidationCode,
+  ) ||
+  /secretCheck\s*:\s*['"]skipped['"]/.test(triggerValidationCode)
+) {
+  fail('Validate Trigger Secret must fail closed for missing and mismatched secrets');
+}
+
+const webhookOutputs = workflow.connections?.['Webhook Trigger (Queue Event)']?.main?.[0] || [];
+if (
+  webhookOutputs.length !== 1 ||
+  webhookOutputs[0]?.node !== 'Validate Trigger Secret'
+) {
+  fail('webhook trigger must pass only through Validate Trigger Secret before claim');
+}
+const validatedTriggerOutputs = workflow.connections?.['Validate Trigger Secret']?.main?.[0] || [];
+if (
+  validatedTriggerOutputs.length !== 1 ||
+  validatedTriggerOutputs[0]?.node !== 'Prepare Claim Job Payload'
+) {
+  fail('validated webhook trigger must enter the claim path without a bypass');
+}
+
+const claimPreparationCode = String(
+  nodes.find((node) => node.name === 'Prepare Claim Job Payload')?.parameters?.jsCode || '',
+);
+if (
+  !claimPreparationCode.includes('$execution.id') ||
+  !claimPreparationCode.includes('claimKey') ||
+  !/payload\s*:\s*{\s*claimKey\s*}/.test(claimPreparationCode)
+) {
+  fail('claim payload must use $execution.id as claimKey');
+}
+
+const runContextCode = String(nodes.find((node) => node.name === 'Prepare Run Context')?.parameters?.jsCode || '');
+for (const requiredFragment of [
+  "status !== 'running'",
+  'data.claimToken',
+  'data.leaseExpiresAt',
+  'data.attemptCount',
+  "'RUN_' + jobId + '_' + attemptCount",
+]) {
+  if (!runContextCode.includes(requiredFragment)) {
+    fail(`Prepare Run Context is missing claim contract fragment: ${requiredFragment}`);
+  }
+}
+if (/RUN_.*Date\.now/.test(runContextCode)) {
+  fail('runId must be deterministic for the claimed job attempt');
+}
+if (
+  !/if\s*\(!jobId\s*\|\|\s*status\s*!==\s*'running'\)\s*{[\s\S]*?return\s*\[\];[\s\S]*?}/.test(
+    runContextCode,
+  )
+) {
+  fail('Prepare Run Context must stop on empty or terminal idempotent claim responses');
+}
+const fetchPayloadBlock = runContextCode.match(/const\s+fetchPayload\s*=\s*{([\s\S]*?)};/)?.[1] || '';
+for (const field of ['jobId', 'claimToken', 'runId']) {
+  if (!new RegExp(`\\b${field}\\b`).test(fetchPayloadBlock)) {
+    fail(`fetch payload must carry ${field}`);
+  }
+}
+
+for (const nodeName of [
+  'Prepare Run Context',
+  'Prepare Preflight Reviews Payload',
+  'Prepare Cluster Context',
+  'Prepare Upsert Payload',
+  'Prepare Cluster Upsert',
+  'Prepare Publish Payload',
+  'Prepare Parse Error Payload',
+  'Prepare Alert Events Payload',
+]) {
+  const code = String(nodes.find((node) => node.name === nodeName)?.parameters?.jsCode || '');
+  for (const field of ['jobId', 'claimToken', 'runId']) {
+    if (!code.includes(field)) {
+      fail(`${nodeName} must propagate ${field}`);
+    }
+  }
+}
+
+for (const nodeName of [
+  'Parse JSON Response',
+  'Filter Duplicates',
+  'Validate Cluster Output',
+  'Merge Cluster Batches',
+  'Validate Consolidated Clusters',
+]) {
+  const code = String(nodes.find((node) => node.name === nodeName)?.parameters?.jsCode || '');
+  if (!code.includes('claimToken')) {
+    fail(`${nodeName} must retain claimToken across success and parse-error paths`);
+  }
+}
+
+const nodeNames = new Set(nodes.map((node) => node.name));
+for (const [sourceName, connectionGroups] of Object.entries(workflow.connections || {})) {
+  if (!nodeNames.has(sourceName)) fail(`connection source is missing: ${sourceName}`);
+  for (const outputs of Object.values(connectionGroups || {})) {
+    for (const output of outputs || []) {
+      for (const connection of output || []) {
+        if (!nodeNames.has(connection.node)) {
+          fail(`connection target is missing: ${sourceName} -> ${connection.node}`);
+        }
+      }
+    }
   }
 }
 

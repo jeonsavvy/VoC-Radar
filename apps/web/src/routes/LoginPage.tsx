@@ -66,8 +66,10 @@ export function LoginPage({ onSignedIn }: Props) {
       await signInWithPassword(email, password);
       await onSignedIn();
       navigate(returnTo);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '로그인 처리 중 오류가 발생했습니다.');
+    } catch {
+      setError(mode === 'signup'
+        ? '회원가입 결과를 확인하지 못했습니다. 인증 이메일이 도착했는지 먼저 확인하고, 오지 않았다면 잠시 후 다시 시도하세요.'
+        : '로그인하지 못했습니다. 현재 로그인되지 않은 상태입니다. 이메일 인증 여부와 입력 정보를 확인한 뒤 다시 시도하세요.');
     } finally {
       setLoading(false);
     }

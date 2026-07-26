@@ -1,16 +1,13 @@
 # VoC Radar design contract
 
-Status: provisional implementation contract for the public self-service rebuild.
+## Product principles
 
-## Product posture
+- VoC Radar turns public App Store reviews into evidence-backed issue reports.
+- Public reports lead with the `Issues` table and link each issue to its source reviews.
+- The interface covers app discovery, report reading, review evidence, and analysis requests.
 
-- The product is a public App Store review intelligence utility, not a portfolio case-study surface.
-- Public reports lead with an evidence-backed `Issues` table. Explanatory project narrative stays outside the product.
-- No invented organization, owner, SLA, workspace, comments, or team-management concepts.
+## Visual direction
 
-## Approved direction
-
-- User-selected reference: `C:\Users\mau55\.codex\generated_images\019f742f-df85-7820-a303-879d5080465a\exec-59c75bf5-d227-4ef2-8027-7a5b2ce7b941.png`.
 - Retain the `VoC Radar` name and use a text wordmark in the product header.
 - Visual system: neutral white/gray surfaces, restrained cobalt action color, thin separators, compact data density, minimal shadow, no decorative gradient.
 

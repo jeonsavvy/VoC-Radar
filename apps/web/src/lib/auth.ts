@@ -27,7 +27,10 @@ export async function signInWithPassword(email: string, password: string) {
   }
 
   if (!user?.email_confirmed_at) {
-    await supabase.auth.signOut();
+    const { error: signOutError } = await supabase.auth.signOut();
+    if (signOutError) {
+      throw signOutError;
+    }
     throw new Error('이메일 인증 후 로그인하세요.');
   }
 }
@@ -47,7 +50,10 @@ export async function signUpWithPassword(email: string, password: string, return
   }
 
   if (data.session?.access_token) {
-    await supabase.auth.signOut();
+    const { error: signOutError } = await supabase.auth.signOut();
+    if (signOutError) {
+      throw signOutError;
+    }
     throw new Error('이메일 회원가입을 사용할 수 없습니다.');
   }
 
@@ -61,7 +67,22 @@ export async function signOut() {
     return;
   }
 
-  await supabase.auth.signOut();
+  const { error } = await supabase.auth.signOut();
+  if (error) {
+    throw error;
+  }
+}
+
+// 계정 삭제는 서버 세션을 폐기한 뒤에도 이 기기에 남은 토큰을 별도로 정리해야 한다.
+export async function clearLocalSession() {
+  if (!supabase) {
+    throw new Error('로컬 세션을 정리할 수 없습니다.');
+  }
+
+  const { error } = await supabase.auth.signOut({ scope: 'local' });
+  if (error) {
+    throw error;
+  }
 }
 
 // 비공개 API 호출 전 현재 세션의 access token을 가져온다.
