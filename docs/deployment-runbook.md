@@ -121,6 +121,8 @@ npx wrangler deploy --config apps/worker/wrangler.toml --var REPORT_V2_ENABLED:f
 - `PIPELINE_WEBHOOK_SECRET`
 - `CORS_ORIGIN`
 
+`CACHE_STATE`는 `apps/worker/wrangler.toml`의 KV binding으로 연결합니다. 배포 dry-run과 운영 Worker 설정에서 binding 이름이 모두 확인되어야 합니다.
+
 `CORS_ORIGIN=https://<your-worker-domain>`으로 설정합니다.
 
 선택 환경변수는 아래와 같습니다.

@@ -14,6 +14,10 @@ API_TIMEOUT_MS = "10000"
 API_RETRY_COUNT = "2"
 CORS_ORIGIN = "https://voc-radar.jeonsavvy.workers.dev"
 
+[[kv_namespaces]]
+binding = "CACHE_STATE"
+id = "c4d4c6ad5ad147d69912f4e91061079c"
+
 [secrets]
 required = [
   "PIPELINE_WEBHOOK_SECRET",
