@@ -75,6 +75,15 @@ test.after(async () => {
   }
 });
 
+test('worker configuration retains workers.dev alongside the official custom domain and SPA fallback', () => {
+  const config = readFileSync(resolve(testDir, '../../wrangler.toml'), 'utf8');
+
+  assert.match(config, /^workers_dev = true$/m);
+  assert.match(config, /pattern = "voc-radar\.satinode\.com", custom_domain = true/);
+  assert.match(config, /not_found_handling = "single-page-application"/);
+  assert.match(config, /run_worker_first = \["\/api\/\*"\]/);
+});
+
 test('worker entry delegates routes to focused modules without changing route fallthrough', () => {
   const [entry, platform, publicRoutes, privateRoutes, internalRoutes] = workerModulePaths
     .map((file) => readFileSync(file, 'utf8'));

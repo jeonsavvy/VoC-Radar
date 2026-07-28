@@ -4,6 +4,11 @@ compatibility_date = "2026-02-25"
 workers_dev = true
 preview_urls = false
 
+# 공식 Custom Domain은 이 통합 Worker에 직접 연결한다. workers.dev도 계속 활성화해
+# 기존 공유 링크가 같은 Worker와 SPA 자산을 제공하도록 유지한다.
+routes = [
+  { pattern = "voc-radar.satinode.com", custom_domain = true },
+]
 [triggers]
 crons = ["0 * * * *"]
 

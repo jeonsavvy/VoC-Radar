@@ -76,6 +76,14 @@ async function main() {
     assert.doesNotMatch(html, /App Store ID를 직접 입력/);
   });
 
+  await test('HTML metadata uses the official domain while legacy hosting stays runtime-compatible', () => {
+    const html = readFileSync('index.html', 'utf8');
+
+    assert.match(html, /rel="canonical" href="https:\/\/voc-radar\.satinode\.com\/"/);
+    assert.match(html, /property="og:url" content="https:\/\/voc-radar\.satinode\.com\/"/);
+    assert.doesNotMatch(html, /jeonsavvy\.workers\.dev/);
+  });
+
   await test('API client defaults to same-origin for the unified Worker', () => {
     const source = readFileSync('src/lib/api.ts', 'utf8');
 

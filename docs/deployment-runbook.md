@@ -26,6 +26,26 @@ where status in ('queued', 'running');
 
 반영 순서는 **DB additive migration → Worker → n8n workflow**입니다. Worker와 n8n의 `N8N_PIPELINE_TRIGGER_SECRET`을 먼저 같은 값으로 설정합니다. 값을 안전하게 설정할 수 없으면 webhook trigger를 비활성화하고 1분 polling만 사용합니다. 각 단계에서 동일 claim key 재시도, lease 회수, 취소 후 stale 요청 거부, 기존 공개 snapshot 유지 여부를 확인한 뒤 다음 단계로 진행합니다.
 
+## Custom Domain 병행 전환
+
+공식 주소는 `https://voc-radar.satinode.com`입니다. 기존 `https://voc-radar.jeonsavvy.workers.dev`도 리다이렉트 없이 같은 통합 Worker를 계속 제공하며, `/api/*`는 두 주소 모두 same-origin을 유지합니다. Custom Domain과 `workers_dev = true`는 `apps/worker/wrangler.toml`에서 함께 관리합니다.
+
+배포 전에는 다음 검증을 실행합니다.
+
+```bash
+npm run verify
+npm run verify:database:runtime
+npm run build:web
+npx wrangler deploy --config apps/worker/wrangler.toml --dry-run
+```
+
+- 새 주소와 기존 workers.dev 주소의 `/`, `/privacy`, `/apps/kr/<appId>/overview`, 정적 자산이 모두 200인지 확인합니다.
+- 기존 workers.dev 주소가 새 주소로 리다이렉트되지 않는지 확인합니다.
+- 두 주소의 canonical과 `og:url`이 `https://voc-radar.satinode.com/`인지 확인합니다.
+- `CORS_ORIGIN`, n8n BFF URL, Worker 이름, KV binding과 DB binding은 변경하지 않습니다.
+
+Supabase Redirect URL에는 `https://voc-radar.satinode.com/**`를 추가하고 기존 workers.dev 패턴은 보존합니다. 장애 시에는 신규 route와 canonical 변경만 되돌리고 Worker, workers.dev, 데이터, 인증 allowlist는 유지합니다.
+
 ## 1) Supabase 준비
 
 Organization 변경이 배포 범위에 포함된 경우 [Supabase project transfer 절차](https://supabase.com/docs/guides/platform/project-transfer)의 사전 조건을 확인하고 별도 승인을 받은 뒤 실행합니다. Transfer 직전에는 사용할 수 있는 백업을 확인하고, 직후 아래 항목을 읽기 전용으로 비교합니다.
