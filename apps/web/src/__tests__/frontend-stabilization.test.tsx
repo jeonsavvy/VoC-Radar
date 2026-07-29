@@ -12,11 +12,12 @@ import {
   ANALYSIS_REQUEST_SESSION_MESSAGE,
   getAnalysisRequestFailureMessage,
 } from '@/lib/analysisRequestError';
-import { ApiError, deleteAccount, getIssueDetail, getPublicReport, getPublicReviews } from '@/lib/api';
+import { ApiError, deleteAccount, discoverApps, getIssueDetail, getPublicReport, getPublicReviews } from '@/lib/api';
 import { createRecentReviewWindow, getIssueAccessibleName, mergeReviewItems } from '@/routes/AppReportPage';
 import {
   canRetryPipelineJob,
   getPipelineJobFailureMessage,
+  getPipelineStagePresentation,
   hasActivePipelineJobs,
 } from '@/routes/RequestsPage';
 import type { DiscoveryItem, IssueClusterItem, PipelineJobItem, ReviewItem } from '@/types';
@@ -328,6 +329,7 @@ async function main() {
     const compatibleReviewsUrl = new URL(requests[3]!, 'https://example.test');
     assert.equal(reportUrl.searchParams.get('from'), window.from);
     assert.equal(reportUrl.searchParams.get('to'), window.to);
+    assert.equal(reportUrl.searchParams.get('artworkRevision'), '2');
     assert.equal(issueDetailUrl.searchParams.get('from'), window.from);
     assert.equal(issueDetailUrl.searchParams.get('to'), window.to);
     assert.equal(scopedReviewsUrl.searchParams.get('from'), window.from);
@@ -336,6 +338,23 @@ async function main() {
     assert.equal(compatibleReviewsUrl.searchParams.has('from'), false);
     assert.equal(compatibleReviewsUrl.searchParams.has('to'), false);
     assert.equal(compatibleReviewsUrl.searchParams.has('searchScope'), false);
+  });
+
+  await test('artwork requests bypass the previous browser cache representation', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestUrl = '';
+    globalThis.fetch = (async (input) => {
+      requestUrl = String(input);
+      return Response.json({ data: [] });
+    }) as typeof fetch;
+
+    try {
+      await discoverApps('', 'kr', 6);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal(new URL(requestUrl, 'https://example.test').searchParams.get('artworkRevision'), '2');
   });
 
   await test('report route state is app-scoped and issue rows expose every meaningful cell', () => {
@@ -485,6 +504,35 @@ async function main() {
     assert.ok(contrastRatio('#606b7a', '#f0f2f5') >= 4.5);
     assert.match(styles, /\.review-search:focus-within \{ outline: 2px solid #2457d6/);
     assert.match(styles, /@media \(max-width: 779px\)[\s\S]*\.issue-row \{ position: relative; display: grid; grid-template-columns: 1fr auto/);
+  });
+
+  await test('compact metadata and controls retain readable and comfortable minimums', () => {
+    const styles = readFileSync('src/styles.css', 'utf8');
+    const requests = readFileSync('src/routes/RequestsPage.tsx', 'utf8');
+
+    assert.match(styles, /body \{[^}]*line-height: 1\.5/);
+    assert.match(styles, /\.search-result__copy small \{[^}]*font-size: 12px;[^}]*line-height: 1\.4/);
+    assert.match(styles, /\.issue-row__name small \{[^}]*font-size: 12px;[^}]*line-height: 1\.4/);
+    assert.match(styles, /\.job-row p \{[^}]*font-size: 12px;[^}]*line-height: 1\.5/);
+    assert.match(styles, /\.job-progress small \{[^}]*font-size: 12px;[^}]*line-height: 1\.4/);
+
+    assert.match(styles, /\.login-link \{[^}]*min-height: 44px/);
+    assert.match(styles, /\.icon-button \{[^}]*width: 44px; height: 44px/);
+    assert.match(styles, /\.account-menu__panel--delete \{[^}]*max-height: calc\(100dvh - 80px\);[^}]*overflow-y: auto/);
+    assert.match(styles, /\.account-delete-panel input \{[^}]*height: 44px/);
+    assert.match(styles, /\.global-search__form > button \{[^}]*width: 44px; height: 44px/);
+    assert.match(styles, /\.refresh-button, \.not-analyzed button \{ min-height: 44px/);
+    assert.match(styles, /\.review-search \{[^}]*height: 44px/);
+    assert.match(styles, /\.job-row__actions a, \.job-row__actions button \{[^}]*min-height: 44px/);
+
+    assert.match(styles, /@media \(max-width: 640px\)[\s\S]*?\.job-progress \{ grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);[^}]*overflow: visible/);
+    assert.match(styles, /\.job-progress \.is-current small \{ color: #172033; font-weight: 700; \}/);
+    assert.match(requests, /aria-current=\{isCurrent \? 'step' : undefined\}/);
+
+    const runningStages = [0, 1, 2, 3, 4].map((index) => getPipelineStagePresentation('running', index, 2));
+    assert.deepEqual(runningStages.map(({ isCurrent }) => isCurrent), [false, false, true, false, false]);
+    assert.deepEqual(runningStages.map(({ isActive }) => isActive), [true, true, true, false, false]);
+    assert.equal(getPipelineStagePresentation('completed', 4, 4).isCurrent, false);
   });
 }
 

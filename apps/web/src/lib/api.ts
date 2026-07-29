@@ -18,6 +18,7 @@ const configuredApiBaseUrl = import.meta.env.VITE_API_BASE_URL || '';
 const API_BASE_URL = configuredApiBaseUrl.replace(/\/$/, '');
 const REQUEST_TIMEOUT_MS = Number(import.meta.env.VITE_API_TIMEOUT_MS || '10000');
 const REQUEST_RETRY_COUNT = Number(import.meta.env.VITE_API_RETRY_COUNT || '2');
+const PUBLIC_ARTWORK_CACHE_REVISION = '2';
 
 const SERVICE_RESPONSE_ERROR = '서비스 응답을 처리하지 못했습니다.';
 const SERVICE_REQUEST_ERROR = '서비스 요청을 완료하지 못했습니다. 잠시 후 다시 시도하세요.';
@@ -248,12 +249,17 @@ export async function deleteAccount(accessToken: string) {
 }
 
 export async function discoverApps(query = '', country = DEFAULT_COUNTRY, limit = 8) {
-  const params = new URLSearchParams({ q: query, country, limit: String(limit) });
+  const params = new URLSearchParams({
+    q: query,
+    country,
+    limit: String(limit),
+    artworkRevision: PUBLIC_ARTWORK_CACHE_REVISION,
+  });
   return fetchJson<{ data: DiscoveryItem[] }>(`/api/public/discover?${params.toString()}`);
 }
 
 export async function getPublicReport(appId: string, country = DEFAULT_COUNTRY, from?: string, to?: string) {
-  const params = new URLSearchParams({ appId, country });
+  const params = new URLSearchParams({ appId, country, artworkRevision: PUBLIC_ARTWORK_CACHE_REVISION });
   if (from) params.set('from', from);
   if (to) params.set('to', to);
   return fetchJson<{ data: PublicReport }>(`/api/public/report?${params.toString()}`);

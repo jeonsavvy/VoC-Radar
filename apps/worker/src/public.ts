@@ -426,6 +426,126 @@ async function fetchAppleCatalogByIds(
   return catalog;
 }
 
+type CachedPublicReportPayload = {
+  data?: {
+    app?: {
+      appName?: string | null;
+      artworkUrl?: string | null;
+    };
+  };
+};
+
+type CachedPublicDiscoveryPayload = {
+  data?: Array<{
+    appStoreId?: string | null;
+    country?: string | null;
+    appName?: string | null;
+    artworkUrl?: string | null;
+  }>;
+};
+
+function noStoreJsonResponse(env: Env, payload: Record<string, unknown>) {
+  return withCors(
+    env,
+    new Response(JSON.stringify(payload), {
+      headers: {
+        ...JSON_HEADERS,
+        'cache-control': 'no-store',
+      },
+    }),
+  );
+}
+
+function shortLivedEdgeJsonResponse(env: Env, payload: Record<string, unknown>) {
+  return withCors(
+    env,
+    new Response(JSON.stringify(payload), {
+      headers: {
+        ...JSON_HEADERS,
+        'cache-control': 'public, max-age=30, s-maxage=30',
+      },
+    }),
+  );
+}
+
+async function revalidateCachedDiscoveryArtwork(env: Env, cached: Response, defaultCountry: string) {
+  let payload: CachedPublicDiscoveryPayload;
+  try {
+    payload = (await cached.clone().json()) as CachedPublicDiscoveryPayload;
+  } catch {
+    return withCors(env, cached);
+  }
+
+  const data = payload.data;
+  const missing = Array.isArray(data)
+    ? data.filter((app) => !normalizeOptionalText(app.artworkUrl, 500))
+    : [];
+  if (missing.length === 0) return withCors(env, cached);
+
+  const idsByCountry = new Map<string, string[]>();
+  for (const app of missing) {
+    const appId = normalizeAppStoreId(String(app.appStoreId || ''));
+    if (!appId) continue;
+    const country = normalizeCountry(String(app.country || defaultCountry));
+    idsByCountry.set(country, [...(idsByCountry.get(country) || []), appId]);
+  }
+  const catalogGroups = await Promise.all(
+    [...idsByCountry].map(async ([country, ids]) => ({
+      country,
+      items: await fetchAppleCatalogByIds(env, [...new Set(ids)], country, { timeoutMs: 2500, retries: 0 }).catch(
+        () => [],
+      ),
+    })),
+  );
+  const catalogByKey = new Map<string, AppleCatalogItem>();
+  for (const group of catalogGroups) {
+    for (const item of group.items) {
+      const appId = normalizeAppStoreId(String(item.trackId || ''));
+      if (appId) catalogByKey.set(`${appId}:${group.country}`, item);
+    }
+  }
+  for (const app of missing) {
+    const appId = normalizeAppStoreId(String(app.appStoreId || ''));
+    const country = normalizeCountry(String(app.country || defaultCountry));
+    const catalogApp = appId ? catalogByKey.get(`${appId}:${country}`) : null;
+    app.artworkUrl = normalizeOptionalText(catalogApp?.artworkUrl100, 500);
+    app.appName ||= normalizeOptionalText(catalogApp?.trackName, 120);
+  }
+  return noStoreJsonResponse(env, payload as Record<string, unknown>);
+}
+
+async function revalidateCachedReportArtwork(
+  env: Env,
+  cached: Response,
+  appId: string,
+  country: string,
+) {
+  let payload: CachedPublicReportPayload;
+  try {
+    payload = (await cached.clone().json()) as CachedPublicReportPayload;
+  } catch {
+    return withCors(env, cached);
+  }
+
+  const app = payload.data?.app;
+  if (!app || normalizeOptionalText(app.artworkUrl, 500)) {
+    return withCors(env, cached);
+  }
+
+  const catalog = await fetchAppleCatalogByIds(env, [appId], country, { timeoutMs: 2500, retries: 0 }).catch(
+    () => [],
+  );
+  const catalogApp = catalog.find((item) => normalizeAppStoreId(String(item.trackId || '')) === appId) || null;
+  const artworkUrl = normalizeOptionalText(catalogApp?.artworkUrl100, 500);
+  if (!artworkUrl) {
+    return noStoreJsonResponse(env, payload as Record<string, unknown>);
+  }
+
+  app.artworkUrl = artworkUrl;
+  app.appName ||= normalizeOptionalText(catalogApp?.trackName, 120);
+  return noStoreJsonResponse(env, payload as Record<string, unknown>);
+}
+
 function extractAppStoreId(value: string) {
   const trimmed = value.trim();
   const direct = normalizeAppStoreId(trimmed);
@@ -453,13 +573,17 @@ async function handlePublicDiscover(env: Env, request: Request) {
   const cache = await getEdgeCache();
   const cached = await cache.match(cacheKey);
   if (cached) {
-    return withCors(env, cached);
+    return revalidateCachedDiscoveryArtwork(env, cached, country);
   }
 
   const respond = async (data: Array<Record<string, unknown>>) => {
-    const response = cacheableJsonResponse(env, { data });
-    await cache.put(cacheKey, response.clone());
-    return response;
+    const payload = { data };
+    const hasMissingArtwork = data.some((app) => !normalizeOptionalText(app.artworkUrl, 500));
+    const edgeResponse = hasMissingArtwork
+      ? shortLivedEdgeJsonResponse(env, payload)
+      : cacheableJsonResponse(env, payload);
+    await cache.put(cacheKey, edgeResponse.clone());
+    return hasMissingArtwork ? noStoreJsonResponse(env, payload) : edgeResponse;
   };
 
   if (!query) {
@@ -722,7 +846,7 @@ async function handlePublicReport(env: Env, request: Request) {
   const cache = await getEdgeCache();
   const cached = await cache.match(cacheKey);
   if (cached) {
-    return withCors(env, cached);
+    return revalidateCachedReportArtwork(env, cached, appId, country);
   }
 
   const [overviewRows, categories, trends, issueResult, runs, apps, catalog] = await Promise.all([
@@ -798,9 +922,12 @@ async function handlePublicReport(env: Env, request: Request) {
       averageRating: Number(row.average_rating || 0),
     })),
   };
-  const response = cacheableJsonResponse(env, { data });
-  await cache.put(cacheKey, response.clone());
-  return response;
+  const payload = { data };
+  const edgeResponse = data.app.artworkUrl
+    ? cacheableJsonResponse(env, payload)
+    : shortLivedEdgeJsonResponse(env, payload);
+  await cache.put(cacheKey, edgeResponse.clone());
+  return data.app.artworkUrl ? edgeResponse : noStoreJsonResponse(env, payload);
 }
 
 async function handlePublicIssueDetail(env: Env, request: Request, issueId: string) {

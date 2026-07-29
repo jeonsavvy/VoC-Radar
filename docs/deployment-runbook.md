@@ -40,6 +40,8 @@ where status in ('queued', 'running');
 
 공식 주소는 `https://voc-radar.satinode.com`입니다. 기존 `https://voc-radar.jeonsavvy.workers.dev`도 리다이렉트 없이 같은 통합 Worker를 계속 제공하며, `/api/*`는 두 주소 모두 same-origin을 유지합니다. Custom Domain과 `workers_dev = true`는 `apps/worker/wrangler.toml`에서 함께 관리합니다.
 
+Cloudflare zone에는 `Respect VoC Radar public API cache headers` Cache Rule을 활성 상태로 유지합니다. 이 규칙은 `(http.request.full_uri wildcard r"https://voc-radar.satinode.com/api/public/*")`에만 적용하며, cache eligibility를 켜고 Browser TTL을 `respect_origin`으로 둡니다. 규칙이 없으면 zone의 4시간 Browser Cache TTL이 Worker의 120초 헤더를 늘릴 수 있습니다. 배포 후 고유 query string으로 public API를 요청해 `Cache-Control: public, max-age=120, s-maxage=120` 또는 불완전 아트워크 응답의 `Cache-Control: no-store`가 유지되는지 확인합니다. 롤백할 때는 이 규칙만 비활성화하거나 삭제하며 다른 zone 규칙과 Worker 캐시는 변경하지 않습니다.
+
 배포 전에는 다음 검증을 실행합니다.
 
 ```bash

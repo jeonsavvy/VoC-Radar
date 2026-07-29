@@ -39,6 +39,13 @@ export function getPipelineJobFailureMessage(job: PipelineJobItem) {
     : '분석 요청을 완료하지 못했습니다. 잠시 후 다시 시도하세요.';
 }
 
+export function getPipelineStagePresentation(status: PipelineJobItem['status'], index: number, activeIndex: number) {
+  return {
+    isActive: index <= activeIndex,
+    isCurrent: index === activeIndex && (status === 'queued' || status === 'running'),
+  };
+}
+
 export function RequestsPage({ loggedIn, authChecking }: Props) {
   const [jobs, setJobs] = useState<PipelineJobItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -173,10 +180,14 @@ export function RequestsPage({ loggedIn, authChecking }: Props) {
             <span className={`job-status job-status--${job.status}`}>{job.status === 'completed' ? '완료' : job.status === 'failed' ? '실패' : job.status === 'canceled' ? '취소' : '진행 중'}</span>
           </div>
           <div className="job-progress" aria-label={`현재 단계 ${stage ? stageLabel[stage] : job.status}`}>
-            {stages.map((item, index) => <div key={item} className={index <= activeIndex ? 'is-active' : ''}>
-              <span>{index < activeIndex || job.status === 'completed' ? <Check /> : index === activeIndex ? <LoaderCircle className={job.status === 'running' ? 'is-spinning' : ''} /> : index + 1}</span>
-              <small>{stageLabel[item]}</small>
-            </div>)}
+            {stages.map((item, index) => {
+              const { isActive, isCurrent } = getPipelineStagePresentation(job.status, index, activeIndex);
+              const className = `${isActive ? 'is-active' : ''}${isCurrent ? ' is-current' : ''}`.trim();
+              return <div key={item} className={className} aria-current={isCurrent ? 'step' : undefined}>
+                <span>{index < activeIndex || job.status === 'completed' ? <Check /> : index === activeIndex ? <LoaderCircle className={job.status === 'running' ? 'is-spinning' : ''} /> : index + 1}</span>
+                <small>{stageLabel[item]}</small>
+              </div>;
+            })}
           </div>
           {job.status === 'failed' ? <p className="job-error"><AlertTriangle />{getPipelineJobFailureMessage(job)}</p> : null}
           <div className="job-row__actions">

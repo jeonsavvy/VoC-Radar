@@ -19,19 +19,26 @@ const RUN_ID = `RUN_${JOB_ID}_1`;
 
 function createMemoryCacheStorage() {
   const entries = new Map();
+  const normalizeKey = (input) => (typeof input === 'string' ? input : input.url);
   const cache = {
     async match(input) {
-      const response = entries.get(typeof input === 'string' ? input : input.url);
+      const response = entries.get(normalizeKey(input));
       return response?.clone();
     },
     async put(input, response) {
-      entries.set(typeof input === 'string' ? input : input.url, response.clone());
+      entries.set(normalizeKey(input), response.clone());
     },
   };
 
   return {
     async open() {
       return cache;
+    },
+    get size() {
+      return entries.size;
+    },
+    get cacheControls() {
+      return [...entries.values()].map((response) => response.headers.get('cache-control'));
     },
   };
 }
@@ -234,6 +241,82 @@ test('public discovery batches app metadata and reuses the edge cache', async ()
   }
 });
 
+test('public discovery revalidates missing artwork without repeating database reads', async () => {
+  const originalFetch = globalThis.fetch;
+  const cacheStorage = createMemoryCacheStorage();
+  const restoreCaches = replaceGlobalCaches(cacheStorage);
+  const calls = [];
+  let artworkAvailable = false;
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes('/rest/v1/pipeline_runs?')) {
+      return Response.json([
+        { app_store_id: '1018769995', country: 'kr', published_at: '2026-07-21T01:00:00.000Z' },
+      ]);
+    }
+    if (url.includes('/rest/v1/apps?')) {
+      return Response.json([{ app_store_id: '1018769995', country: 'kr', app_name: '당근' }]);
+    }
+    if (url.includes('itunes.apple.com/lookup?')) {
+      return Response.json({
+        results: artworkAvailable
+          ? [{ trackId: 1018769995, trackName: '당근', artworkUrl100: 'https://example.test/carrot.jpg' }]
+          : [],
+      });
+    }
+    if (url.includes('apps.apple.com/kr/app/id1018769995')) {
+      return new Response(null, { status: 503 });
+    }
+    return Response.json({ error: `unexpected ${url}` }, { status: 500 });
+  };
+
+  try {
+    const requestUrl = 'https://worker.example/api/public/discover?country=kr&limit=6';
+    const env = {
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      SUPABASE_ANON_KEY: 'anon-key',
+      PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      API_RETRY_COUNT: '0',
+    };
+
+    const missingResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    const missingPayload = await missingResponse.json();
+    assert.equal(missingResponse.headers.get('cache-control'), 'no-store');
+    assert.equal(missingPayload.data[0].artworkUrl, null);
+    assert.equal(cacheStorage.size, 1);
+    assert.deepEqual(cacheStorage.cacheControls, ['public, max-age=30, s-maxage=30']);
+    const callsAfterMissing = calls.length;
+    const databaseCallsAfterMissing = calls.filter((url) => url.includes('/rest/v1/')).length;
+
+    const stillMissingResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    const stillMissingPayload = await stillMissingResponse.json();
+    assert.equal(stillMissingResponse.headers.get('cache-control'), 'no-store');
+    assert.equal(stillMissingPayload.data[0].artworkUrl, null);
+    assert.equal(calls.filter((url) => url.includes('/rest/v1/')).length, databaseCallsAfterMissing);
+    assert.equal(calls.length, callsAfterMissing + 2);
+    const callsAfterRetry = calls.length;
+
+    artworkAvailable = true;
+    const recoveredResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    const recoveredPayload = await recoveredResponse.json();
+    assert.equal(recoveredResponse.headers.get('cache-control'), 'no-store');
+    assert.equal(recoveredPayload.data[0].artworkUrl, 'https://example.test/carrot.jpg');
+    assert.equal(calls.length, callsAfterRetry + 1);
+    const callsAfterRecovery = calls.length;
+
+    const repeatedRecoveryResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    assert.equal((await repeatedRecoveryResponse.json()).data[0].artworkUrl, 'https://example.test/carrot.jpg');
+    assert.equal(repeatedRecoveryResponse.headers.get('cache-control'), 'no-store');
+    assert.equal(calls.length, callsAfterRecovery + 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreCaches();
+  }
+});
+
 test('public report includes App Store artwork and reuses the edge cache', async () => {
   const originalFetch = globalThis.fetch;
   const restoreCaches = replaceGlobalCaches(createMemoryCacheStorage());
@@ -284,6 +367,87 @@ test('public report includes App Store artwork and reuses the edge cache', async
     const secondPayload = await secondResponse.json();
     assert.deepEqual(secondPayload, firstPayload);
     assert.equal(calls.length, 7);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreCaches();
+  }
+});
+
+test('public report keeps incomplete data at the edge and revalidates only its artwork', async () => {
+  const originalFetch = globalThis.fetch;
+  const cacheStorage = createMemoryCacheStorage();
+  const restoreCaches = replaceGlobalCaches(cacheStorage);
+  const calls = [];
+  let artworkAvailable = false;
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.endsWith('/rest/v1/rpc/get_public_overview')) {
+      return Response.json([{ total_reviews: 20, average_rating: 3.8, low_rating_count: 4 }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/get_public_categories')) return Response.json([]);
+    if (url.endsWith('/rest/v1/rpc/get_public_trends')) return Response.json([]);
+    if (url.endsWith('/rest/v1/rpc/get_public_issue_clusters_windowed')) return Response.json([]);
+    if (url.includes('/rest/v1/pipeline_runs?')) {
+      return Response.json([{ run_id: 'run-1', status: 'published', model_version: 'model-1', published_at: '2026-07-21T01:00:00.000Z' }]);
+    }
+    if (url.includes('/rest/v1/apps?')) return Response.json([{ app_name: '당근' }]);
+    if (url.includes('itunes.apple.com/lookup?')) {
+      return Response.json({
+        results: artworkAvailable
+          ? [{ trackId: 1018769995, trackName: '당근', artworkUrl100: 'https://example.test/carrot.jpg' }]
+          : [],
+      });
+    }
+    if (url.includes('apps.apple.com/kr/app/id1018769995')) {
+      return new Response(null, { status: 503 });
+    }
+    return Response.json({ error: `unexpected ${url}` }, { status: 500 });
+  };
+
+  try {
+    const requestUrl = 'https://worker.example/api/public/report?appId=1018769995&country=kr';
+    const env = {
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      SUPABASE_ANON_KEY: 'anon-key',
+      PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      API_RETRY_COUNT: '0',
+      REPORT_V2_ENABLED: 'true',
+    };
+
+    const missingResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    const missingPayload = await missingResponse.json();
+    assert.equal(missingResponse.status, 200);
+    assert.equal(missingResponse.headers.get('cache-control'), 'no-store');
+    assert.equal(missingPayload.data.app.artworkUrl, null);
+    assert.equal(cacheStorage.size, 1);
+    assert.deepEqual(cacheStorage.cacheControls, ['public, max-age=30, s-maxage=30']);
+    const callsAfterMissing = calls.length;
+    const databaseCallsAfterMissing = calls.filter((url) => url.includes('/rest/v1/')).length;
+
+    const stillMissingResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    const stillMissingPayload = await stillMissingResponse.json();
+    assert.equal(stillMissingResponse.headers.get('cache-control'), 'no-store');
+    assert.equal(stillMissingPayload.data.app.artworkUrl, null);
+    assert.equal(calls.filter((url) => url.includes('/rest/v1/')).length, databaseCallsAfterMissing);
+    assert.equal(calls.length, callsAfterMissing + 2);
+    const callsAfterRetry = calls.length;
+
+    artworkAvailable = true;
+    const recoveredResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    const recoveredPayload = await recoveredResponse.json();
+    assert.equal(recoveredResponse.status, 200);
+    assert.equal(recoveredResponse.headers.get('cache-control'), 'no-store');
+    assert.equal(recoveredPayload.data.app.artworkUrl, 'https://example.test/carrot.jpg');
+    assert.equal(calls.length, callsAfterRetry + 1);
+    const callsAfterRecovery = calls.length;
+
+    const cachedResponse = await workerModule.default.fetch(new Request(requestUrl), env);
+    assert.equal((await cachedResponse.json()).data.app.artworkUrl, 'https://example.test/carrot.jpg');
+    assert.equal(cachedResponse.headers.get('cache-control'), 'no-store');
+    assert.equal(calls.length, callsAfterRecovery + 1);
   } finally {
     globalThis.fetch = originalFetch;
     restoreCaches();
