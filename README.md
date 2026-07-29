@@ -4,10 +4,6 @@ VoC Radar는 앱 이름, App Store URL 또는 ID로 공개 분석 리포트를 �
 
 **공식 주소:** [voc-radar.satinode.com](https://voc-radar.satinode.com)
 
-**기존 주소:** [voc-radar.jeonsavvy.workers.dev](https://voc-radar.jeonsavvy.workers.dev) — 리다이렉트하지 않고 같은 통합 Worker를 계속 제공합니다.
-
-두 주소 모두 same-origin `/api/*`와 SPA deep link를 제공합니다. canonical 및 공유 메타데이터는 공식 주소를 사용합니다.
-
 분석 갱신은 로컬 Docker의 n8n이 실행 중일 때 처리되며, 공개된 리포트는 계속 열람할 수 있습니다.
 
 ## 제품 흐름
