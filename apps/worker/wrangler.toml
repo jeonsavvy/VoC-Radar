@@ -4,6 +4,10 @@ compatibility_date = "2026-02-25"
 workers_dev = true
 preview_urls = false
 
+[limits]
+# Free와 Paid plan 모두에서 review fetch의 invocation당 외부 호출 상한을 동일하게 고정한다.
+subrequests = 50
+
 # 공식 Custom Domain은 이 통합 Worker에 직접 연결한다. workers.dev도 계속 활성화해
 # 기존 공유 링크가 같은 Worker와 SPA 자산을 제공하도록 유지한다.
 routes = [
@@ -14,10 +18,18 @@ crons = ["0 * * * *"]
 
 [vars]
 DETAIL_VIEW_ENABLED = "true"
-REPORT_V2_ENABLED = "true"
+# 공개 V2 read path는 migration·workflow smoke가 끝난 배포에서만 CLI로 승격한다.
+REPORT_V2_ENABLED = "false"
+USER_JOB_DAILY_LIMIT = "10"
 API_TIMEOUT_MS = "10000"
 API_RETRY_COUNT = "2"
 CORS_ORIGIN = "https://voc-radar.jeonsavvy.workers.dev"
+
+# 이 namespace ID는 Cloudflare account 전체에서 공유되므로 다른 Worker가 재사용하면 안 된다.
+[[ratelimits]]
+name = "APPLE_LOOKUP_RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }
 
 [[kv_namespaces]]
 binding = "CACHE_STATE"

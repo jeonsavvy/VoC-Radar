@@ -2,6 +2,9 @@
   "name": "voc-radar",
   "private": true,
   "version": "0.2.0",
+  "engines": {
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+  },
   "workspaces": [
     "apps/web",
     "apps/worker"
@@ -13,9 +16,10 @@
     "test": "npm run test --workspace @voc-radar/web && npm run test --workspace @voc-radar/worker",
     "verify": "npm run lint && npm run typecheck && npm test && npm run build && npm run verify:workflow",
     "typecheck": "npm run typecheck --workspace @voc-radar/web && npm run typecheck --workspace @voc-radar/worker",
-    "lint": "npm run lint --workspace @voc-radar/web && npm run lint --workspace @voc-radar/worker && npm run verify:database",
+    "lint": "npm run lint --workspace @voc-radar/web && npm run lint --workspace @voc-radar/worker && npm run verify:database && npm run verify:release-config",
     "verify:database": "node --test scripts/supabase-contract.test.mjs",
     "verify:database:runtime": "node scripts/verify-postgres-runtime.mjs",
+    "verify:release-config": "node scripts/validate-release-config.mjs && node --test scripts/validate-deploy-env.test.mjs",
     "verify:workflow": "node scripts/validate-workflow.js && node scripts/validate-cluster-contract.mjs && node --test scripts/cluster-contract.test.mjs",
     "verify:deploy-env": "node scripts/validate-deploy-env.mjs",
     "dev:web": "npm run dev --workspace @voc-radar/web",

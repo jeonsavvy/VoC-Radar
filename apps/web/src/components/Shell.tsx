@@ -1,11 +1,13 @@
 import { useRef, useState } from 'react';
 import { ChevronDown, LogIn, Search, Trash2, X } from 'lucide-react';
-import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { ApiError, deleteAccount } from '@/lib/api';
+import { DEFAULT_COUNTRY } from '@/lib/config';
 
 type Props = {
   loggedIn: boolean;
+  authChecking: boolean;
   userEmail?: string | null;
   onSignOut: () => void | Promise<void>;
 };
@@ -29,11 +31,11 @@ export function isAccountDeletionConfirmed(value: string) {
 
 export function getAccountDeletionRecoveryMessage(error: unknown) {
   if (error instanceof ApiError && error.code === 'account_delete_not_started') {
-    return '계정 탈퇴를 시작하지 못했습니다. 계정과 진행 중인 분석 요청은 그대로 유지되며 작업 취소는 시작되지 않았습니다. 잠시 후 다시 시도하세요.';
+    return '계정 삭제를 완료하지 못했습니다. 계정은 유지되지만 분석 요청 취소와 요청 메모 삭제 여부를 확인하지 못했습니다. 잠시 후 다시 시도하세요.';
   }
 
   if (error instanceof ApiError && error.code === 'account_delete_incomplete') {
-    return '계정 삭제를 완료하지 못해 계정은 유지됩니다. 진행 중이던 분석 요청은 취소되었습니다. 잠시 후 다시 시도하세요.';
+    return '요청 취소와 메모 삭제는 완료했지만 계정 삭제 결과는 확인하지 못했습니다. 새로고침해 로그인 상태를 확인하고, 계정이 남아 있으면 다시 시도하세요.';
   }
 
   return '계정 탈퇴 결과를 확인하지 못했습니다. 새로고침해 로그인 상태를 확인하고, 계정이 남아 있으면 다시 시도하세요. 요청 내역에서 진행 중인 작업 상태도 확인할 수 있습니다.';
@@ -96,7 +98,7 @@ export function AccountDeletionPanel({
   </section>;
 }
 
-export function Shell({ loggedIn, userEmail, onSignOut }: Props) {
+export function Shell({ loggedIn, authChecking, userEmail, onSignOut }: Props) {
   const location = useLocation();
   const [mobileSearch, setMobileSearch] = useState(false);
   const [deletePanelOpen, setDeletePanelOpen] = useState(false);
@@ -108,7 +110,7 @@ export function Shell({ loggedIn, userEmail, onSignOut }: Props) {
   const [signOutError, setSignOutError] = useState<string | null>(null);
   const deleteInFlight = useRef(false);
   const signOutInFlight = useRef(false);
-  const country = location.pathname.match(/^\/apps\/([a-z]{2})\//)?.[1] || 'kr';
+  const country = location.pathname.match(/^\/apps\/([a-z]{2})\//)?.[1] || DEFAULT_COUNTRY;
 
   const closeDeletePanel = () => {
     if (deleteInFlight.current) return;
@@ -191,7 +193,12 @@ export function Shell({ loggedIn, userEmail, onSignOut }: Props) {
             >
               {mobileSearch ? <X /> : <Search />}
             </button>
-            {loggedIn ? (
+            {authChecking ? (
+              <span className="login-link login-link--checking" role="status" aria-label="로그인 상태 확인 중">
+                <LogIn aria-hidden="true" />
+                <span aria-hidden="true">로그인</span>
+              </span>
+            ) : loggedIn ? (
               <details className="account-menu">
                 <summary>
                   <span className="account-avatar">{userEmail?.[0]?.toUpperCase() || 'U'}</span>

@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, ArrowRight, Check, LoaderCircle, RefreshCw } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { getMyPipelineJobs, requestAnalysis } from '@/lib/api';
+import {
+  ANALYSIS_REQUEST_SESSION_MESSAGE,
+  getAnalysisRequestFailureMessage,
+  isSessionRejected,
+} from '@/lib/analysisRequestError';
 import { reportPath } from '@/lib/appIdentity';
 import { getAccessToken } from '@/lib/auth';
 import type { PipelineJobItem } from '@/types';
@@ -11,14 +16,30 @@ const stageLabel = {
   queued: '대기', fetching: '리뷰 수집', extracting: '리뷰 추출', clustering: '이슈 군집화', publishing: '게시',
 } as const;
 const REQUEST_POLL_INTERVAL_MS = 10_000;
+const REQUEST_HISTORY_SESSION_MESSAGE =
+  '로그인 세션을 확인하지 못해 요청 내역을 불러오지 않았습니다. 다시 로그인한 뒤 확인하세요.';
 
-type Props = { loggedIn: boolean };
+type Props = { loggedIn: boolean; authChecking: boolean };
 
 export function hasActivePipelineJobs(jobs: PipelineJobItem[]) {
   return jobs.some((job) => job.status === 'queued' || job.status === 'running');
 }
 
-export function RequestsPage({ loggedIn }: Props) {
+export function isReviewScopeIncomplete(job: PipelineJobItem) {
+  return job.status === 'failed' && job.failure_code === 'review_scope_incomplete';
+}
+
+export function canRetryPipelineJob(job: PipelineJobItem) {
+  return job.status === 'failed' && !isReviewScopeIncomplete(job);
+}
+
+export function getPipelineJobFailureMessage(job: PipelineJobItem) {
+  return isReviewScopeIncomplete(job)
+    ? '요청 기간의 리뷰가 현재 수집 한도를 초과해 분석을 완료하지 않았습니다. 수집 범위가 확장되기 전에는 같은 조건으로 재시도하지 마세요.'
+    : '분석 요청을 완료하지 못했습니다. 잠시 후 다시 시도하세요.';
+}
+
+export function RequestsPage({ loggedIn, authChecking }: Props) {
   const [jobs, setJobs] = useState<PipelineJobItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -31,6 +52,7 @@ export function RequestsPage({ loggedIn }: Props) {
   const retryInFlight = useRef(new Set<string>());
 
   const load = useCallback(async (showLoading = false) => {
+    if (authChecking) return;
     if (!loggedIn) {
       setJobs([]);
       setLoading(false);
@@ -45,13 +67,18 @@ export function RequestsPage({ loggedIn }: Props) {
       if (showLoading) setLoading(true);
       try {
         const token = await getAccessToken();
-        if (!token) throw new Error('missing session');
+        if (!token) {
+          setLoadError(REQUEST_HISTORY_SESSION_MESSAGE);
+          return;
+        }
         const response = await getMyPipelineJobs(token, 30);
         setJobs(response.data);
         setLoadError(null);
-      } catch {
+      } catch (error) {
         setLoadError(
-          '요청 내역을 불러오지 못했습니다. 표시된 상태는 최신이 아닐 수 있습니다. 다시 시도하세요.',
+          isSessionRejected(error)
+            ? REQUEST_HISTORY_SESSION_MESSAGE
+            : '요청 내역을 불러오지 못했습니다. 표시된 상태는 최신이 아닐 수 있습니다. 다시 시도하세요.',
         );
       } finally {
         if (showLoading) setLoading(false);
@@ -64,7 +91,7 @@ export function RequestsPage({ loggedIn }: Props) {
     } finally {
       if (loadInFlight.current === request) loadInFlight.current = null;
     }
-  }, [loggedIn]);
+  }, [authChecking, loggedIn]);
 
   useEffect(() => { void load(true); }, [load]);
 
@@ -76,13 +103,13 @@ export function RequestsPage({ loggedIn }: Props) {
 
   const hasActiveJobs = hasActivePipelineJobs(jobs);
   useEffect(() => {
-    if (!loggedIn || !hasActiveJobs || !pageVisible) return;
+    if (authChecking || !loggedIn || !hasActiveJobs || !pageVisible) return;
 
     const interval = window.setInterval(() => {
       if (document.visibilityState === 'visible') void load(false);
     }, REQUEST_POLL_INTERVAL_MS);
     return () => window.clearInterval(interval);
-  }, [hasActiveJobs, load, loggedIn, pageVisible]);
+  }, [authChecking, hasActiveJobs, load, loggedIn, pageVisible]);
 
   const retry = async (job: PipelineJobItem) => {
     if (retryInFlight.current.has(job.id)) return;
@@ -92,7 +119,10 @@ export function RequestsPage({ loggedIn }: Props) {
 
     try {
       const token = await getAccessToken();
-      if (!token) throw new Error('missing session');
+      if (!token) {
+        setActionMessage(ANALYSIS_REQUEST_SESSION_MESSAGE);
+        return;
+      }
       const response = await requestAnalysis(token, {
         appStoreId: job.app_store_id,
         country: job.country,
@@ -106,10 +136,11 @@ export function RequestsPage({ loggedIn }: Props) {
             : '재시도 요청을 등록했습니다.',
       );
       await load(false);
-    } catch {
-      setActionMessage(
+    } catch (error) {
+      setActionMessage(getAnalysisRequestFailureMessage(
+        error,
         '재시도 요청 상태를 확인하지 못했습니다. 동일 요청이 이미 등록되었을 수 있습니다. 요청 내역을 확인한 뒤 다시 시도하세요.',
-      );
+      ));
     } finally {
       retryInFlight.current.delete(job.id);
       setRetryingJobIds((current) => {
@@ -120,6 +151,7 @@ export function RequestsPage({ loggedIn }: Props) {
     }
   };
 
+  if (authChecking) return <div className="request-loading" role="status"><LoaderCircle className="is-spinning" /> 로그인 상태 확인 중</div>;
   if (!loggedIn) return <div className="auth-gate"><h1>분석 요청 내역</h1><p>로그인이 필요합니다.</p><Link to="/login?returnTo=%2Frequests">로그인 <ArrowRight /></Link></div>;
 
   return <div className="requests-page">
@@ -146,10 +178,10 @@ export function RequestsPage({ loggedIn }: Props) {
               <small>{stageLabel[item]}</small>
             </div>)}
           </div>
-          {job.status === 'failed' ? <p className="job-error"><AlertTriangle />분석 요청을 완료하지 못했습니다. 잠시 후 다시 시도하세요.</p> : null}
+          {job.status === 'failed' ? <p className="job-error"><AlertTriangle />{getPipelineJobFailureMessage(job)}</p> : null}
           <div className="job-row__actions">
             {job.status === 'completed' ? <Link to={reportPath(job.app_store_id, job.country)}>완료 리포트 <ArrowRight /></Link> : null}
-            {job.status === 'failed' ? <button
+            {canRetryPipelineJob(job) ? <button
               type="button"
               disabled={retrying}
               aria-busy={retrying}

@@ -37,12 +37,25 @@ export interface PipelineJobItem {
   stage?: 'queued' | 'fetching' | 'extracting' | 'clustering' | 'publishing' | null;
   run_id: string | null;
   note: string | null;
+  failure_code?: 'review_scope_incomplete' | null;
   error_message: string | null;
   requested_at: string;
   started_at: string | null;
   finished_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface AnalysisRequestJob {
+  id: string;
+  app_store_id: string;
+  country: string;
+  app_name?: string | null;
+  status: PipelineJobItem['status'];
+  stage?: PipelineJobItem['stage'];
+  run_id?: string | null;
+  requested_at: string;
+  updated_at?: string;
 }
 
 export interface PipelineTriggerResult {
@@ -125,8 +138,8 @@ export interface IssueDetail {
 }
 
 export type AnalysisRequestResponse =
-  | { ok: true; result: 'queued'; data: PipelineJobItem; trigger?: PipelineTriggerResult }
-  | { ok: true; result: 'existing'; data: Partial<PipelineJobItem> & { app_store_id: string; country: string } }
+  | { ok: true; result: 'queued'; data: AnalysisRequestJob; trigger?: PipelineTriggerResult }
+  | { ok: true; result: 'existing'; data: AnalysisRequestJob }
   | {
       ok: true;
       result: 'fresh';

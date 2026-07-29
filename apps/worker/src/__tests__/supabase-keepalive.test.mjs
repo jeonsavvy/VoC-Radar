@@ -247,7 +247,7 @@ test('public report includes App Store artwork and reuses the edge cache', async
     }
     if (url.endsWith('/rest/v1/rpc/get_public_categories')) return Response.json([]);
     if (url.endsWith('/rest/v1/rpc/get_public_trends')) return Response.json([]);
-    if (url.endsWith('/rest/v1/rpc/get_public_issue_clusters')) return Response.json([]);
+    if (url.endsWith('/rest/v1/rpc/get_public_issue_clusters_windowed')) return Response.json([]);
     if (url.includes('/rest/v1/pipeline_runs?')) {
       return Response.json([{ run_id: 'run-1', status: 'published', model_version: 'model-1', published_at: '2026-07-21T01:00:00.000Z' }]);
     }
@@ -375,6 +375,169 @@ test('review fetch falls back to the Apple storefront review-row endpoint', asyn
     const responsePayload = JSON.parse(responseText);
     assert.equal(responsePayload.data.totalFetched, 1);
     assert.equal(responsePayload.data.reviews[0].reviewId, 'review-1');
+    assert.equal(responsePayload.data.complete, true);
+    assert.equal(responsePayload.data.truncated, false);
+    assert.equal(responsePayload.data.terminationReason, 'short_page');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('review fetch never returns partial success after a later Apple page failure', async () => {
+  const scenarios = [
+    () => new Response('', { status: 503 }),
+    () => new Response('{not-json', { status: 200, headers: { 'content-type': 'application/json' } }),
+  ];
+  for (const failedPage of scenarios) {
+    const originalFetch = globalThis.fetch;
+    let applePage = 0;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+        return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID }]);
+      }
+      if (url.includes('/rss/customerreviews/')) {
+        applePage += 1;
+        if (applePage === 2) return failedPage();
+        return Response.json({ feed: { entry: Array.from({ length: 50 }, (_, index) => ({
+          id: { label: `review-${index}` },
+          'im:rating': { label: '5' },
+          updated: { label: new Date().toISOString() },
+          author: { name: { label: 'reviewer' } },
+          content: { label: `review ${index}` },
+        })) } });
+      }
+      return Response.json({ code: 'unexpected' }, { status: 500 });
+    };
+
+    try {
+      const response = await workerModule.default.fetch(
+        new Request('https://worker.example/api/internal/pipeline/fetch-reviews', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+          body: JSON.stringify({
+            jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+            appStoreId: '1018769995', country: 'us', windowDays: 30, maxPages: 2,
+          }),
+        }),
+        {
+          SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+          SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+        },
+      );
+      const payload = await response.json();
+      assert.equal(response.status, 502);
+      assert.equal(payload.error, 'upstream_unavailable');
+      assert.equal(payload.retryable, true);
+      assert.equal(Object.hasOwn(payload, 'data'), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
+test('review fetch proves a full 40-page boundary with one terminal probe under 50 subrequests', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, redirect: init.redirect });
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID }]);
+    }
+    if (url.includes('/rss/customerreviews/')) {
+      const page = Number(url.match(/page=(\d+)/)?.[1] || 0);
+      if (page === 41) return Response.json({ feed: { entry: [] } });
+      return Response.json({ feed: { entry: Array.from({ length: 50 }, (_, index) => ({
+        id: { label: `review-${page}-${index}` },
+        'im:rating': { label: '4' },
+        updated: { label: new Date().toISOString() },
+        author: { name: { label: 'reviewer' } },
+        content: { label: `review ${page}-${index}` },
+      })) } });
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/internal/pipeline/fetch-reviews', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+        body: JSON.stringify({
+          jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+          appStoreId: '1018769995', country: 'us', windowDays: 30, maxPages: 40,
+        }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      },
+    );
+    const payload = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(payload));
+    assert.equal(payload.data.totalFetched, 2_000);
+    assert.equal(payload.data.pagesFetched, 40);
+    assert.equal(payload.data.complete, true);
+    assert.equal(payload.data.truncated, false);
+    assert.equal(payload.data.terminationReason, 'empty_page');
+    assert.equal(calls.length, 45);
+    const appleCalls = calls.filter((call) => call.url.includes('itunes.apple.com'));
+    assert.equal(appleCalls.length, 41);
+    assert.ok(appleCalls.every((call) => call.redirect === 'manual'));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('review fetch terminalizes a capacity-bound collection without exposing partial reviews', async () => {
+  const originalFetch = globalThis.fetch;
+  let completionBody;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/complete_pipeline_job')) {
+      completionBody = JSON.parse(String(init.body));
+      return Response.json([{ job_id: JOB_ID, status: 'failed' }]);
+    }
+    if (url.includes('/rss/customerreviews/')) {
+      return Response.json({ feed: { entry: [
+        {
+          id: { label: 'review-1' }, 'im:rating': { label: '5' },
+          updated: { label: new Date().toISOString() }, content: { label: 'first' },
+        },
+        {
+          id: { label: 'review-2' }, 'im:rating': { label: '4' },
+          updated: { label: new Date().toISOString() }, content: { label: 'second' },
+        },
+      ] } });
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/internal/pipeline/fetch-reviews', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+        body: JSON.stringify({
+          jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+          appStoreId: '1018769995', country: 'us', windowDays: 30, maxPages: 1, limit: 1,
+        }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      },
+    );
+    const payload = await response.json();
+    assert.equal(response.status, 422);
+    assert.equal(payload.error, 'review_scope_incomplete');
+    assert.equal(Object.hasOwn(payload, 'data'), false);
+    assert.equal(completionBody.p_status, 'failed');
+    assert.equal(completionBody.p_error_message, 'review_scope_incomplete');
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -401,8 +564,8 @@ test('private account deletion cancels running jobs before deleting the auth use
       });
     }
 
-    if (url.endsWith('/rest/v1/rpc/cancel_pipeline_jobs')) {
-      return new Response(JSON.stringify([{ job_id: JOB_ID, status: 'canceled' }]), {
+    if (url.endsWith('/rest/v1/rpc/prepare_account_deletion')) {
+      return new Response(JSON.stringify([{ canceled_jobs: 1, redacted_jobs: 3 }]), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -446,13 +609,14 @@ test('private account deletion cancels running jobs before deleting the auth use
       data: {
         deleted: true,
         canceledJobs: 1,
+        redactedJobs: 3,
       },
     });
     assert.equal(calls[0].url, 'https://example.supabase.co/auth/v1/user');
     assert.equal(calls[1].method, 'POST');
-    assert.match(calls[1].url, /\/rest\/v1\/rpc\/cancel_pipeline_jobs$/);
+    assert.match(calls[1].url, /\/rest\/v1\/rpc\/prepare_account_deletion$/);
     assert.equal(JSON.parse(calls[1].body).p_requested_by, userId);
-    assert.equal(JSON.parse(calls[1].body).p_reason, 'account_deleted');
+    assert.deepEqual(Object.keys(JSON.parse(calls[1].body)), ['p_requested_by']);
     assert.equal(calls[2].method, 'DELETE');
     assert.equal(calls[2].url, `https://example.supabase.co/auth/v1/admin/users/${userId}`);
   } finally {
@@ -503,7 +667,14 @@ test('analysis request returns the existing active app job', async () => {
       return Response.json([]);
     }
     if (url.includes('/rest/v1/pipeline_jobs?')) {
-      return Response.json([{ id: 'job-existing', app_store_id: '123456789', country: 'kr', status: 'running', stage: 'extracting' }]);
+      return Response.json([{
+        id: 'job-existing',
+        app_store_id: '123456789',
+        country: 'kr',
+        status: 'running',
+        stage: 'extracting',
+        requested_at: '2026-07-29T00:00:00.000Z',
+      }]);
     }
     return Response.json({ error: 'unexpected url' }, { status: 500 });
   };
@@ -574,14 +745,34 @@ test('analysis request queues one new job with the queued stage', async () => {
   const calls = [];
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
-    calls.push({ url, method: init.method || 'GET', body: init.body ? String(init.body) : '' });
+    calls.push({
+      url,
+      method: init.method || 'GET',
+      body: init.body ? String(init.body) : '',
+      headers: Object.fromEntries(new Headers(init.headers).entries()),
+    });
     if (url.endsWith('/auth/v1/user')) return Response.json({ id: '11111111-1111-4111-8111-111111111111' });
     if (url.includes('/rest/v1/pipeline_runs?')) return Response.json([]);
     if (url.includes('/rest/v1/pipeline_jobs?') && (init.method || 'GET') === 'GET') return Response.json([]);
-    if (url.includes('/rest/v1/apps?')) return Response.json([]);
-    if (url.endsWith('/rest/v1/pipeline_jobs')) {
+    if (url.includes('itunes.apple.com/lookup?')) return Response.json({
+      results: [{ trackId: 123456789, trackName: '검증된 앱', wrapperType: 'software' }],
+    });
+    if (url.endsWith('/rest/v1/rpc/enqueue_pipeline_job')) {
       const body = JSON.parse(String(init.body));
-      return Response.json([{ id: 'job-new', ...body }]);
+      return Response.json({
+        result: 'queued',
+        data: {
+          id: 'job-new',
+          app_store_id: body.p_app_store_id,
+          country: body.p_country,
+          app_name: body.p_app_name,
+          status: 'queued',
+          stage: 'queued',
+          run_id: null,
+          requested_at: '2026-07-29T00:00:00.000Z',
+          updated_at: '2026-07-29T00:00:00.000Z',
+        },
+      });
     }
     return Response.json({ error: 'unexpected url' }, { status: 500 });
   };
@@ -595,14 +786,61 @@ test('analysis request queues one new job with the queued stage', async () => {
       {
         SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
         SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+        APPLE_LOOKUP_RATE_LIMITER: { limit: async () => ({ success: true }) },
       },
     );
     const payload = await response.json();
     assert.equal(response.status, 201);
     assert.equal(payload.result, 'queued');
     assert.equal(payload.data.stage, 'queued');
-    const insert = calls.find((call) => call.url.endsWith('/rest/v1/pipeline_jobs'));
-    assert.equal(JSON.parse(insert.body).stage, 'queued');
+    const enqueue = calls.find((call) => call.url.endsWith('/rest/v1/rpc/enqueue_pipeline_job'));
+    assert.equal(JSON.parse(enqueue.body).p_app_store_id, '123456789');
+    assert.equal(JSON.parse(enqueue.body).p_app_name, '검증된 앱');
+    assert.equal(JSON.parse(enqueue.body).p_requested_by, '11111111-1111-4111-8111-111111111111');
+    assert.equal(enqueue.headers.apikey, 'service-role-key');
+    assert.equal(enqueue.headers.authorization, 'Bearer service-role-key');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('analysis request reports a retryable queue outage when the service insert is forbidden', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url.endsWith('/auth/v1/user')) {
+      return Response.json({ id: '11111111-1111-4111-8111-111111111111' });
+    }
+    if (url.includes('/rest/v1/pipeline_runs?')) return Response.json([]);
+    if (url.includes('/rest/v1/pipeline_jobs?') && (init.method || 'GET') === 'GET') return Response.json([]);
+    if (url.includes('itunes.apple.com/lookup?')) return Response.json({
+      results: [{ trackId: 123456789, trackName: '검증된 앱', wrapperType: 'software' }],
+    });
+    if (url.endsWith('/rest/v1/rpc/enqueue_pipeline_job')) {
+      return Response.json({ code: '42501', message: 'permission denied' }, { status: 403 });
+    }
+    return Response.json({ error: 'unexpected url' }, { status: 500 });
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/private/jobs', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer user-token', 'content-type': 'application/json' },
+        body: JSON.stringify({ appStoreId: '123456789', country: 'kr' }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key',
+        PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+        APPLE_LOOKUP_RATE_LIMITER: { limit: async () => ({ success: true }) },
+        API_RETRY_COUNT: '0',
+      },
+    );
+    const payload = await response.json();
+    assert.equal(response.status, 503);
+    assert.equal(payload.error, 'job_queue_unavailable');
+    assert.equal(payload.retryable, true);
+    assert.match(payload.message, /요청은 시작되지 않았습니다/);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -616,20 +854,15 @@ test('forced reanalysis keeps existing reviews in the extraction stage', async (
     if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
       return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID }]);
     }
-    if (url.endsWith('/rest/v1/rpc/get_existing_review_ids')) {
-      return Response.json([{ review_id: 'review-existing' }]);
-    }
-    if (url.includes('/rest/v1/private_review_feed?')) {
-      return Response.json([{
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) {
+      return Response.json([{ get_pipeline_review_scope: [{
         review_id: 'review-existing',
-        rating: 2,
-        author: 'reviewer',
-        content: '기존 리뷰',
-        reviewed_at: '2026-07-20T00:00:00.000Z',
+        app_store_id: '123456789',
+        country: 'kr',
         priority: 'high',
         category: 'stability',
         summary: '앱이 종료됨',
-      }]);
+      }] }]);
     }
     return Response.json({ error: `unexpected ${method} ${url}` }, { status: 500 });
   };
@@ -678,6 +911,227 @@ test('forced reanalysis keeps existing reviews in the extraction stage', async (
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('scalar scope omissions remain fresh reviews without an extra lookup', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const body = String(init.body || '');
+    calls.push({ url, body });
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID, stage: 'extracting' }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) {
+      return Response.json({
+        get_pipeline_review_scope: [{
+          review_id: 'review-existing', app_store_id: '123456789', country: 'kr',
+          priority: 'medium', category: '기능 및 사용성', summary: 'stored-summary',
+        }],
+      });
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/internal/pipeline/filter-new-reviews', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+        body: JSON.stringify({
+          jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+          appStoreId: '123456789', country: 'kr',
+          reviews: [
+            { reviewId: 'review-existing', rating: 2 },
+            { reviewId: 'review-fresh', rating: 5 },
+          ],
+        }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+      },
+    );
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.data.existingCount, 1);
+    assert.equal(payload.data.newCount, 1);
+    assert.deepEqual(payload.data.reviews.map((row) => row.reviewId), ['review-fresh']);
+    assert.equal(calls.filter((call) => call.url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')).length, 1);
+    assert.equal(calls.filter((call) => call.url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')).length, 3);
+    assert.equal(calls.some((call) => call.url.endsWith('/rest/v1/rpc/complete_pipeline_job')), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('forced reanalysis resolves 10k existing reviews through one scalar scope RPC', async () => {
+  const originalFetch = globalThis.fetch;
+  const reviewIds = Array.from({ length: 10_000 }, (_, index) => `review-${String(index).padStart(5, '0')}`);
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const body = String(init.body || '');
+    calls.push({ url, body, headers: Object.fromEntries(new Headers(init.headers).entries()) });
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID, stage: 'extracting' }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) {
+      const requestBody = JSON.parse(body);
+      return Response.json(requestBody.p_review_ids.toReversed().map((review_id) => ({
+        review_id,
+        app_store_id: '123456789',
+        country: 'kr',
+        priority: 'medium',
+        category: '기능 및 사용성',
+        summary: 'stored-summary',
+      })));
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/internal/pipeline/filter-new-reviews', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+        body: JSON.stringify({
+          jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+          appStoreId: '123456789', country: 'kr', forceReanalysis: true,
+          reviews: reviewIds.map((reviewId) => ({
+            reviewId, author: `incoming-${reviewId}`, content: `content-${reviewId}`,
+            rating: 1, reviewedAt: '2026-07-21T00:00:00.000Z',
+          })),
+        }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+      },
+    );
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.data.existingExtractions.length, reviewIds.length);
+    assert.deepEqual(payload.data.existingExtractions.map((row) => row.ID), reviewIds);
+
+    const lookups = calls.filter((call) => call.url.endsWith('/rest/v1/rpc/get_pipeline_review_scope'));
+    assert.equal(lookups.length, 1);
+    const lookupBody = JSON.parse(lookups[0].body);
+    assert.deepEqual(lookupBody, {
+      p_app_store_id: '123456789',
+      p_country: 'kr',
+      p_review_ids: reviewIds,
+      p_include_analysis: true,
+    });
+    assert.equal(lookups[0].headers.apikey, 'service-role-key');
+    assert.equal(lookups[0].headers.authorization, 'Bearer service-role-key');
+
+    const heartbeats = calls.filter((call) => call.url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim'));
+    assert.equal(heartbeats.length, 3);
+    assert.ok(heartbeats.every((call) => JSON.parse(call.body).p_stage === 'extracting'));
+    const paths = calls.map((call) => new URL(call.url).pathname);
+    assert.deepEqual(paths, [
+      '/rest/v1/rpc/renew_pipeline_job_claim',
+      '/rest/v1/rpc/renew_pipeline_job_claim',
+      '/rest/v1/rpc/get_pipeline_review_scope',
+      '/rest/v1/rpc/renew_pipeline_job_claim',
+    ]);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('forced reanalysis discards a 10k scalar lookup when its post-RPC claim fence fails', async () => {
+  const originalFetch = globalThis.fetch;
+  const reviewIds = Array.from({ length: 10_000 }, (_, index) => `review-${String(index).padStart(5, '0')}`);
+  const calls = [];
+  let renewals = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const body = String(init.body || '');
+    calls.push({ url, body });
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      renewals += 1;
+      return Response.json(renewals < 3
+        ? [{ job_id: JOB_ID, status: 'running', run_id: RUN_ID, stage: 'extracting' }]
+        : []);
+    }
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) {
+      return Response.json(JSON.parse(body).p_review_ids.map((review_id) => ({
+        review_id, app_store_id: '123456789', country: 'kr',
+      })));
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/internal/pipeline/filter-new-reviews', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+        body: JSON.stringify({
+          jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+          appStoreId: '123456789', country: 'kr', forceReanalysis: true,
+          reviews: reviewIds.map((reviewId) => ({ reviewId, rating: 1 })),
+        }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+      },
+    );
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error, 'job_claim_lost');
+    assert.equal(calls.filter((call) => call.url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')).length, 1);
+    assert.equal(calls.filter((call) => call.url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')).length, 3);
+    assert.equal(calls.some((call) => call.url.endsWith('/rest/v1/rpc/complete_pipeline_job')), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('forced reanalysis rejects duplicate, unrequested, or cross-scope scalar rows', async () => {
+  const originalFetch = globalThis.fetch;
+  const scenarios = [
+    [
+      { review_id: 'review-1', app_store_id: '123456789', country: 'kr' },
+      { review_id: 'review-1', app_store_id: '123456789', country: 'kr' },
+    ],
+    [{ review_id: 'review-other', app_store_id: '123456789', country: 'kr' }],
+    [{ review_id: 'review-1', app_store_id: '999999999', country: 'kr' }],
+  ];
+
+  try {
+    for (const rows of scenarios) {
+      const calls = [];
+      globalThis.fetch = async (input, init = {}) => {
+        const url = String(input);
+        calls.push({ url, body: String(init.body || '') });
+        if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+          return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID, stage: 'extracting' }]);
+        }
+        if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) return Response.json(rows);
+        if (url.endsWith('/rest/v1/rpc/complete_pipeline_job')) {
+          return Response.json([{ job_id: JOB_ID, status: 'failed', run_id: RUN_ID }]);
+        }
+        return Response.json({ code: 'unexpected' }, { status: 500 });
+      };
+
+      const response = await workerModule.default.fetch(
+        new Request('https://worker.example/api/internal/pipeline/filter-new-reviews', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+          body: JSON.stringify({
+            jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+            appStoreId: '123456789', country: 'kr', forceReanalysis: true,
+            reviews: [{ reviewId: 'review-1', rating: 1 }],
+          }),
+        }),
+        {
+          SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+          SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+        },
+      );
+      assert.equal(response.status, 422);
+      assert.equal((await response.json()).error, 'unknown_review_ids');
+      assert.equal(calls.filter((call) => call.url.endsWith('/rest/v1/rpc/complete_pipeline_job')).length, 1);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('no-new-review fast path can still complete a claim without creating a run', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -717,7 +1171,7 @@ test('no-new-review fast path can still complete a claim without creating a run'
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('cluster context only returns clusters from the latest published run', async () => {
+test('cluster context unwraps the complete bounded identity-set scalar response', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
   globalThis.fetch = async (input, init = {}) => {
@@ -726,15 +1180,17 @@ test('cluster context only returns clusters from the latest published run', asyn
     if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
       return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID }]);
     }
-    if (url.endsWith('/rest/v1/rpc/get_pipeline_cluster_context')) {
-      return Response.json([{
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_cluster_context_v2')) {
+      return Response.json({ get_pipeline_cluster_context_v2: [{
         issue_id: '44444444-4444-4444-8444-444444444444',
         canonical_key: 'stability-crash',
         title: '앱 강제 종료',
-        category: 'stability',
+        category: '버그 및 성능',
+        summary: '실행 중 앱이 반복 종료됨',
         first_seen_at: '2026-07-01T00:00:00.000Z',
         last_seen_at: '2026-07-20T00:00:00.000Z',
-      }]);
+        review_count: 12,
+      }] });
     }
     return Response.json({ error: `unexpected ${init.method || 'GET'} ${url}` }, { status: 500 });
   };
@@ -758,9 +1214,11 @@ test('cluster context only returns clusters from the latest published run', asyn
     assert.equal(response.status, 200);
     assert.equal(payload.data.length, 1);
     assert.equal(payload.data[0].canonicalKey, 'stability-crash');
+    assert.equal(payload.data[0].reviewCount, 12);
     assert.match(calls[0].url, /renew_pipeline_job_claim$/);
-    assert.match(calls[1].url, /get_pipeline_cluster_context$/);
+    assert.match(calls[1].url, /get_pipeline_cluster_context_v2$/);
     assert.equal(JSON.parse(calls[1].body).p_app_store_id, '123456789');
+    assert.match(calls[2].url, /renew_pipeline_job_claim$/);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -775,8 +1233,11 @@ test('reanalysis cluster upsert suppresses non-comparable change metrics', async
     if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
       return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID }]);
     }
-    if (url.includes('/rest/v1/reviews?')) {
-      return Response.json([{ review_id: 'review-1', reviewed_at: '2026-07-20T00:00:00.000Z' }]);
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) {
+      return Response.json([{
+        review_id: 'review-1', app_store_id: '123456789', country: 'kr',
+        reviewed_at: '2026-07-20T00:00:00.000Z',
+      }]);
     }
     if (url.endsWith('/rest/v1/rpc/persist_issue_clusters')) {
       return Response.json([{ run_id: RUN_ID, cluster_count: 1, assigned_review_count: 1 }]);
@@ -821,14 +1282,337 @@ test('reanalysis cluster upsert suppresses non-comparable change metrics', async
     );
     assert.equal(response.status, 200, await response.clone().text());
     assert.equal(calls.some((call) => call.url.includes('issue_cluster_snapshots?select=review_count')), false);
-    const reviewScope = new URL(calls.find((call) => call.url.includes('/rest/v1/reviews?')).url);
-    assert.equal(reviewScope.searchParams.get('app_store_id'), 'eq.123456789');
-    assert.equal(reviewScope.searchParams.get('country'), 'eq.kr');
+    const reviewScope = JSON.parse(calls.find((call) =>
+      call.url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')).body);
+    assert.deepEqual(reviewScope, {
+      p_app_store_id: '123456789', p_country: 'kr',
+      p_review_ids: ['review-1'], p_include_analysis: false,
+    });
     const persistence = calls.find((call) => call.url.endsWith('/rest/v1/rpc/persist_issue_clusters'));
     const rpcBody = JSON.parse(persistence.body);
     assert.equal(rpcBody.p_comparison_eligible, false);
     assert.equal(rpcBody.p_validation_result.comparisonEligible, false);
     assert.equal(rpcBody.p_clusters[0].existing_cluster_id, clusterId);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('cluster persistence bounds summaries to the context read contract', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, body: init.body ? String(init.body) : '' });
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) {
+      return Response.json([{
+        review_id: 'review-1', app_store_id: '123456789', country: 'kr',
+        reviewed_at: '2026-07-20T00:00:00.000Z',
+      }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/persist_issue_clusters')) {
+      return Response.json([{ run_id: RUN_ID, cluster_count: 1, assigned_review_count: 1 }]);
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/internal/pipeline/upsert-clusters', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+        body: JSON.stringify({
+          jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+          appStoreId: '123456789', country: 'kr', modelVersion: 'fixture-model',
+          inputReviewIds: ['review-1'],
+          result: {
+            extractions: [{ reviewId: 'review-1', category: '버그 및 성능', summary: '앱이 종료됨' }],
+            clusters: [{
+              canonicalKey: 'bounded-summary', title: '요약 경계', category: '버그 및 성능',
+              severity: 'high', summary: 'x'.repeat(401), reviewIds: ['review-1'],
+              representativeReviewIds: ['review-1'],
+            }],
+          },
+        }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+      },
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+    const persistence = calls.find((call) => call.url.endsWith('/rest/v1/rpc/persist_issue_clusters'));
+    const persistedSummary = JSON.parse(persistence.body).p_clusters[0].summary;
+    assert.equal(persistedSummary.length, 400);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('cluster upsert retry remains idempotent after persistence advanced the job to publishing', async () => {
+  const originalFetch = globalThis.fetch;
+  const clusterId = '66666666-6666-4666-8666-666666666666';
+  const calls = [];
+  let stage = 'clustering';
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const body = init.body ? JSON.parse(String(init.body)) : null;
+    calls.push({ url, body });
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      const order = ['queued', 'fetching', 'extracting', 'clustering', 'publishing'];
+      if (body.p_stage && order.indexOf(body.p_stage) < order.indexOf(stage)) return Response.json([]);
+      if (body.p_stage) stage = body.p_stage;
+      return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID, stage }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) {
+      return Response.json([{
+        review_id: 'review-1', app_store_id: '123456789', country: 'kr',
+        reviewed_at: '2026-07-20T00:00:00.000Z',
+      }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/persist_issue_clusters')) {
+      stage = 'publishing';
+      return Response.json([{ run_id: RUN_ID, cluster_count: 1, assigned_review_count: 1 }]);
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+
+  const requestBody = JSON.stringify({
+    jobId: JOB_ID,
+    claimToken: CLAIM_TOKEN,
+    runId: RUN_ID,
+    appStoreId: '123456789',
+    country: 'kr',
+    modelVersion: 'fixture-model',
+    inputReviewIds: ['review-1'],
+    result: {
+      extractions: [{ reviewId: 'review-1', category: '버그 및 성능', summary: '앱이 종료됨' }],
+      clusters: [{
+        existingClusterId: clusterId,
+        canonicalKey: 'stability-crash',
+        title: '앱 강제 종료',
+        category: '버그 및 성능',
+        severity: 'high',
+        summary: '핵심 이용 중 앱이 종료됨',
+        actionHint: '충돌 로그 확인',
+        reviewIds: ['review-1'],
+        representativeReviewIds: ['review-1'],
+      }],
+    },
+  });
+  const env = {
+    SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+  };
+
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const response = await workerModule.default.fetch(
+        new Request('https://worker.example/api/internal/pipeline/upsert-clusters', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+          body: requestBody,
+        }),
+        env,
+      );
+      assert.equal(response.status, 200, await response.clone().text());
+    }
+
+    const guards = calls.filter((call) => call.url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim'));
+    assert.equal(guards.length, 6);
+    assert.deepEqual(guards.map((call) => call.body.p_stage), Array(6).fill(null));
+    assert.equal(calls.filter((call) => call.url.endsWith('/rest/v1/rpc/persist_issue_clusters')).length, 2);
+    assert.equal(stage, 'publishing');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('cluster upsert resolves the full 10k review scope through one scalar RPC', async () => {
+  const originalFetch = globalThis.fetch;
+  const reviewIds = Array.from({ length: 10_000 }, (_, index) => `review-${String(index).padStart(5, '0')}`);
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const body = String(init.body || '');
+    calls.push({ url, body, headers: Object.fromEntries(new Headers(init.headers).entries()) });
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID, stage: 'clustering' }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) {
+      return Response.json([{ get_pipeline_review_scope: JSON.parse(body).p_review_ids.toReversed().map((review_id) => ({
+        review_id, app_store_id: '123456789', country: 'kr',
+        reviewed_at: '2026-07-20T00:00:00.000Z',
+      })) }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/persist_issue_clusters')) {
+      return Response.json([{ run_id: RUN_ID, cluster_count: 1, assigned_review_count: reviewIds.length }]);
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+
+  const result = {
+    extractions: reviewIds.map((reviewId) => ({
+      reviewId, category: '버그 및 성능', summary: `summary-${reviewId}`,
+    })),
+    clusters: [{
+      canonicalKey: 'stability-crash', title: '앱 강제 종료', category: '버그 및 성능', severity: 'high',
+      summary: '핵심 이용 중 앱이 종료됨', actionHint: '충돌 로그 확인', reviewIds,
+      representativeReviewIds: reviewIds.slice(0, 3),
+    }],
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/internal/pipeline/upsert-clusters', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+        body: JSON.stringify({
+          jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+          appStoreId: '123456789', country: 'kr', modelVersion: 'fixture-model',
+          inputReviewIds: reviewIds, result,
+        }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+      },
+    );
+    assert.equal(response.status, 200, await response.clone().text());
+
+    const lookups = calls.filter((call) => call.url.endsWith('/rest/v1/rpc/get_pipeline_review_scope'));
+    assert.equal(lookups.length, 1);
+    assert.deepEqual(JSON.parse(lookups[0].body), {
+      p_app_store_id: '123456789',
+      p_country: 'kr',
+      p_review_ids: reviewIds,
+      p_include_analysis: false,
+    });
+    assert.equal(lookups[0].headers.apikey, 'service-role-key');
+    assert.equal(lookups[0].headers.authorization, 'Bearer service-role-key');
+
+    const heartbeats = calls.filter((call) => call.url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim'));
+    assert.equal(heartbeats.length, 3);
+    assert.ok(heartbeats.every((call) => JSON.parse(call.body).p_stage === null));
+    const persistence = calls.filter((call) => call.url.endsWith('/rest/v1/rpc/persist_issue_clusters'));
+    assert.equal(persistence.length, 1);
+    assert.equal(JSON.parse(persistence[0].body).p_clusters[0].review_ids.length, reviewIds.length);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('cluster upsert discards a 10k scalar lookup when its post-RPC claim fence fails', async () => {
+  const originalFetch = globalThis.fetch;
+  const reviewIds = Array.from({ length: 10_000 }, (_, index) => `review-${String(index).padStart(5, '0')}`);
+  const calls = [];
+  let renewals = 0;
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const body = String(init.body || '');
+    calls.push({ url, body });
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      renewals += 1;
+      return Response.json(renewals < 3
+        ? [{ job_id: JOB_ID, status: 'running', run_id: RUN_ID, stage: 'clustering' }]
+        : []);
+    }
+    if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) {
+      return Response.json(JSON.parse(body).p_review_ids.map((review_id) => ({
+        review_id, app_store_id: '123456789', country: 'kr',
+        reviewed_at: '2026-07-20T00:00:00.000Z',
+      })));
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+  const result = {
+    extractions: reviewIds.map((reviewId) => ({
+      reviewId, category: '버그 및 성능', summary: `summary-${reviewId}`,
+    })),
+    clusters: [{
+      canonicalKey: 'stability-crash', title: '앱 강제 종료', category: '버그 및 성능', severity: 'high',
+      summary: '핵심 이용 중 앱이 종료됨', reviewIds, representativeReviewIds: reviewIds.slice(0, 3),
+    }],
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/internal/pipeline/upsert-clusters', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+        body: JSON.stringify({
+          jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+          appStoreId: '123456789', country: 'kr', modelVersion: 'fixture-model',
+          inputReviewIds: reviewIds, result,
+        }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+      },
+    );
+    assert.equal(response.status, 409);
+    assert.equal((await response.json()).error, 'job_claim_lost');
+    assert.equal(calls.filter((call) => call.url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')).length, 1);
+    assert.equal(calls.filter((call) => call.url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')).length, 3);
+    assert.equal(calls.some((call) => call.url.endsWith('/rest/v1/rpc/persist_issue_clusters')), false);
+    assert.equal(calls.some((call) => call.url.endsWith('/rest/v1/rpc/complete_pipeline_job')), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('cluster upsert preserves unknown_review_ids for missing or invalid scoped rows', async () => {
+  const originalFetch = globalThis.fetch;
+  const scenarios = [
+    [{ review_id: 'review-1', app_store_id: '123456789', country: 'kr', reviewed_at: '2026-07-20T00:00:00.000Z' }],
+    [
+      { review_id: 'review-1', app_store_id: '123456789', country: 'kr', reviewed_at: '2026-07-20T00:00:00.000Z' },
+      { review_id: 'review-other', app_store_id: '123456789', country: 'kr', reviewed_at: '2026-07-20T00:00:00.000Z' },
+    ],
+    [
+      { review_id: 'review-1', app_store_id: '999999999', country: 'kr', reviewed_at: '2026-07-20T00:00:00.000Z' },
+      { review_id: 'review-2', app_store_id: '123456789', country: 'kr', reviewed_at: '2026-07-20T00:00:00.000Z' },
+    ],
+  ];
+  const inputReviewIds = ['review-1', 'review-2'];
+  const result = {
+    extractions: inputReviewIds.map((reviewId) => ({ reviewId, category: '버그 및 성능', summary: 'summary' })),
+    clusters: [{
+      canonicalKey: 'stability-crash', title: '앱 강제 종료', category: '버그 및 성능', severity: 'high',
+      summary: '핵심 이용 중 앱이 종료됨', reviewIds: inputReviewIds,
+      representativeReviewIds: inputReviewIds,
+    }],
+  };
+
+  try {
+    for (const rows of scenarios) {
+      const calls = [];
+      globalThis.fetch = async (input, init = {}) => {
+        const url = String(input);
+        calls.push({ url, body: String(init.body || '') });
+        if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+          return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID, stage: 'clustering' }]);
+        }
+        if (url.endsWith('/rest/v1/rpc/get_pipeline_review_scope')) return Response.json(rows);
+        if (url.endsWith('/rest/v1/rpc/complete_pipeline_job')) {
+          return Response.json([{ job_id: JOB_ID, status: 'failed', run_id: RUN_ID }]);
+        }
+        return Response.json({ code: 'unexpected' }, { status: 500 });
+      };
+      const response = await workerModule.default.fetch(
+        new Request('https://worker.example/api/internal/pipeline/upsert-clusters', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+          body: JSON.stringify({
+            jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+            appStoreId: '123456789', country: 'kr', modelVersion: 'fixture-model',
+            inputReviewIds, result,
+          }),
+        }),
+        {
+          SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+          SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+        },
+      );
+      assert.equal(response.status, 422);
+      assert.equal((await response.json()).error, 'unknown_review_ids');
+      assert.equal(calls.filter((call) => call.url.endsWith('/rest/v1/rpc/complete_pipeline_job')).length, 1);
+      assert.equal(calls.some((call) => call.url.endsWith('/rest/v1/rpc/persist_issue_clusters')), false);
+    }
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -928,6 +1712,80 @@ test('claim-job forwards one claimKey and returns the fenced lease contract', as
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('pipeline heartbeat renews only an authenticated active claim and rejects stale claimants', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  const env = {
+    SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+  };
+  const requestFor = (body, token = 'pipeline-secret') => new Request(
+    'https://worker.example/api/internal/pipeline/heartbeat',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-voc-token': token },
+      body: JSON.stringify(body),
+    },
+  );
+
+  globalThis.fetch = async (input, init = {}) => {
+    calls.push({ url: String(input), body: JSON.parse(String(init.body || '{}')) });
+    return Response.json([{
+      status: 'running',
+      stage: 'extracting',
+      lease_expires_at: '2026-07-26T00:15:00.000Z',
+    }]);
+  };
+
+  try {
+    const body = { jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID, stage: 'extracting' };
+    const response = await workerModule.default.fetch(requestFor(body), env);
+    const payload = await response.json();
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(payload.data, {
+      status: 'running',
+      stage: 'extracting',
+      leaseExpiresAt: '2026-07-26T00:15:00.000Z',
+    });
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/rest\/v1\/rpc\/renew_pipeline_job_claim$/);
+    assert.deepEqual(calls[0].body, {
+      p_job_id: JOB_ID,
+      p_claim_token: CLAIM_TOKEN,
+      p_run_id: RUN_ID,
+      p_stage: 'extracting',
+    });
+
+    const invalidStage = await workerModule.default.fetch(
+      requestFor({ ...body, stage: 'publishing' }),
+      env,
+    );
+    assert.equal(invalidStage.status, 400);
+    assert.equal(calls.length, 1);
+
+    const unauthorizedResponse = await workerModule.default.fetch(
+      requestFor(body, 'wrong-secret'),
+      env,
+    );
+    assert.equal(unauthorizedResponse.status, 401);
+    assert.equal(calls.length, 1);
+
+    globalThis.fetch = async (input, init = {}) => {
+      calls.push({ url: String(input), body: JSON.parse(String(init.body || '{}')) });
+      return Response.json([]);
+    };
+    const staleResponse = await workerModule.default.fetch(
+      requestFor({ ...body, stage: 'clustering' }),
+      env,
+    );
+    const stalePayload = await staleResponse.json();
+    assert.equal(staleResponse.status, 409);
+    assert.equal(stalePayload.error, 'job_claim_lost');
+    assert.equal(calls.length, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('direct completion of an unpublished or cross-app published run returns a safe conflict', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
@@ -980,7 +1838,8 @@ test('a canceled or stale review upsert returns job_claim_lost without fallback 
         headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
         body: JSON.stringify({
           jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID, source: 'n8n',
-          app: { appStoreId: '123456789', country: 'kr' }, reviews: [],
+          app: { appStoreId: '123456789', country: 'kr' },
+          reviews: [{ reviewId: 'rejected-review', rating: 1, content: 'valid' }],
         }),
       }),
       {
@@ -1083,6 +1942,51 @@ test('duplicate review ids are rejected deterministically and terminalize the cl
     assert.equal(calls.length, 1);
     assert.match(calls[0].url, /complete_pipeline_job$/);
     assert.equal(JSON.parse(calls[0].body).p_status, 'failed');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('review persistence rejects empty and over-cap batches before database persistence', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    calls.push({ url: String(input), body: String(init.body || '') });
+    if (String(input).endsWith('/rest/v1/rpc/complete_pipeline_job')) {
+      return Response.json([{ job_id: JOB_ID, status: 'failed', run_id: RUN_ID }]);
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+  const batches = [
+    [],
+    Array.from({ length: 10_001 }, (_, index) => ({
+      reviewId: `review-${index}`,
+      rating: 3,
+      content: 'bounded',
+    })),
+  ];
+
+  try {
+    for (const reviews of batches) {
+      const response = await workerModule.default.fetch(
+        new Request('https://worker.example/api/internal/pipeline/upsert-reviews', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+          body: JSON.stringify({
+            jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID, source: 'n8n',
+            app: { appStoreId: '123456789', country: 'kr' }, reviews,
+          }),
+        }),
+        {
+          SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+          SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+        },
+      );
+      const payload = await response.json();
+      assert.equal(response.status, 409);
+      assert.equal(payload.error, 'pipeline_review_rejected');
+    }
+    assert.equal(calls.length, batches.length);
+    assert.equal(calls.some((call) => call.url.endsWith('/rest/v1/rpc/persist_pipeline_reviews')), false);
+    assert.ok(calls.every((call) => JSON.parse(call.body).p_status === 'failed'));
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -1189,7 +2093,8 @@ test('a rejected review persistence returns job_claim_lost when terminalization 
         headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
         body: JSON.stringify({
           jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID, source: 'n8n',
-          app: { appStoreId: '123456789', country: 'kr' }, reviews: [],
+          app: { appStoreId: '123456789', country: 'kr' },
+          reviews: [{ reviewId: 'rejected-review', rating: 1, content: 'valid' }],
         }),
       }),
       {
@@ -1234,6 +2139,47 @@ test('a canceled cluster attempt stops at the claim guard', async () => {
     assert.equal(response.status, 409);
     assert.equal((await response.json()).error, 'job_claim_lost');
     assert.deepEqual(calls.map((url) => new URL(url).pathname), ['/rest/v1/rpc/renew_pipeline_job_claim']);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('cluster persistence rejects an over-cap review contract before scope lookup', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    calls.push({ url, body: String(init.body || '') });
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID }]);
+    }
+    if (url.endsWith('/rest/v1/rpc/complete_pipeline_job')) {
+      return Response.json([{ job_id: JOB_ID, status: 'failed', run_id: RUN_ID }]);
+    }
+    return Response.json({ code: 'unexpected' }, { status: 500 });
+  };
+  const inputReviewIds = Array.from({ length: 10_001 }, (_, index) => `review-${index}`);
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/internal/pipeline/upsert-clusters', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-voc-token': 'pipeline-secret' },
+        body: JSON.stringify({
+          jobId: JOB_ID, claimToken: CLAIM_TOKEN, runId: RUN_ID,
+          appStoreId: '123456789', country: 'kr', modelVersion: 'fixture',
+          inputReviewIds, result: {},
+        }),
+      }),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+      },
+    );
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).error, 'cluster_contract_invalid');
+    assert.deepEqual(calls.map((call) => new URL(call.url).pathname), [
+      '/rest/v1/rpc/renew_pipeline_job_claim',
+      '/rest/v1/rpc/complete_pipeline_job',
+    ]);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -1327,7 +2273,7 @@ test('account deletion distinguishes cancellation failure from auth deletion fai
     globalThis.fetch = async (input) => {
       const url = String(input);
       if (url.endsWith('/auth/v1/user')) return Response.json({ id: userId });
-      if (url.endsWith('/rest/v1/rpc/cancel_pipeline_jobs')) {
+      if (url.endsWith('/rest/v1/rpc/prepare_account_deletion')) {
         return Response.json({ code: 'XX000', message: 'private' }, { status: 500 });
       }
       if (url.includes('/auth/v1/admin/users/')) deleteCalls += 1;
@@ -1345,7 +2291,9 @@ test('account deletion distinguishes cancellation failure from auth deletion fai
     globalThis.fetch = async (input) => {
       const url = String(input);
       if (url.endsWith('/auth/v1/user')) return Response.json({ id: userId });
-      if (url.endsWith('/rest/v1/rpc/cancel_pipeline_jobs')) return Response.json([{ job_id: JOB_ID }]);
+      if (url.endsWith('/rest/v1/rpc/prepare_account_deletion')) {
+        return Response.json([{ canceled_jobs: 1, redacted_jobs: 2 }]);
+      }
       if (url.includes('/auth/v1/admin/users/')) {
         deleteCalls += 1;
         return Response.json({ message: 'private' }, { status: 503 });
@@ -1360,7 +2308,8 @@ test('account deletion distinguishes cancellation failure from auth deletion fai
     const incompletePayload = await incomplete.json();
     assert.equal(incomplete.status, 502);
     assert.equal(incompletePayload.error, 'account_delete_incomplete');
-    assert.match(incompletePayload.message, /요청은 취소/);
+    assert.match(incompletePayload.message, /요청 취소와 메모 삭제는 완료/);
+    assert.match(incompletePayload.message, /계정 삭제 결과는 확인하지 못했습니다/);
     assert.equal(deleteCalls, 1);
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -1373,11 +2322,18 @@ test('private job history replaces legacy raw error messages with a safe status 
       return Response.json({ id: '11111111-1111-4111-8111-111111111111' });
     }
     if (url.includes('/rest/v1/pipeline_jobs?')) {
-      return Response.json([{
-        id: JOB_ID,
-        status: 'failed',
-        error_message: 'SUPABASE_SERVICE_ROLE_KEY=legacy-secret raw upstream body',
-      }]);
+      return Response.json([
+        {
+          id: JOB_ID,
+          status: 'failed',
+          error_message: 'SUPABASE_SERVICE_ROLE_KEY=legacy-secret raw upstream body',
+        },
+        {
+          id: '44444444-4444-4444-8444-444444444444',
+          status: 'failed',
+          error_message: 'review_scope_incomplete',
+        },
+      ]);
     }
     return Response.json({ code: 'unexpected' }, { status: 500 });
   };
@@ -1392,7 +2348,11 @@ test('private job history replaces legacy raw error messages with a safe status 
     const text = await response.text();
     assert.equal(response.status, 200);
     assert.doesNotMatch(text, /SUPABASE|SERVICE_ROLE|legacy-secret|raw upstream/i);
-    assert.match(JSON.parse(text).data[0].error_message, /다시 요청/);
+    const jobs = JSON.parse(text).data;
+    assert.match(jobs[0].error_message, /다시 요청/);
+    assert.equal(jobs[0].failure_code, null);
+    assert.equal(jobs[1].failure_code, 'review_scope_incomplete');
+    assert.match(jobs[1].error_message, /수집 한도/);
   } finally { globalThis.fetch = originalFetch; }
 });
 
@@ -1452,12 +2412,77 @@ test('review pagination uses an opaque reviewed_at plus review_id cursor', async
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test('public review filters opt into a shared date window and content-only search without changing broad defaults', async () => {
+  const originalFetch = globalThis.fetch;
+  const urls = [];
+  globalThis.fetch = async (input) => {
+    urls.push(String(input));
+    return Response.json([]);
+  };
+  const env = {
+    SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+  };
+  try {
+    const scoped = await workerModule.default.fetch(
+      new Request('https://worker.example/api/public/reviews?appId=123456789&country=kr'
+        + '&from=2026-06-29T08%3A00%3A00.000Z&to=2026-07-29T08%3A00%3A00.000Z'
+        + '&search=needle&searchScope=content'), env,
+    );
+    const compatible = await workerModule.default.fetch(
+      new Request('https://worker.example/api/public/reviews?appId=123456789&country=kr&search=needle'), env,
+    );
+    const cursor = Buffer.from(JSON.stringify({
+      reviewedAt: '2026-07-20T00:00:00.000Z', reviewId: 'review-2',
+    })).toString('base64url');
+    const nextPage = await workerModule.default.fetch(
+      new Request('https://worker.example/api/public/reviews?appId=123456789&country=kr'
+        + '&from=2026-06-29T08%3A00%3A00.000Z&search=needle&searchScope=content'
+        + `&cursor=${encodeURIComponent(cursor)}`), env,
+    );
+    assert.equal(scoped.status, 200, await scoped.clone().text());
+    assert.equal(compatible.status, 200, await compatible.clone().text());
+    assert.equal(nextPage.status, 200, await nextPage.clone().text());
+
+    const scopedUrl = new URL(urls[0]);
+    assert.deepEqual(scopedUrl.searchParams.getAll('reviewed_at'), [
+      'gte.2026-06-29T08:00:00.000Z',
+      'lte.2026-07-29T08:00:00.000Z',
+    ]);
+    assert.equal(scopedUrl.searchParams.get('content'), 'ilike.*needle*');
+    assert.equal(scopedUrl.searchParams.has('or'), false);
+
+    const compatibleUrl = new URL(urls[1]);
+    const broadSearch = compatibleUrl.searchParams.get('or') || '';
+    assert.match(broadSearch, /summary\.ilike\.\*needle\*/);
+    assert.match(broadSearch, /issue_label\.ilike\.\*needle\*/);
+    assert.match(broadSearch, /reason_summary\.ilike\.\*needle\*/);
+    assert.match(broadSearch, /action_hint\.ilike\.\*needle\*/);
+    assert.equal(compatibleUrl.searchParams.has('content'), false);
+    assert.equal(compatibleUrl.searchParams.has('reviewed_at'), false);
+
+    const nextPageUrl = new URL(urls[2]);
+    const combinedFilter = nextPageUrl.searchParams.get('and') || '';
+    assert.match(combinedFilter, /reviewed_at\.eq\.2026-07-20T00:00:00\.000Z/);
+    assert.match(combinedFilter, /review_id\.lt\.review-2/);
+    assert.match(combinedFilter, /content\.ilike\.\*needle\*/);
+    assert.equal(nextPageUrl.searchParams.get('reviewed_at'), 'gte.2026-06-29T08:00:00.000Z');
+    assert.equal(nextPageUrl.searchParams.has('content'), false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test('public run and app lists query and return published runs only', async () => {
   const originalFetch = globalThis.fetch;
   const calls = [];
-  globalThis.fetch = async (input) => {
+  globalThis.fetch = async (input, init = {}) => {
     const url = new URL(String(input));
-    calls.push(url);
+    calls.push({ url, init });
+    if (url.pathname === '/rest/v1/rpc/get_public_apps') {
+      return Response.json([{
+        app_store_id: '123456789', country: 'kr', app_name: 'Published app',
+        updated_at: '2026-07-26T00:00:00.000Z',
+      }]);
+    }
     if (url.pathname === '/rest/v1/pipeline_runs') {
       if ((url.searchParams.get('select') || '').includes('run_id')) {
         return Response.json([{ run_id: 'published-run', app_store_id: '123456789', country: 'kr', status: 'published' }]);
@@ -1499,13 +2524,51 @@ test('public run and app lists query and return published runs only', async () =
     assert.equal(search.status, 200);
     assert.deepEqual(searchPayload.data.map((row) => row.app_store_id), ['123456789']);
 
-    const runCalls = calls.filter((url) => url.pathname === '/rest/v1/pipeline_runs');
-    assert.ok(runCalls.length >= 3);
-    for (const url of runCalls) {
+    const appDirectoryCalls = calls.filter(({ url }) => url.pathname === '/rest/v1/rpc/get_public_apps');
+    assert.equal(appDirectoryCalls.length, 1);
+    assert.equal(appDirectoryCalls[0].init.method, 'POST');
+    assert.deepEqual(JSON.parse(String(appDirectoryCalls[0].init.body)), { p_limit: 5 });
+
+    const runCalls = calls.filter(({ url }) => url.pathname === '/rest/v1/pipeline_runs');
+    assert.ok(runCalls.length >= 2);
+    for (const { url } of runCalls) {
       assert.equal(url.searchParams.get('status'), 'eq.published');
       assert.doesNotMatch(url.search, /upserted/i);
     }
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('public app directory keeps the 100-app contract to one Supabase request', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (input, init = {}) => {
+    calls.push({ url: String(input), method: init.method || 'GET', body: String(init.body || '') });
+    return Response.json(Array.from({ length: 100 }, (_, index) => ({
+      app_store_id: String(1_000_000_000 + index),
+      country: index % 2 === 0 ? 'kr' : 'us',
+      app_name: `App ${index}`,
+      updated_at: new Date(Date.UTC(2026, 6, 29, 0, 0, 100 - index)).toISOString(),
+    })));
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/public/apps?limit=100'),
+      {
+        SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
+      },
+    );
+    const payload = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(payload.data.length, 100);
+    assert.equal(calls.length, 1);
+    assert.match(calls[0].url, /\/rest\/v1\/rpc\/get_public_apps$/);
+    assert.equal(calls[0].method, 'POST');
+    assert.deepEqual(JSON.parse(calls[0].body), { p_limit: 100 });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('queue creation succeeds when the optional n8n trigger has a network failure', async () => {
@@ -1519,9 +2582,24 @@ test('queue creation succeeds when the optional n8n trigger has a network failur
     if (url.endsWith('/auth/v1/user')) return Response.json({ id: '11111111-1111-4111-8111-111111111111' });
     if (url.includes('/rest/v1/pipeline_runs?')) return Response.json([]);
     if (url.includes('/rest/v1/pipeline_jobs?') && method === 'GET') return Response.json([]);
-    if (url.includes('/rest/v1/apps?')) return Response.json([]);
-    if (url.endsWith('/rest/v1/pipeline_jobs') && method === 'POST') {
-      return Response.json([{ id: JOB_ID, status: 'queued', stage: 'queued' }]);
+    if (url.includes('itunes.apple.com/lookup?')) return Response.json({
+      results: [{ trackId: 123456789, trackName: '검증된 앱', wrapperType: 'software' }],
+    });
+    if (url.endsWith('/rest/v1/rpc/enqueue_pipeline_job') && method === 'POST') {
+      return Response.json({
+        result: 'queued',
+        data: {
+          id: JOB_ID,
+          app_store_id: '123456789',
+          country: 'kr',
+          app_name: '검증된 앱',
+          status: 'queued',
+          stage: 'queued',
+          run_id: null,
+          requested_at: '2026-07-29T00:00:00.000Z',
+          updated_at: '2026-07-29T00:00:00.000Z',
+        },
+      });
     }
     return Response.json({ code: 'unexpected' }, { status: 500 });
   };
@@ -1537,6 +2615,7 @@ test('queue creation succeeds when the optional n8n trigger has a network failur
         SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret', API_RETRY_COUNT: '0',
         N8N_PIPELINE_TRIGGER_URL: 'https://n8n.example/webhook/queue',
         N8N_PIPELINE_TRIGGER_SECRET: 'trigger-secret',
+        APPLE_LOOKUP_RATE_LIMITER: { limit: async () => ({ success: true }) },
       },
     );
     const text = await response.text();
@@ -1547,6 +2626,19 @@ test('queue creation succeeds when the optional n8n trigger has a network failur
     assert.doesNotMatch(text, /private downstream|trigger-secret|n8n\.example/i);
     assert.ok(calls.some((call) => call.url === 'https://n8n.example/webhook/queue'));
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test('only the measured large persistence RPCs use one 60 second database attempt', () => {
+  const source = readFileSync(resolve(testDir, '../internal.ts'), 'utf8');
+  assert.match(
+    source,
+    /\/rest\/v1\/rpc\/persist_pipeline_reviews'[\s\S]{0,900}?timeoutMs:\s*60_000,[\s\S]{0,80}?retries:\s*0/,
+  );
+  assert.match(
+    source,
+    /\/rest\/v1\/rpc\/persist_issue_clusters'[\s\S]{0,900}?timeoutMs:\s*60_000,[\s\S]{0,80}?retries:\s*0/,
+  );
+  assert.equal(source.match(/timeoutMs:\s*60_000/g)?.length, 2);
 });
 
 test('pipeline stabilization SQL keeps lease, transaction, staging, and privilege contracts in parity', () => {
@@ -1689,8 +2781,8 @@ test('pipeline stabilization SQL keeps lease, transaction, staging, and privileg
   assert.match(workerSource, /new Date\(reviewedAt\)\.getTime\(\)/);
   assert.match(workerSource, /confidence < 0 \|\| confidence > 1/);
   assert.doesNotMatch(workerSource, /Accept timestamp-only cursors/i);
-  assert.match(
-    workerSource,
-    /reviews\?select=review_id,reviewed_at&app_store_id=eq\.[\s\S]{0,300}country=eq\.[\s\S]{0,300}review_id=in/i,
-  );
+  assert.match(workerSource, /\/rest\/v1\/rpc\/get_pipeline_review_scope/);
+  assert.match(workerSource, /p_review_ids:\s*reviewIds[\s\S]{0,120}p_include_analysis:\s*includeAnalysis/);
+  assert.doesNotMatch(workerSource, /\/rest\/v1\/rpc\/get_existing_review_ids/);
+  assert.doesNotMatch(workerSource, /private_review_feed\?[\s\S]{0,300}review_id=in/i);
 });

@@ -1,0 +1,191 @@
+{
+  "mixedExtractionItems": [
+    {
+      "json": {
+        "ID": "review-success",
+        "priority": "Normal",
+        "category": "기능 및 사용성",
+        "summary": "정상 추출된 리뷰",
+        "rating": "5",
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr"
+      }
+    },
+    {
+      "json": {
+        "ID": "PARSE_ERROR_fixture_1",
+        "긴급도": "ERROR",
+        "유형": "파싱실패",
+        "요약": "extraction count mismatch",
+        "원본": "not-json",
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr"
+      }
+    }
+  ],
+  "extractionBatchContexts": [
+    {
+      "json": {
+        "batchIndex": 0,
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr",
+        "reviews": [
+          {
+            "reviewId": "review-batch-1",
+            "author": "tester",
+            "reviewedAt": "2026-07-28T00:00:00.000Z",
+            "rating": 5,
+            "content": "첫 번째 배치"
+          }
+        ]
+      }
+    },
+    {
+      "json": {
+        "batchIndex": 1,
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr",
+        "reviews": [
+          {
+            "reviewId": "review-batch-2",
+            "author": "tester",
+            "reviewedAt": "2026-07-28T00:00:00.000Z",
+            "rating": 4,
+            "content": "두 번째 배치"
+          }
+        ]
+      }
+    }
+  ],
+  "missingExtractionLlmItems": [
+    {
+      "json": {
+        "text": "[{\"reviewId\":\"review-batch-1\",\"priority\":\"Normal\",\"category\":\"긍정 리뷰 및 기타\",\"summary\":\"첫 번째 배치 정상 추출\"}]"
+      }
+    }
+  ],
+  "extraExtractionLlmItems": [
+    {
+      "json": {
+        "text": "[{\"reviewId\":\"review-batch-1\",\"priority\":\"Normal\",\"category\":\"긍정 리뷰 및 기타\",\"summary\":\"첫 번째 배치 정상 추출\"}]"
+      }
+    },
+    {
+      "json": {
+        "text": "[{\"reviewId\":\"review-batch-2\",\"priority\":\"Normal\",\"category\":\"긍정 리뷰 및 기타\",\"summary\":\"두 번째 배치 정상 추출\"}]"
+      }
+    },
+    {
+      "json": {
+        "text": "[{\"reviewId\":\"review-batch-1\",\"priority\":\"Normal\",\"category\":\"긍정 리뷰 및 기타\",\"summary\":\"초과 배치\"}]"
+      }
+    }
+  ],
+  "alertInputItems": [
+    {
+      "json": {
+        "ID": "review-critical",
+        "priority": "Critical",
+        "category": "버그 및 성능",
+        "summary": "실행 즉시 종료됨",
+        "rating": "1",
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr"
+      }
+    },
+    {
+      "json": {
+        "ID": "review-promoted-bug",
+        "priority": "Normal",
+        "category": "버그 및 성능",
+        "summary": "업데이트 후 화면이 멈춤",
+        "rating": "1",
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr"
+      }
+    },
+    {
+      "json": {
+        "ID": "review-promoted-account",
+        "priority": "Normal",
+        "category": "계정 및 결제",
+        "summary": "로그인이 계속 실패함",
+        "rating": "1",
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr"
+      }
+    },
+    {
+      "json": {
+        "ID": "review-normal",
+        "priority": "Normal",
+        "category": "긍정 리뷰 및 기타",
+        "summary": "사용 경험이 만족스러움",
+        "rating": "5",
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr"
+      }
+    }
+  ],
+  "nonCriticalAlertInputItems": [
+    {
+      "json": {
+        "ID": "review-high",
+        "priority": "High",
+        "category": "계정 및 결제",
+        "summary": "결제 확인이 늦음",
+        "rating": "2",
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr"
+      }
+    },
+    {
+      "json": {
+        "ID": "review-normal",
+        "priority": "Normal",
+        "category": "긍정 리뷰 및 기타",
+        "summary": "사용 경험이 만족스러움",
+        "rating": "5",
+        "runId": "RUN_fixture_1",
+        "jobId": "fixture-job",
+        "claimToken": "fixture-claim",
+        "appStoreId": "1234567890",
+        "country": "kr"
+      }
+    }
+  ],
+  "runContext": {
+    "runId": "RUN_fixture_1",
+    "jobId": "fixture-job",
+    "claimToken": "fixture-claim",
+    "appStoreId": "1234567890",
+    "country": "kr"
+  }
+}

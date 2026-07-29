@@ -15,10 +15,11 @@ export const DEFAULT_RETRY_COUNT = 2;
 export const SIGNATURE_WINDOW_MS = 5 * 60 * 1000;
 export const DEFAULT_FETCH_WINDOW_DAYS = 30;
 export const MAX_FETCH_WINDOW_DAYS = 90;
-export const DEFAULT_FETCH_MAX_PAGES = 120;
-export const MAX_FETCH_MAX_PAGES = 200;
+export const DEFAULT_FETCH_MAX_PAGES = 40;
+export const MAX_FETCH_MAX_PAGES = 40;
 export const MAX_FETCH_REVIEW_CAP = 10000;
 export const ITUNES_USER_REVIEW_PAGE_SIZE = 10;
+export const PIPELINE_DB_TIMEOUT_MS = 10_000;
 export const PUBLIC_API_CACHE_CONTROL = 'public, max-age=120, s-maxage=120';
 
 export type JsonValue = Record<string, unknown> | unknown[];
@@ -514,6 +515,13 @@ export function normalizeSearchKeyword(rawValue: string | null, maxLength = 80) 
     .trim();
 }
 
+export function normalizeTimestampFilter(rawValue: string | null) {
+  const normalized = (rawValue || '').trim();
+  if (!normalized) return null;
+  const timestamp = new Date(normalized);
+  return Number.isFinite(timestamp.getTime()) ? timestamp.toISOString() : null;
+}
+
 export function normalizeCountry(rawCountry: string | null | undefined, fallback = 'kr') {
   const normalized = (rawCountry || '').trim().toLowerCase();
   if (!normalized) {
@@ -776,6 +784,8 @@ export async function renewPipelineJobClaim(
       p_stage: stage,
     }),
     idempotent: true,
+    timeoutMs: PIPELINE_DB_TIMEOUT_MS,
+    retries: 0,
   });
   return rows[0] || null;
 }
@@ -806,6 +816,8 @@ export async function completePipelineJob(
           : null,
     }),
     idempotent: true,
+    timeoutMs: PIPELINE_DB_TIMEOUT_MS,
+    retries: 0,
   });
   return { updated: rows.length > 0, data: rows[0] || null };
 }
@@ -844,7 +856,10 @@ export type ReviewFeedCursor = { reviewedAt: string; reviewId: string };
 export function encodeReviewFeedCursor(row: Record<string, unknown>): string | null {
   const reviewedAt = String(row.reviewed_at || '').trim();
   const reviewId = String(row.review_id || '').trim();
-  if (!reviewedAt || !reviewId) return null;
+  if (
+    !Number.isFinite(new Date(reviewedAt).getTime())
+    || !/^[A-Za-z0-9_-]{1,256}$/.test(reviewId)
+  ) return null;
   const bytes = encoder.encode(JSON.stringify({ reviewedAt, reviewId }));
   const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join('');
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
@@ -852,7 +867,7 @@ export function encodeReviewFeedCursor(row: Record<string, unknown>): string | n
 
 export function decodeReviewFeedCursor(value: string | null): ReviewFeedCursor | null {
   const normalized = String(value || '').trim();
-  if (!normalized) return null;
+  if (!/^[A-Za-z0-9_-]{1,1024}$/.test(normalized)) return null;
   try {
     const base64 = normalized.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(normalized.length / 4) * 4, '=');
     const binary = atob(base64);
@@ -860,7 +875,10 @@ export function decodeReviewFeedCursor(value: string | null): ReviewFeedCursor |
     const parsed = JSON.parse(decoded) as Partial<ReviewFeedCursor>;
     const reviewedAt = String(parsed.reviewedAt || '').trim();
     const reviewId = String(parsed.reviewId || '').trim();
-    if (!reviewId || !Number.isFinite(new Date(reviewedAt).getTime())) return null;
+    if (
+      !/^[A-Za-z0-9_-]{1,256}$/.test(reviewId)
+      || !Number.isFinite(new Date(reviewedAt).getTime())
+    ) return null;
     return { reviewedAt: new Date(reviewedAt).toISOString(), reviewId };
   } catch {
     return null;
@@ -870,6 +888,10 @@ export function decodeReviewFeedCursor(value: string | null): ReviewFeedCursor |
 export function isLegacyTimestampCursor(value: string | null) {
   const normalized = String(value || '').trim();
   return normalized.length > 0 && Number.isFinite(new Date(normalized).getTime());
+}
+
+function escapeReviewSearchPattern(value: string) {
+  return value.replace(/\\/g, '\\\\').replace(/_/g, '\\_');
 }
 
 export function buildReviewFeedFilters(input: {
@@ -884,6 +906,9 @@ export function buildReviewFeedFilters(input: {
   category: string | null;
   issueLabel: string | null;
   search: string | null;
+  searchScope?: 'all' | 'content';
+  from?: string | null;
+  to?: string | null;
   cursor: string | null;
 }) {
   const queryLimit = Math.min(input.limit + 1, 101);
@@ -912,17 +937,24 @@ export function buildReviewFeedFilters(input: {
   if (input.priority) filters.set('priority', 'eq.' + input.priority);
   if (input.category) filters.set('category', 'eq.' + input.category);
   if (input.issueLabel) filters.set('issue_label', 'eq.' + input.issueLabel);
+  if (input.from) filters.append('reviewed_at', 'gte.' + input.from);
+  if (input.to) filters.append('reviewed_at', 'lte.' + input.to);
 
   if (input.search) {
-    const pattern = '*' + input.search + '*';
-    const searchExpression = 'or(author.ilike.' + pattern
-      + ',summary.ilike.' + pattern
-      + ',category.ilike.' + pattern
-      + ',issue_label.ilike.' + pattern
-      + ',reason_summary.ilike.' + pattern
-      + ',action_hint.ilike.' + pattern
-      + ',content.ilike.' + pattern + ')';
+    const contentOnly = input.searchScope === 'content';
+    const searchValue = escapeReviewSearchPattern(input.search);
+    const pattern = '*' + searchValue + '*';
+    const searchExpression = contentOnly
+      ? 'content.ilike.' + pattern
+      : 'or(author.ilike.' + pattern
+        + ',summary.ilike.' + pattern
+        + ',category.ilike.' + pattern
+        + ',issue_label.ilike.' + pattern
+        + ',reason_summary.ilike.' + pattern
+        + ',action_hint.ilike.' + pattern
+        + ',content.ilike.' + pattern + ')';
     if (cursorExpression) filters.set('and', '(' + cursorExpression + ',' + searchExpression + ')');
+    else if (contentOnly) filters.set('content', 'ilike.' + pattern);
     else filters.set('or', '(' + searchExpression.slice(3, -1) + ')');
   } else if (cursorExpression) {
     filters.set('or', '(' + cursorExpression.slice(3, -1) + ')');

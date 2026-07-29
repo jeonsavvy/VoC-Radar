@@ -90,7 +90,21 @@ try {
   runSqlFile('supabase/schema.sql');
   runSqlFile('supabase/migrations/202607260001_pipeline_stabilization.sql');
   runSqlFile('supabase/migrations/202607270001_pipeline_stabilization_runtime_fixes.sql');
+  runSqlFile('scripts/fixtures/pipeline-job-enqueue-legacy-state.sql');
+  runSqlFile('supabase/migrations/202607290001_prepare_pipeline_job_enqueue.sql');
+  runSqlFile('scripts/fixtures/pipeline-job-enqueue-prepare.sql');
+  runSqlFile('scripts/fixtures/account-privacy-legacy-state.sql');
+  runSqlFile('supabase/migrations/202607290002_finalize_account_privacy_and_public_apps.sql');
+  runSqlFile('supabase/migrations/202607290003_harden_pipeline_job_enqueue.sql');
+  runSqlFile('scripts/fixtures/pipeline-job-enqueue-boundary.sql');
+  runSqlFile('supabase/migrations/202607290004_scope_issue_reads_to_requested_window.sql');
+  runSqlFile('supabase/migrations/202607290005_enforce_pipeline_stage_monotonicity.sql');
+  runSqlFile('supabase/migrations/202607290006_bound_pipeline_review_scope_lookup.sql');
+  runSqlFile('supabase/migrations/202607290007_bound_pipeline_cluster_context.sql');
+  runSqlFile('supabase/migrations/202607290008_bound_pipeline_persistence_inputs.sql');
+  runSqlFile('scripts/fixtures/account-privacy-runtime.sql');
   runSqlFile('scripts/fixtures/pipeline-runtime-smoke.sql');
+  runSqlFile('supabase/tests/public_issue_window_runtime.sql');
 
   console.log('[postgres-runtime-check] OK');
 } finally {

@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { AppArtwork } from '@/components/AppArtwork';
 import { GlobalSearch } from '@/components/GlobalSearch';
 import { discoverApps } from '@/lib/api';
 import { reportPath } from '@/lib/appIdentity';
+import { DEFAULT_COUNTRY } from '@/lib/config';
 import type { DiscoveryItem } from '@/types';
 
 export function ExplorePage() {
@@ -15,7 +16,7 @@ export function ExplorePage() {
   useEffect(() => {
     let active = true;
     setState('loading');
-    discoverApps('', 'kr', 6)
+    discoverApps('', DEFAULT_COUNTRY, 6)
       .then((response) => {
         if (!active) return;
         setRecent(response.data);
@@ -33,7 +34,7 @@ export function ExplorePage() {
     <div className="explore-page">
       <section className="explore-hero" aria-labelledby="explore-title">
         <h1 id="explore-title">앱 리뷰 리포트</h1>
-        <GlobalSearch variant="hero" />
+        <GlobalSearch country={DEFAULT_COUNTRY} variant="hero" />
       </section>
 
       <section className="explore-section" aria-labelledby="recent-title">

@@ -1,9 +1,10 @@
 import { FormEvent, KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
 import { ArrowRight, Search } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { AppArtwork } from '@/components/AppArtwork';
 import { discoverApps } from '@/lib/api';
 import { parseAppIdentity, reportPath } from '@/lib/appIdentity';
+import { DEFAULT_COUNTRY } from '@/lib/config';
 import type { DiscoveryItem } from '@/types';
 
 type Props = {
@@ -30,7 +31,7 @@ export function getOwnedSearchResult(
   return results[index] ?? null;
 }
 
-export function GlobalSearch({ country = 'kr', variant = 'compact', autoFocus = false, onNavigate }: Props) {
+export function GlobalSearch({ country = DEFAULT_COUNTRY, variant = 'compact', autoFocus = false, onNavigate }: Props) {
   const navigate = useNavigate();
   const listId = useId();
   const requestSequence = useRef(0);

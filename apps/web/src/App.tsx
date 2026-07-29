@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { Shell } from '@/components/Shell';
 import { ExplorePage } from '@/routes/ExplorePage';
 import { hasSupabaseAuthCallback } from '@/lib/authRedirect';
@@ -32,28 +32,63 @@ function hasStoredAuthSession() {
   }
 }
 
-export default function App() {
+type AuthModule = Pick<
+  typeof import('@/lib/auth'),
+  'getSessionSummary' | 'subscribeToAuthChanges' | 'signOut'
+>;
+type AppRoutesProps = {
+  loadAuthModule?: () => Promise<AuthModule>;
+};
+type AuthSessionBoundaryProps = AppRoutesProps & {
+  children: (state: {
+    loggedIn: boolean;
+    userEmail: string | null;
+    authChecking: boolean;
+    refreshSession: (isActive?: () => boolean) => Promise<void>;
+    signOut: () => Promise<void>;
+  }) => ReactNode;
+};
+
+async function defaultLoadAuthModule() {
+  return await import('@/lib/auth');
+}
+
+export function AuthSessionBoundary({
+  loadAuthModule = defaultLoadAuthModule,
+  children,
+}: AuthSessionBoundaryProps) {
   const [loggedIn, setLoggedIn] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [authChecking, setAuthChecking] = useState(
+    () => hasStoredAuthSession() || hasSupabaseAuthCallback(window.location),
+  );
   const authSubscription = useRef<(() => void) | null>(null);
 
   const refreshSession = async (isActive: () => boolean = () => true) => {
-    const { getSessionSummary, subscribeToAuthChanges } = await import('@/lib/auth');
-    const session = await getSessionSummary();
-    if (!isActive()) return;
-    setLoggedIn(session.loggedIn);
-    setUserEmail(session.userEmail);
-    if (session.loggedIn && !authSubscription.current) {
-      authSubscription.current = subscribeToAuthChanges(() => void refreshSession());
-    } else if (!session.loggedIn && authSubscription.current) {
-      authSubscription.current();
-      authSubscription.current = null;
+    try {
+      const { getSessionSummary, subscribeToAuthChanges } = await loadAuthModule();
+      const session = await getSessionSummary();
+      if (!isActive()) return;
+      setLoggedIn(session.loggedIn);
+      setUserEmail(session.userEmail);
+      if (session.loggedIn && !authSubscription.current) {
+        authSubscription.current = subscribeToAuthChanges(() => void refreshSession());
+      } else if (!session.loggedIn && authSubscription.current) {
+        authSubscription.current();
+        authSubscription.current = null;
+      }
+    } catch {
+      if (!isActive()) return;
+      setLoggedIn(false);
+      setUserEmail(null);
+    } finally {
+      if (isActive()) setAuthChecking(false);
     }
   };
 
   useEffect(() => {
     let active = true;
-    if (hasStoredAuthSession() || hasSupabaseAuthCallback(window.location)) {
+    if (authChecking) {
       void refreshSession(() => active);
     }
 
@@ -65,32 +100,50 @@ export default function App() {
   }, []);
 
   const handleSignOut = async () => {
-    const { signOut } = await import('@/lib/auth');
+    const { signOut } = await loadAuthModule();
     await signOut();
     await refreshSession();
   };
 
+  return children({
+    loggedIn,
+    userEmail,
+    authChecking,
+    refreshSession,
+    signOut: handleSignOut,
+  });
+}
+
+export function AppRoutes({ loadAuthModule }: AppRoutesProps) {
+  return <AuthSessionBoundary loadAuthModule={loadAuthModule}>
+    {({ loggedIn, userEmail, authChecking, refreshSession, signOut }) => <>
+      <ScrollToTopOnRouteChange />
+      <Routes>
+        <Route element={<Shell loggedIn={loggedIn} authChecking={authChecking} userEmail={userEmail} onSignOut={signOut} />}>
+          <Route index element={<ExplorePage />} />
+          <Route path="apps/:country/:appId" element={<Navigate to="overview" replace />} />
+          <Route
+            path="apps/:country/:appId/:tab"
+            element={<Suspense fallback={<RouteFallback />}><AppReportPage loggedIn={loggedIn} authChecking={authChecking} /></Suspense>}
+          />
+          <Route
+            path="requests"
+            element={<Suspense fallback={<RouteFallback />}><RequestsPage loggedIn={loggedIn} authChecking={authChecking} /></Suspense>}
+          />
+          <Route
+            path="login"
+            element={<Suspense fallback={<RouteFallback />}><LoginPage onSignedIn={refreshSession} /></Suspense>}
+          />
+        </Route>
+        <Route path="privacy" element={<Suspense fallback={<RouteFallback />}><PrivacyPage /></Suspense>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>}
+  </AuthSessionBoundary>;
+}
+
+export default function App() {
   return <BrowserRouter>
-    <ScrollToTopOnRouteChange />
-    <Routes>
-      <Route element={<Shell loggedIn={loggedIn} userEmail={userEmail} onSignOut={handleSignOut} />}>
-        <Route index element={<ExplorePage />} />
-        <Route path="apps/:country/:appId" element={<Navigate to="overview" replace />} />
-        <Route
-          path="apps/:country/:appId/:tab"
-          element={<Suspense fallback={<RouteFallback />}><AppReportPage loggedIn={loggedIn} /></Suspense>}
-        />
-        <Route
-          path="requests"
-          element={<Suspense fallback={<RouteFallback />}><RequestsPage loggedIn={loggedIn} /></Suspense>}
-        />
-        <Route
-          path="login"
-          element={<Suspense fallback={<RouteFallback />}><LoginPage onSignedIn={refreshSession} /></Suspense>}
-        />
-      </Route>
-      <Route path="privacy" element={<Suspense fallback={<RouteFallback />}><PrivacyPage /></Suspense>} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <AppRoutes />
   </BrowserRouter>;
 }

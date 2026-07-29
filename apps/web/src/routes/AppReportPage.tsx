@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowRight, ArrowUp, Clock3, RefreshCw, Search, Star, X } from 'lucide-react';
-import { Link, NavLink, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { Link, NavLink, Navigate, useLocation, useNavigate, useParams } from 'react-router';
 import { AppArtwork } from '@/components/AppArtwork';
 import { getIssueDetail, getPublicReport, getPublicReviews, requestAnalysis } from '@/lib/api';
+import {
+  ANALYSIS_REQUEST_SESSION_MESSAGE,
+  getAnalysisRequestFailureMessage,
+} from '@/lib/analysisRequestError';
 import { reportPath } from '@/lib/appIdentity';
+import { DEFAULT_COUNTRY } from '@/lib/config';
 import type { IssueClusterItem, IssueDetail, PublicReport, ReviewItem } from '@/types';
 
 const TABS = ['overview', 'issues', 'reviews'] as const;
 type ReportTab = (typeof TABS)[number];
 
 const severityLabel = { high: '높음', medium: '중간', low: '낮음' } as const;
+const REPORT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+const REPORT_WINDOW_BUCKET_MS = 24 * 60 * 60 * 1000;
 
 const formatDate = (value: string | null | undefined, withTime = false) => {
   if (!value) return '—';
@@ -19,13 +26,39 @@ const formatDate = (value: string | null | undefined, withTime = false) => {
     : date.toLocaleString('ko-KR', withTime ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' });
 };
 
+export function createRecentReviewWindow(now = new Date()) {
+  // Inclusive filters must stop 1 ms before the next UTC day to avoid sharing
+  // the midnight review with two adjacent calendar windows.
+  const nextUtcMidnightMs = (Math.floor(now.getTime() / REPORT_WINDOW_BUCKET_MS) + 1)
+    * REPORT_WINDOW_BUCKET_MS;
+  const from = new Date(nextUtcMidnightMs - REPORT_WINDOW_MS);
+  const to = new Date(nextUtcMidnightMs - 1);
+  return { from: from.toISOString(), to: to.toISOString() };
+}
+
+export function getIssueAccessibleName(issue: IssueClusterItem) {
+  const change = issue.changePercent == null
+    ? '비교 없음'
+    : issue.changePercent > 0
+      ? `${issue.changePercent}% 증가`
+      : issue.changePercent < 0
+        ? `${Math.abs(issue.changePercent)}% 감소`
+        : '0%';
+  return `${issue.title} 상세 보기. 카테고리 ${issue.category}, 심각도 ${severityLabel[issue.severity]}, 리뷰 ${issue.reviewCount}건, 변화 ${change}, 근거 리뷰 ${issue.evidenceCount}건, 최근 발생 ${formatDate(issue.lastOccurredAt)}`;
+}
+
 function ReportSkeleton() {
   return <div className="report-skeleton" aria-label="리포트 불러오는 중">
     <div /><div /><div /><div /><div />
   </div>;
 }
 
-function IssuePanel({ issue, onClose }: { issue: IssueClusterItem | null; onClose: () => void }) {
+function IssuePanel({ issue, from, to, onClose }: {
+  issue: IssueClusterItem | null;
+  from: string;
+  to: string;
+  onClose: () => void;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   const [detail, setDetail] = useState<IssueDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -43,13 +76,13 @@ function IssuePanel({ issue, onClose }: { issue: IssueClusterItem | null; onClos
     let active = true;
     setDetail(null);
     setError(null);
-    getIssueDetail(issue.issueId)
+    getIssueDetail(issue.issueId, from, to)
       .then((response) => active && setDetail(response.data))
       .catch(() => active && setError(
         '이슈 상세를 불러오지 못했습니다. 현재 리포트는 그대로 유지됩니다. 잠시 후 다시 시도하세요.',
       ));
     return () => { active = false; };
-  }, [issue, reloadKey]);
+  }, [from, issue, reloadKey, to]);
 
   return (
     <dialog ref={ref} className="issue-dialog" onClose={onClose} aria-labelledby="issue-dialog-title">
@@ -72,7 +105,11 @@ function IssuePanel({ issue, onClose }: { issue: IssueClusterItem | null; onClos
             {detail.issue.actionHint ? <div><strong>다음 확인</strong><span>{detail.issue.actionHint}</span></div> : null}
           </section>
           <section className="evidence-section">
-            <div className="section-heading"><h3>근거 리뷰</h3><span>{detail.reviews.length}건</span></div>
+            <div className="section-heading"><h3>근거 리뷰</h3><span>
+              {detail.reviews.length < detail.issue.evidenceCount
+                ? `${detail.issue.evidenceCount}건 중 ${detail.reviews.length}건`
+                : `${detail.issue.evidenceCount}건`}
+            </span></div>
             <div className="evidence-list">
               {detail.reviews.map((review) => <article key={review.reviewId} className={review.isRepresentative ? 'is-representative' : ''}>
                 <div className="review-meta">
@@ -92,9 +129,16 @@ function IssuePanel({ issue, onClose }: { issue: IssueClusterItem | null; onClos
   );
 }
 
-function IssuesView({ issues, onSelect }: { issues: IssueClusterItem[]; onSelect: (issue: IssueClusterItem) => void }) {
+function IssuesView({ issues, totalCount, onSelect }: {
+  issues: IssueClusterItem[];
+  totalCount: number;
+  onSelect: (issue: IssueClusterItem) => void;
+}) {
   if (issues.length === 0) return <div className="quiet-empty">현재 기간에 게시된 이슈가 없습니다.</div>;
   return <section className="issues-table" aria-label="이슈 목록">
+    {issues.length < totalCount ? <p className="issues-table__scope" role="status">
+      전체 {totalCount.toLocaleString()}건 중 {issues.length.toLocaleString()}건을 표시합니다.
+    </p> : null}
     <div className="issues-table__head" aria-hidden="true">
       <span>이슈</span><span>심각도</span><span>리뷰 수</span><span>변화</span><span>근거 리뷰</span><span>최근 발생</span>
     </div>
@@ -103,7 +147,7 @@ function IssuesView({ issues, onSelect }: { issues: IssueClusterItem[]; onSelect
         key={issue.issueId}
         type="button"
         className="issue-row"
-        aria-label={`${issue.title} 상세 보기. 심각도 ${severityLabel[issue.severity]}, 근거 리뷰 ${issue.evidenceCount}건`}
+        aria-label={getIssueAccessibleName(issue)}
         onClick={() => onSelect(issue)}
       >
         <span className="issue-row__name"><strong>{issue.title}</strong><small>{issue.category}</small></span>
@@ -166,7 +210,7 @@ export function mergeReviewItems(current: ReviewItem[], incoming: ReviewItem[]) 
   }));
 }
 
-function ReviewsView({ appId, country }: { appId: string; country: string }) {
+function ReviewsView({ appId, country, from, to }: { appId: string; country: string; from: string; to: string }) {
   const [items, setItems] = useState<ReviewItem[]>([]);
   const [query, setQuery] = useState('');
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -192,7 +236,14 @@ function ReviewsView({ appId, country }: { appId: string; country: string }) {
     setLoadingMore(false);
     setError(null);
 
-    getPublicReviews(appId, { country, limit: 50, search: debouncedQuery || undefined })
+    getPublicReviews(appId, {
+      country,
+      from,
+      to,
+      limit: 50,
+      search: debouncedQuery || undefined,
+      searchScope: 'content',
+    })
       .then((response) => {
         if (!active || requestId !== requestSequence.current) return;
         setItems(mergeReviewItems([], response.data));
@@ -211,7 +262,7 @@ function ReviewsView({ appId, country }: { appId: string; country: string }) {
       });
 
     return () => { active = false; };
-  }, [appId, country, debouncedQuery, debouncedSearch.revision, reloadKey]);
+  }, [appId, country, debouncedQuery, debouncedSearch.revision, from, reloadKey, to]);
 
   const loadMore = useCallback(async () => {
     if (loading || loadingMore || !hasNext || !nextCursor) return;
@@ -226,8 +277,11 @@ function ReviewsView({ appId, country }: { appId: string; country: string }) {
     try {
       const response = await getPublicReviews(appId, {
         country,
+        from,
+        to,
         limit: 50,
         search: debouncedQuery || undefined,
+        searchScope: 'content',
         cursor: nextCursor,
       });
       if (requestId !== requestSequence.current) return;
@@ -245,7 +299,7 @@ function ReviewsView({ appId, country }: { appId: string; country: string }) {
       if (loadMoreInFlight.current === requestKey) loadMoreInFlight.current = null;
       if (requestId === requestSequence.current) setLoadingMore(false);
     }
-  }, [appId, country, debouncedQuery, hasNext, loading, loadingMore, nextCursor]);
+  }, [appId, country, debouncedQuery, from, hasNext, loading, loadingMore, nextCursor, to]);
 
   return <div className="reviews-view">
     <label className="review-search">
@@ -293,10 +347,19 @@ function ReviewsView({ appId, country }: { appId: string; country: string }) {
   </div>;
 }
 
-type Props = { loggedIn: boolean };
+type Props = { loggedIn: boolean; authChecking: boolean };
 
-export function AppReportPage({ loggedIn }: Props) {
-  const { appId = '', country = 'kr', tab = 'overview' } = useParams();
+export function AppReportPage(props: Props) {
+  const { appId = '', country = DEFAULT_COUNTRY, tab = 'overview' } = useParams();
+  const appScope = `${country}:${appId}`;
+  return <AppReportPageContent key={appScope} {...props} appId={appId} country={country} tab={tab} />;
+}
+
+function AppReportPageContent({ loggedIn, authChecking, appId, country, tab }: Props & {
+  appId: string;
+  country: string;
+  tab: string;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const [report, setReport] = useState<PublicReport | null>(null);
@@ -307,8 +370,13 @@ export function AppReportPage({ loggedIn }: Props) {
   const [requesting, setRequesting] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const requestInFlight = useRef(false);
+  const reportWindow = useMemo(() => createRecentReviewWindow(), [appId, country, reloadKey]);
 
   const activeTab = TABS.includes(tab as ReportTab) ? (tab as ReportTab) : null;
+
+  useEffect(() => {
+    if (activeTab !== 'issues') setSelectedIssue(null);
+  }, [activeTab]);
 
   useEffect(() => {
     if (!/^\d{5,20}$/.test(appId) || !/^[a-z]{2}$/.test(country)) {
@@ -318,19 +386,19 @@ export function AppReportPage({ loggedIn }: Props) {
     }
     let active = true;
     setLoading(true); setError(null);
-    getPublicReport(appId, country)
+    getPublicReport(appId, country, reportWindow.from, reportWindow.to)
       .then((response) => active && setReport(response.data))
       .catch(() => active && setError(
         '리포트를 불러오지 못했습니다. 공개 데이터는 변경되지 않았습니다. 잠시 후 다시 시도하세요.',
       ))
       .finally(() => active && setLoading(false));
     return () => { active = false; };
-  }, [appId, country, reloadKey]);
+  }, [appId, country, reloadKey, reportWindow.from, reportWindow.to]);
 
   if (!activeTab) return <Navigate to={reportPath(appId, country)} replace />;
 
   const requestRefresh = async () => {
-    if (requestInFlight.current) return;
+    if (authChecking || requestInFlight.current) return;
     if (!loggedIn) {
       navigate(`/login?returnTo=${encodeURIComponent(location.pathname)}`);
       return;
@@ -340,15 +408,19 @@ export function AppReportPage({ loggedIn }: Props) {
     try {
       const { getAccessToken } = await import('@/lib/auth');
       const token = await getAccessToken();
-      if (!token) throw new Error('로그인이 필요합니다.');
+      if (!token) {
+        setRequestMessage(ANALYSIS_REQUEST_SESSION_MESSAGE);
+        return;
+      }
       const response = await requestAnalysis(token, { appStoreId: appId, country, appName: report?.app.appName || undefined });
       setRequestMessage(response.result === 'fresh'
         ? `재분석 가능: ${formatDate(response.data.nextAllowedAt, true)}`
         : response.result === 'existing' ? '이미 진행 중인 분석 요청이 있습니다.' : '분석 요청을 대기열에 등록했습니다.');
-    } catch {
-      setRequestMessage(
+    } catch (error) {
+      setRequestMessage(getAnalysisRequestFailureMessage(
+        error,
         '분석 요청 상태를 확인하지 못했습니다. 동일 요청이 이미 등록되었을 수 있습니다. 요청 내역을 확인한 뒤 다시 시도하세요.',
-      );
+      ));
     } finally {
       requestInFlight.current = false;
       setRequesting(false);
@@ -364,7 +436,7 @@ export function AppReportPage({ loggedIn }: Props) {
         </div>
         <div className="app-report-header__meta">
           <span><Clock3 /> 마지막 분석 {formatDate(report.analysis.lastAnalyzedAt, true)}</span>
-          <button type="button" className="refresh-button" onClick={requestRefresh} disabled={requesting}>
+          <button type="button" className="refresh-button" onClick={requestRefresh} disabled={requesting || authChecking}>
             <RefreshCw className={requesting ? 'is-spinning' : ''} /> {requesting ? '요청 중' : '분석 새로고침'}
           </button>
         </div>
@@ -373,19 +445,24 @@ export function AppReportPage({ loggedIn }: Props) {
 
       <nav className="report-tabs" aria-label="리포트 보기">
         <NavLink to={reportPath(appId, country, 'overview')}>개요</NavLink>
-        <NavLink to={reportPath(appId, country, 'issues')}>이슈 <span>{report.issues.length}</span></NavLink>
+        <NavLink to={reportPath(appId, country, 'issues')}>이슈 <span>{report.summary.issueCount}</span></NavLink>
         <NavLink to={reportPath(appId, country, 'reviews')}>리뷰</NavLink>
       </nav>
 
       {report.analysis.status === 'not_analyzed' ? <section className="not-analyzed">
         <h2>분석 결과 없음</h2>
-        <button type="button" onClick={requestRefresh} disabled={requesting}><RefreshCw className={requesting ? 'is-spinning' : ''} /> {requesting ? '요청 중' : '분석 요청'}</button>
+        <button type="button" onClick={requestRefresh} disabled={requesting || authChecking}><RefreshCw className={requesting ? 'is-spinning' : ''} /> {requesting ? '요청 중' : '분석 요청'}</button>
       </section> : <section className="report-content">
-        {activeTab === 'issues' ? <IssuesView issues={report.issues} onSelect={setSelectedIssue} /> : null}
+        {activeTab === 'issues' ? <IssuesView issues={report.issues} totalCount={report.summary.issueCount} onSelect={setSelectedIssue} /> : null}
         {activeTab === 'overview' ? <OverviewView report={report} /> : null}
-        {activeTab === 'reviews' ? <ReviewsView appId={appId} country={country} /> : null}
+        {activeTab === 'reviews' ? <ReviewsView appId={appId} country={country} from={reportWindow.from} to={reportWindow.to} /> : null}
       </section>}
-      <IssuePanel issue={selectedIssue} onClose={() => setSelectedIssue(null)} />
+      <IssuePanel
+        issue={selectedIssue}
+        from={reportWindow.from}
+        to={reportWindow.to}
+        onClose={() => setSelectedIssue(null)}
+      />
     </> : null}
   </div>;
 }

@@ -7,6 +7,7 @@ export const CLUSTER_CATEGORIES = [
 ] as const;
 
 export const CLUSTER_SEVERITIES = ['high', 'medium', 'low'] as const;
+const MAX_CLUSTER_REVIEW_COUNT = 10_000;
 
 export type ClusterCategory = (typeof CLUSTER_CATEGORIES)[number];
 export type ClusterSeverity = (typeof CLUSTER_SEVERITIES)[number];
@@ -42,8 +43,12 @@ const requiredText = (value: unknown, field: string) => {
 };
 
 export function validateClusterContract(inputReviewIds: string[], candidate: unknown): ValidatedClusterContract {
-  if (!Array.isArray(inputReviewIds) || inputReviewIds.length === 0) {
-    throw new Error('inputReviewIds must contain at least one review id');
+  if (
+    !Array.isArray(inputReviewIds)
+    || inputReviewIds.length === 0
+    || inputReviewIds.length > MAX_CLUSTER_REVIEW_COUNT
+  ) {
+    throw new Error(`inputReviewIds must contain between 1 and ${MAX_CLUSTER_REVIEW_COUNT} review ids`);
   }
   if (!isRecord(candidate)) throw new Error('candidate must be an object');
 
@@ -107,7 +112,7 @@ export function validateClusterContract(inputReviewIds: string[], candidate: unk
       title: requiredText(item.title, `clusters[${index}].title`).slice(0, 100),
       category: category as ClusterCategory,
       severity: severity as ClusterSeverity,
-      summary: requiredText(item.summary, `clusters[${index}].summary`).slice(0, 500),
+      summary: requiredText(item.summary, `clusters[${index}].summary`).slice(0, 400),
       actionHint:
         typeof item.actionHint === 'string' && item.actionHint.trim() ? item.actionHint.trim().slice(0, 300) : null,
       reviewIds: normalizedReviewIds,

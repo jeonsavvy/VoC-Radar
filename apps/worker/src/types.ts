@@ -9,10 +9,12 @@ export interface Env {
   N8N_PIPELINE_TRIGGER_SECRET?: string;
   DETAIL_VIEW_ENABLED?: string;
   REPORT_V2_ENABLED?: string;
+  USER_JOB_DAILY_LIMIT?: string;
   API_TIMEOUT_MS?: string;
   API_RETRY_COUNT?: string;
   CORS_ORIGIN?: string;
   CACHE_STATE?: KVNamespace;
+  APPLE_LOOKUP_RATE_LIMITER: RateLimit;
 }
 
 // 분석 결과 upsert payload:
@@ -134,6 +136,14 @@ export interface JobStatusRequest {
   stage?: 'queued' | 'fetching' | 'extracting' | 'clustering' | 'publishing' | null;
   runId: string;
   errorMessage?: string;
+}
+
+// Long-running n8n batches fence each external model result by renewing the active claim.
+export interface PipelineHeartbeatRequest {
+  jobId: string;
+  claimToken: string;
+  runId: string;
+  stage: 'extracting' | 'clustering';
 }
 
 // 신규 리뷰만 남기기 위한 preflight payload다.

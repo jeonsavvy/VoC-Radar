@@ -8,6 +8,7 @@ import type {
   ReviewSortKey,
   ReviewsResponse,
 } from '@/types';
+import { DEFAULT_COUNTRY } from '@/lib/config';
 
 // api.ts는 Web에서 Worker API를 호출할 때 사용하는 공용 클라이언트다.
 // 모든 요청은 timeout, retry, JSON 파싱 검증을 같은 규칙으로 처리한다.
@@ -181,6 +182,8 @@ export async function getPublicReviews(
   appId: string,
   options?: {
     country?: string;
+    from?: string;
+    to?: string;
     page?: number;
     limit?: number;
     sortBy?: ReviewSortKey;
@@ -189,12 +192,13 @@ export async function getPublicReviews(
     priority?: Priority;
     category?: string;
     search?: string;
+    searchScope?: 'content';
     cursor?: string;
   },
 ) {
   const params = new URLSearchParams({
     appId,
-    country: options?.country || 'kr',
+    country: options?.country || DEFAULT_COUNTRY,
     limit: String(options?.limit ?? 25),
     page: String(options?.page ?? 1),
   });
@@ -204,7 +208,10 @@ export async function getPublicReviews(
   if (options?.rating) params.set('rating', String(options.rating));
   if (options?.priority) params.set('priority', options.priority);
   if (options?.category?.trim()) params.set('category', options.category.trim());
+  if (options?.from) params.set('from', options.from);
+  if (options?.to) params.set('to', options.to);
   if (options?.search?.trim()) params.set('search', options.search.trim());
+  if (options?.searchScope) params.set('searchScope', options.searchScope);
   if (options?.cursor) params.set('cursor', options.cursor);
 
   return fetchJson<ReviewsResponse>(`/api/public/reviews?${params.toString()}`);
@@ -232,7 +239,7 @@ export async function requestAnalysis(
 }
 
 export async function deleteAccount(accessToken: string) {
-  return fetchJson<{ ok: true; data: { deleted: true; canceledJobs: number } }>(`/api/private/account`, {
+  return fetchJson<{ ok: true; data: { deleted: true; canceledJobs: number; redactedJobs: number } }>(`/api/private/account`, {
     method: 'DELETE',
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -240,18 +247,21 @@ export async function deleteAccount(accessToken: string) {
   });
 }
 
-export async function discoverApps(query = '', country = 'kr', limit = 8) {
+export async function discoverApps(query = '', country = DEFAULT_COUNTRY, limit = 8) {
   const params = new URLSearchParams({ q: query, country, limit: String(limit) });
   return fetchJson<{ data: DiscoveryItem[] }>(`/api/public/discover?${params.toString()}`);
 }
 
-export async function getPublicReport(appId: string, country = 'kr', from?: string, to?: string) {
+export async function getPublicReport(appId: string, country = DEFAULT_COUNTRY, from?: string, to?: string) {
   const params = new URLSearchParams({ appId, country });
   if (from) params.set('from', from);
   if (to) params.set('to', to);
   return fetchJson<{ data: PublicReport }>(`/api/public/report?${params.toString()}`);
 }
 
-export async function getIssueDetail(issueId: string) {
-  return fetchJson<{ data: IssueDetail }>(`/api/public/issues/${encodeURIComponent(issueId)}`);
+export async function getIssueDetail(issueId: string, from: string, to: string) {
+  const params = new URLSearchParams({ from, to });
+  return fetchJson<{ data: IssueDetail }>(
+    `/api/public/issues/${encodeURIComponent(issueId)}?${params.toString()}`,
+  );
 }

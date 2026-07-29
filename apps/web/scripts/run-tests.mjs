@@ -1,9 +1,8 @@
 import { mkdir, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
 import { build } from 'esbuild';
 
-const require = createRequire(import.meta.url);
 const workspaceRoot = process.cwd();
 const srcRoot = path.join(workspaceRoot, 'src');
 const outDir = path.join(workspaceRoot, '.test-dist');
@@ -54,6 +53,7 @@ for (const testFile of testFiles) {
     alias: {
       '@': srcRoot,
     },
+    external: ['jsdom'],
     define: {
       'import.meta.env': JSON.stringify({
         VITE_DEFAULT_COUNTRY: 'kr',
@@ -67,12 +67,18 @@ for (const testFile of testFiles) {
     logLevel: 'silent',
   });
 
-  try {
-    require(outfile);
-  } catch (error) {
+  const result = spawnSync(process.execPath, [outfile], {
+    cwd: workspaceRoot,
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+
+  if (result.status !== 0) {
     failed += 1;
     console.error(`FAIL ${relativePath}`);
-    console.error(error);
+    if (result.error) console.error(result.error);
   }
 }
 

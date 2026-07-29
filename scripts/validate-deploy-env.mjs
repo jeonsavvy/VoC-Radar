@@ -21,13 +21,8 @@ if (supabaseUrl.protocol !== 'https:' || !supabaseUrl.hostname.endsWith('.supaba
 
 const configuredApiUrl = String(process.env.VITE_API_BASE_URL || '').trim();
 if (configuredApiUrl) {
-  try {
-    const apiUrl = new URL(configuredApiUrl);
-    if (apiUrl.protocol !== 'https:') throw new Error('not https');
-  } catch {
-    console.error('VITE_API_BASE_URL must be blank for same-origin or an absolute HTTPS URL.');
-    process.exit(1);
-  }
+  console.error('VITE_API_BASE_URL must be blank for the production same-origin Worker build.');
+  process.exit(1);
 }
 
 console.log('Production Web build variables are present and structurally valid.');

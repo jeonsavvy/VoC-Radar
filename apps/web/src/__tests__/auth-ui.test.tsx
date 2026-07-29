@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router';
+import { JSDOM } from 'jsdom';
+import { AuthSessionBoundary } from '@/App';
 import { AppArtwork } from '@/components/AppArtwork';
 import { Shell } from '@/components/Shell';
 import { parseAppIdentity, reportPath } from '@/lib/appIdentity';
+import { DEFAULT_COUNTRY, normalizeDefaultCountry } from '@/lib/config';
 import {
   buildEmailSignUpCredentials,
   hasSupabaseAuthCallback,
@@ -161,6 +166,9 @@ async function main() {
   });
 
   await test('app identity accepts numeric ids and App Store URLs without a fake default', () => {
+    assert.equal(DEFAULT_COUNTRY, 'kr');
+    assert.equal(normalizeDefaultCountry(' US '), 'us');
+    assert.equal(normalizeDefaultCountry('invalid'), 'kr');
     assert.deepEqual(parseAppIdentity('123456789', 'kr'), { appId: '123456789', country: 'kr' });
     assert.deepEqual(parseAppIdentity('https://apps.apple.com/us/app/example/id987654321', 'kr'), {
       appId: '987654321',
@@ -169,6 +177,7 @@ async function main() {
     assert.equal(parseAppIdentity('not an id', 'kr'), null);
     assert.equal(reportPath('123456789', 'kr'), '/apps/kr/123456789/overview');
     assert.doesNotMatch(readFileSync('src/lib/appIdentity.ts', 'utf8'), /1234567890/);
+    assert.doesNotMatch(readFileSync('src/routes/ExplorePage.tsx', 'utf8'), /discoverApps\('', 'kr'/);
   });
 
   await test('email signup returns to the current deployment instead of a configured localhost fallback', () => {
@@ -215,6 +224,156 @@ async function main() {
     assert.match(loginSource, /sanitizeAuthReturnTo\(searchParams\.get\('returnTo'\)\)/);
   });
 
+  await test('session restoration keeps login gates and redirects in a checking state', () => {
+    const appSource = readFileSync('src/App.tsx', 'utf8');
+    const shellSource = readFileSync('src/components/Shell.tsx', 'utf8');
+    const reportSource = readFileSync('src/routes/AppReportPage.tsx', 'utf8');
+    const requestsSource = readFileSync('src/routes/RequestsPage.tsx', 'utf8');
+    const ShellWithLooseProps = Shell as unknown as (props: Record<string, unknown>) => any;
+    const checkingShell = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/requests']}>
+        <Routes>
+          <Route
+            path="/requests"
+            element={<ShellWithLooseProps
+              loggedIn={false}
+              authChecking={true}
+              userEmail={null}
+              onSignOut={() => {}}
+            />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    assert.match(appSource, /const \[authChecking, setAuthChecking\]/);
+    assert.match(appSource, /finally \{[\s\S]*setAuthChecking\(false\)/);
+    assert.match(appSource, /<Shell[^>]+authChecking=\{authChecking\}/);
+    assert.match(shellSource, /authChecking \? \(/);
+    assert.match(checkingShell, /class="login-link login-link--checking"/);
+    assert.match(checkingShell, /aria-label="로그인 상태 확인 중"/);
+    assert.doesNotMatch(checkingShell, /href="\/login/);
+    assert.match(reportSource, /if \(authChecking \|\| requestInFlight\.current\) return/);
+    assert.match(requestsSource, /if \(authChecking\) return <div className="request-loading" role="status">/);
+  });
+
+  await test('stored sessions and confirmation callbacks keep the login gate closed until restoration finishes', async () => {
+    const keys = [
+      'window',
+      'document',
+      'navigator',
+      'location',
+      'HTMLElement',
+      'Node',
+      'Event',
+      'MutationObserver',
+    ] as const;
+    const originalDescriptors = new Map(
+      keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+    );
+    const originalActEnvironment = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'IS_REACT_ACT_ENVIRONMENT',
+    );
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+      url: 'https://voc-radar.example/',
+    });
+    const { window: browserWindow } = dom;
+    const globals = {
+      window: browserWindow,
+      document: browserWindow.document,
+      navigator: browserWindow.navigator,
+      location: browserWindow.location,
+      HTMLElement: browserWindow.HTMLElement,
+      Node: browserWindow.Node,
+      Event: browserWindow.Event,
+      MutationObserver: browserWindow.MutationObserver,
+    };
+    for (const [key, value] of Object.entries(globals)) {
+      Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+    }
+    Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', {
+      configurable: true,
+      writable: true,
+      value: true,
+    });
+
+    const runRestoration = async (url: string, storedSession: boolean) => {
+      browserWindow.localStorage.clear();
+      browserWindow.history.replaceState(null, '', url);
+      if (storedSession) {
+        browserWindow.localStorage.setItem('sb-fixture-auth-token', '{}');
+      }
+
+      let resolveSession!: (value: { loggedIn: boolean; userEmail: string | null }) => void;
+      const session = new Promise<{ loggedIn: boolean; userEmail: string | null }>((resolve) => {
+        resolveSession = resolve;
+      });
+      const container = browserWindow.document.createElement('div');
+      browserWindow.document.body.append(container);
+      const root = createRoot(container as unknown as HTMLElement);
+
+      try {
+        await act(async () => {
+          root.render(
+            <MemoryRouter initialEntries={['/']}>
+              <AuthSessionBoundary loadAuthModule={async () => ({
+                getSessionSummary: async () => session,
+                subscribeToAuthChanges: () => () => {},
+                signOut: async () => {},
+              })}>
+                {({ loggedIn, authChecking, userEmail, signOut }) => <Routes>
+                  <Route
+                    element={<Shell
+                      loggedIn={loggedIn}
+                      authChecking={authChecking}
+                      userEmail={userEmail}
+                      onSignOut={signOut}
+                    />}
+                  >
+                    <Route index element={<div>child</div>} />
+                  </Route>
+                </Routes>}
+              </AuthSessionBoundary>
+            </MemoryRouter>,
+          );
+        });
+
+        assert.ok(container.querySelector('.login-link--checking'));
+        assert.equal(container.querySelector('a[href^="/login"]'), null);
+
+        await act(async () => {
+          resolveSession({ loggedIn: true, userEmail: 'restored@example.com' });
+          await session;
+        });
+
+        assert.equal(container.querySelector('.login-link--checking'), null);
+        assert.match(container.textContent || '', /restored@example\.com/);
+        assert.match(container.textContent || '', /로그아웃/);
+      } finally {
+        await act(async () => root.unmount());
+        container.remove();
+      }
+    };
+
+    try {
+      await runRestoration('https://voc-radar.example/', true);
+      await runRestoration('https://voc-radar.example/?code=fixture', false);
+    } finally {
+      browserWindow.close();
+      for (const key of keys) {
+        const descriptor = originalDescriptors.get(key);
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete (globalThis as Record<string, unknown>)[key];
+      }
+      if (originalActEnvironment) {
+        Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', originalActEnvironment);
+      } else {
+        delete (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT;
+      }
+    }
+  });
+
   await test('report UI keeps evidence counts and canonical severity while hiding confidence percentages', () => {
     const source = readFileSync('src/routes/AppReportPage.tsx', 'utf8');
     assert.match(source, /근거 리뷰/);
@@ -245,7 +404,10 @@ async function main() {
   });
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main().then(
+  () => process.exit(0),
+  (error) => {
+    console.error(error);
+    process.exit(1);
+  },
+);

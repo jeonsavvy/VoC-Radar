@@ -1,5 +1,5 @@
 import type {
-  AlertEventsRequest, ClaimJobRequest, ClusterContextRequest, Env, FetchReviewsRequest, FilterNewReviewsRequest, JobStatusRequest, ParseErrorRequest, PublishRequest, UpsertClustersRequest, UpsertReviewRequest,
+  AlertEventsRequest, ClaimJobRequest, ClusterContextRequest, Env, FetchReviewsRequest, FilterNewReviewsRequest, JobStatusRequest, ParseErrorRequest, PipelineHeartbeatRequest, PublishRequest, UpsertClustersRequest, UpsertReviewRequest,
 } from './types';
 import { validateClusterContract } from './cluster-contract';
 import {
@@ -29,13 +29,123 @@ import {
   normalizeRating,
   UpstreamRequestError,
   NormalizedReview,
+  type PipelineClaim,
+  type PipelineStage,
+  type RequestInitWithRetry,
   DEFAULT_FETCH_WINDOW_DAYS,
   MAX_FETCH_WINDOW_DAYS,
   MAX_FETCH_MAX_PAGES,
   DEFAULT_FETCH_MAX_PAGES,
   MAX_FETCH_REVIEW_CAP,
   ITUNES_USER_REVIEW_PAGE_SIZE,
+  PIPELINE_DB_TIMEOUT_MS,
 } from './platform';
+
+type ReviewLookupResult<T> =
+  | { status: 'ok'; rows: T[] }
+  | { status: 'claim_lost'; rows: [] }
+  | { status: 'invalid'; rows: [] };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
+const APPLE_RSS_REVIEW_PAGE_SIZE = 50;
+const APPLE_REVIEW_PAGE_TIMEOUT_MS = 5_000;
+const FETCH_REVIEWS_DEADLINE_MS = 270_000;
+
+const pipelineSupabaseRequest = <T>(
+  env: Env,
+  path: string,
+  init: RequestInitWithRetry,
+) => supabaseRequest<T>(env, path, {
+  timeoutMs: PIPELINE_DB_TIMEOUT_MS,
+  ...init,
+  retries: 0,
+});
+
+function unwrapJsonbArray<T extends Record<string, unknown>>(
+  payload: unknown,
+  functionName: string,
+): T[] | null {
+  const unwrapRows = (value: unknown) =>
+    Array.isArray(value) && value.every(isRecord) ? value as T[] : null;
+  if (Array.isArray(payload)) {
+    if (
+      payload.length === 1
+      && isRecord(payload[0])
+      && Object.hasOwn(payload[0], functionName)
+    ) {
+      return unwrapRows(payload[0][functionName]);
+    }
+    return unwrapRows(payload);
+  }
+  if (isRecord(payload) && Object.hasOwn(payload, functionName)) {
+    return unwrapRows(payload[functionName]);
+  }
+  return null;
+}
+
+const unwrapPipelineReviewScope = <T extends Record<string, unknown>>(payload: unknown) =>
+  unwrapJsonbArray<T>(payload, 'get_pipeline_review_scope');
+
+async function fetchScopedReviewRows<T extends Record<string, unknown>>(
+  env: Env,
+  claim: PipelineClaim,
+  reviewIds: string[],
+  heartbeatStage: PipelineStage | null,
+  expectedScope: { appStoreId: string; country: string },
+  includeAnalysis: boolean,
+): Promise<ReviewLookupResult<T>> {
+  if (
+    reviewIds.length === 0
+    || reviewIds.length > MAX_FETCH_REVIEW_CAP
+    || new Set(reviewIds).size !== reviewIds.length
+  ) {
+    return { status: 'invalid', rows: [] };
+  }
+
+  const beforeLookup = await renewPipelineJobClaim(env, claim, heartbeatStage);
+  if (beforeLookup?.status !== 'running') return { status: 'claim_lost', rows: [] };
+  const payload = await pipelineSupabaseRequest<unknown>(env, '/rest/v1/rpc/get_pipeline_review_scope', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_app_store_id: expectedScope.appStoreId,
+      p_country: expectedScope.country,
+      p_review_ids: reviewIds,
+      p_include_analysis: includeAnalysis,
+    }),
+    idempotent: true,
+  });
+  const afterLookup = await renewPipelineJobClaim(env, claim, heartbeatStage);
+  if (afterLookup?.status !== 'running') return { status: 'claim_lost', rows: [] };
+  const rows = unwrapPipelineReviewScope<T>(payload);
+  if (!rows) return { status: 'invalid', rows: [] };
+
+  const requestedIds = new Set(reviewIds);
+  const rowsById = new Map<string, T>();
+  for (const row of rows) {
+    const reviewId = String(row.review_id || '').trim();
+    const appStoreId = String(row.app_store_id || '').trim();
+    const country = String(row.country || '').trim().toLowerCase();
+    if (
+      !requestedIds.has(reviewId)
+      || rowsById.has(reviewId)
+      || appStoreId !== expectedScope.appStoreId
+      || country !== expectedScope.country
+    ) {
+      return { status: 'invalid', rows: [] };
+    }
+    rowsById.set(reviewId, row);
+  }
+
+  return {
+    status: 'ok',
+    rows: reviewIds.flatMap((reviewId) => {
+      const row = rowsById.get(reviewId);
+      return row ? [row] : [];
+    }),
+  };
+}
 
 async function handleInternalFetchReviews(env: Env, request: Request, rawBody: string) {
   const verified = await verifySignedRequest(env, request, rawBody);
@@ -52,6 +162,24 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
 
   const claim = normalizePipelineClaim(body);
   if (!claim) return badRequest(env, 'jobId, claimToken, and runId are required');
+  const deadlineAt = Date.now() + FETCH_REVIEWS_DEADLINE_MS;
+  const remainingBudget = (requiredMs = 1) => {
+    const remainingMs = Math.floor(deadlineAt - Date.now());
+    if (remainingMs < requiredMs) {
+      throw new UpstreamRequestError('apple', 504, 'review_fetch_deadline_exceeded');
+    }
+    return remainingMs;
+  };
+  const applePageTimeout = () => Math.min(
+    APPLE_REVIEW_PAGE_TIMEOUT_MS,
+    remainingBudget(),
+  );
+  const renewFetchClaim = async () => {
+    remainingBudget(PIPELINE_DB_TIMEOUT_MS + 1);
+    const heartbeat = await renewPipelineJobClaim(env, claim, 'fetching');
+    if (heartbeat?.status !== 'running') return null;
+    return heartbeat;
+  };
   const activeClaim = await renewPipelineJobClaim(env, claim, 'fetching');
   if (activeClaim?.status !== 'running') return jobClaimLost(env);
 
@@ -78,12 +206,19 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
   const seenIds = new Set<string>();
   let pagesFetched = 0;
   let truncated = false;
-  let rssFirstPageError: string | null = null;
+  let collectionComplete = false;
+  let terminationReason = '';
+  let rssFirstPageFailed = false;
 
-  for (let page = 1; page <= maxPages && reviews.length < limitCap; page += 1) {
-    if (page > 1 && page % 10 === 1) {
-      const heartbeat = await renewPipelineJobClaim(env, claim, 'fetching');
-      if (heartbeat?.status !== 'running') return jobClaimLost(env);
+  const failIncompletePage = (): never => {
+    throw new UpstreamRequestError('apple', 503, 'review_page_incomplete');
+  };
+
+  for (let page = 1; page <= maxPages + 1 && reviews.length < limitCap; page += 1) {
+    const isProbePage = page > maxPages;
+    if (!isProbePage && page > 1 && page % 10 === 1) {
+      const heartbeat = await renewFetchClaim();
+      if (!heartbeat) return jobClaimLost(env);
     }
     // Apple RSS currently returns the standard 50-review page without a limit segment.
     // Keeping /limit=50/ in this path can yield an incomplete feed or a 403 from edge networks.
@@ -95,49 +230,63 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
         accept: 'application/json',
         'user-agent': 'VoC-Radar/0.2',
       },
-      timeoutMs: 30000,
-      retries: 2,
+      timeoutMs: applePageTimeout(),
+      retries: 0,
       idempotent: true,
+      redirect: 'manual',
     });
 
     if (!response.ok) {
       if (page === 1) {
-        rssFirstPageError = `iTunes RSS fetch failed (${response.status})`;
+        rssFirstPageFailed = true;
+        break;
       }
-      break;
+      failIncompletePage();
     }
 
-    pagesFetched += 1;
+    if (!isProbePage) pagesFetched += 1;
 
     let payload: Record<string, unknown> = {};
     try {
       payload = (await response.json()) as Record<string, unknown>;
     } catch {
       if (page === 1) {
-        throw new Error('iTunes response parse failed');
+        rssFirstPageFailed = true;
+        break;
       }
-      break;
+      failIncompletePage();
     }
 
     const feed = payload.feed as Record<string, unknown> | undefined;
     const entries = Array.isArray(feed?.entry) ? (feed.entry as Array<Record<string, unknown>>) : [];
     if (entries.length === 0) {
+      collectionComplete = true;
+      terminationReason = 'empty_page';
       break;
     }
 
     let addedInPage = 0;
     let reachedOlderReviews = false;
+    let invalidEntry = false;
+    let probeHasMore = false;
     for (const entry of entries) {
       const reviewId = String((entry.id as { label?: string } | undefined)?.label ?? entry.id ?? '').trim();
       const rating = normalizeRating((entry['im:rating'] as { label?: string } | undefined)?.label ?? entry['im:rating']);
-      const reviewedAt = normalizeReviewedAt((entry.updated as { label?: string } | undefined)?.label ?? entry.updated);
-      const reviewedAtMs = new Date(reviewedAt).getTime();
+      const rawReviewedAt = (entry.updated as { label?: string } | undefined)?.label ?? entry.updated;
+      const reviewedAtMs = new Date(String(rawReviewedAt || '')).getTime();
+      const reviewedAt = Number.isFinite(reviewedAtMs) ? new Date(reviewedAtMs).toISOString() : '';
 
-      if (!reviewId || rating <= 0 || seenIds.has(reviewId)) {
+      if (!reviewId || rating <= 0 || !Number.isFinite(reviewedAtMs) || seenIds.has(reviewId)) {
+        invalidEntry = true;
         continue;
       }
-      if (!Number.isFinite(reviewedAtMs) || reviewedAtMs < cutoff) {
+      if (reviewedAtMs < cutoff) {
         reachedOlderReviews = true;
+        continue;
+      }
+
+      if (isProbePage) {
+        probeHasMore = true;
         continue;
       }
 
@@ -163,25 +312,54 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
 
       if (reviews.length >= limitCap) {
         truncated = true;
+        terminationReason = 'review_cap';
         break;
       }
     }
 
+    if (invalidEntry) failIncompletePage();
+    if (isProbePage) {
+      if (probeHasMore) {
+        truncated = true;
+        terminationReason = 'max_pages';
+      } else if (reachedOlderReviews) {
+        collectionComplete = true;
+        terminationReason = 'window_cutoff';
+      } else {
+        failIncompletePage();
+      }
+      break;
+    }
+    if (truncated) break;
     if (reachedOlderReviews) {
+      collectionComplete = true;
+      terminationReason = 'window_cutoff';
       break;
     }
     if (addedInPage === 0) {
+      failIncompletePage();
+    }
+    if (entries.length < APPLE_RSS_REVIEW_PAGE_SIZE) {
+      collectionComplete = true;
+      terminationReason = 'short_page';
       break;
     }
   }
 
   // Some apps or Apple edge locations return an empty/blocked RSS feed.
   // The storefront review-row endpoint is the current fallback for the KR storefront.
-  if (reviews.length === 0 && country === 'kr') {
-    for (let page = 0; page < maxPages && reviews.length < limitCap; page += 1) {
-      if (page > 0 && page % 10 === 0) {
-        const heartbeat = await renewPipelineJobClaim(env, claim, 'fetching');
-        if (heartbeat?.status !== 'running') return jobClaimLost(env);
+  if (
+    reviews.length === 0
+    && country === 'kr'
+    && (rssFirstPageFailed || terminationReason === 'empty_page')
+  ) {
+    collectionComplete = false;
+    terminationReason = '';
+    for (let page = 0; page <= maxPages && reviews.length < limitCap; page += 1) {
+      const isProbePage = page >= maxPages;
+      if (!isProbePage && page > 0 && page % 10 === 0) {
+        const heartbeat = await renewFetchClaim();
+        if (!heartbeat) return jobClaimLost(env);
       }
       const startIndex = page * ITUNES_USER_REVIEW_PAGE_SIZE;
       const endIndex = startIndex + ITUNES_USER_REVIEW_PAGE_SIZE - 1;
@@ -198,43 +376,57 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
             'iTunes/12.12.10 (Windows; Microsoft Windows 10 x64 Business Edition (Build 19045); x64) AppleWebKit/7613.300.10.1',
           'x-apple-store-front': '143466-13,29',
         },
-        timeoutMs: 30000,
-        retries: 2,
+        timeoutMs: applePageTimeout(),
+        retries: 0,
         idempotent: true,
+        redirect: 'manual',
       });
 
       if (!response.ok) {
-        if (page === 0 && rssFirstPageError) {
-          throw new Error(rssFirstPageError);
-        }
-        break;
+        failIncompletePage();
       }
 
-      const payload = (await response.json()) as {
-        userReviewList?: Array<Record<string, unknown>>;
-      };
+      let payload: { userReviewList?: Array<Record<string, unknown>> } = {};
+      try {
+        payload = (await response.json()) as { userReviewList?: Array<Record<string, unknown>> };
+      } catch {
+        failIncompletePage();
+      }
       const entries = Array.isArray(payload.userReviewList) ? payload.userReviewList : [];
       if (entries.length === 0) {
+        collectionComplete = true;
+        terminationReason = 'empty_page';
         break;
       }
 
-      pagesFetched += 1;
+      if (!isProbePage) pagesFetched += 1;
+      let addedInPage = 0;
       let reachedOlderReviews = false;
+      let invalidEntry = false;
+      let probeHasMore = false;
       for (const entry of entries) {
         const reviewId = String(entry.userReviewId || '').trim();
         const rating = normalizeRating(entry.rating);
-        const reviewedAt = normalizeReviewedAt(entry.date);
-        const reviewedAtMs = new Date(reviewedAt).getTime();
+        const rawReviewedAt = entry.date;
+        const reviewedAtMs = new Date(String(rawReviewedAt || '')).getTime();
+        const reviewedAt = Number.isFinite(reviewedAtMs) ? new Date(reviewedAtMs).toISOString() : '';
 
-        if (!reviewId || rating <= 0 || seenIds.has(reviewId)) {
+        if (!reviewId || rating <= 0 || !Number.isFinite(reviewedAtMs) || seenIds.has(reviewId)) {
+          invalidEntry = true;
           continue;
         }
-        if (!Number.isFinite(reviewedAtMs) || reviewedAtMs < cutoff) {
+        if (reviewedAtMs < cutoff) {
           reachedOlderReviews = true;
           continue;
         }
 
+        if (isProbePage) {
+          probeHasMore = true;
+          continue;
+        }
+
         seenIds.add(reviewId);
+        addedInPage += 1;
         reviews.push({
           reviewId,
           author: String(entry.name || 'unknown').trim(),
@@ -245,18 +437,56 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
 
         if (reviews.length >= limitCap) {
           truncated = true;
+          terminationReason = 'review_cap';
           break;
         }
       }
 
+      if (invalidEntry) failIncompletePage();
+      if (isProbePage) {
+        if (probeHasMore) {
+          truncated = true;
+          terminationReason = 'max_pages';
+        } else if (reachedOlderReviews) {
+          collectionComplete = true;
+          terminationReason = 'window_cutoff';
+        } else {
+          failIncompletePage();
+        }
+        break;
+      }
+      if (truncated) break;
       if (reachedOlderReviews) {
+        collectionComplete = true;
+        terminationReason = 'window_cutoff';
+        break;
+      }
+      if (addedInPage === 0) failIncompletePage();
+      if (entries.length < ITUNES_USER_REVIEW_PAGE_SIZE) {
+        collectionComplete = true;
+        terminationReason = 'short_page';
         break;
       }
     }
   }
 
-  if (reviews.length === 0 && rssFirstPageError) {
-    throw new Error(rssFirstPageError);
+  if (rssFirstPageFailed && country !== 'kr') failIncompletePage();
+  if (!collectionComplete && !truncated) failIncompletePage();
+
+  if (truncated) {
+    remainingBudget(PIPELINE_DB_TIMEOUT_MS + 1);
+    const completion = await completePipelineJob(env, {
+      ...claim,
+      status: 'failed',
+      errorMessage: 'review_scope_incomplete',
+    });
+    if (!completion.updated) return jobClaimLost(env);
+    return errorResponse(
+      env,
+      422,
+      'review_scope_incomplete',
+      '요청 기간의 리뷰가 현재 수집 한도를 초과했습니다. 부분 데이터는 게시하지 않았으며 기존 공개 리포트는 변경되지 않았습니다. 수집 범위가 확장되기 전에는 같은 조건으로 재시도하지 마세요.',
+    );
   }
 
   return jsonResponse(env, 200, {
@@ -270,7 +500,9 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
       pagesFetched,
       reviews,
       totalFetched: reviews.length,
-      truncated,
+      complete: true,
+      truncated: false,
+      terminationReason,
     },
   });
 }
@@ -313,6 +545,20 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
     ...claim,
     status: 'completed',
   });
+  const failUnknownReviewIds = async () => {
+    const completion = await completePipelineJob(env, {
+      ...claim,
+      status: 'failed',
+      errorMessage: 'The requested review scope was unavailable. Retry the request.',
+    });
+    if (!completion.updated) return jobClaimLost(env);
+    return errorResponse(
+      env,
+      422,
+      'unknown_review_ids',
+      '입력 리뷰를 확인하지 못했습니다. 작업은 실패 상태이며 다시 요청할 수 있습니다.',
+    );
+  };
 
   const inputReviews = Array.isArray(body?.reviews) ? body.reviews : [];
   if (inputReviews.length === 0) {
@@ -353,37 +599,34 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
     });
   }
 
-  // 이미 적재된 review_id를 먼저 제외해서 중복 분석/중복 저장을 막는다.
-  const existingRows = await supabaseRequest<Array<{ review_id: string }>>(env, '/rest/v1/rpc/get_existing_review_ids', {
-    method: 'POST',
-    body: JSON.stringify({
-      p_app_store_id: appStoreId,
-      p_country: country,
-      p_review_ids: normalizedReviews.map((review) => review.reviewId),
-    }),
-    idempotent: true,
-  });
+  // The scalar JSONB RPC avoids PostgREST's set-returning row cap while keeping
+  // all committed-review scope checks behind the service-role boundary.
+  const lookup = await fetchScopedReviewRows<Record<string, unknown>>(
+    env,
+    claim,
+    normalizedReviews.map((review) => review.reviewId),
+    'extracting',
+    { appStoreId, country },
+    true,
+  );
+  if (lookup.status === 'claim_lost') return jobClaimLost(env);
+  if (lookup.status === 'invalid') return failUnknownReviewIds();
 
-  const existingIds = new Set(existingRows.map((row) => row.review_id));
+  const existingRows = lookup.rows;
+  const existingIds = new Set(existingRows.map((row) => String(row.review_id || '')));
   const freshReviews = normalizedReviews.filter((review) => !existingIds.has(review.reviewId));
   const incomingReviewsById = new Map(normalizedReviews.map((review) => [review.reviewId, review]));
   let existingExtractions: Array<Record<string, unknown>> = [];
   if (forceReanalysis && existingIds.size > 0) {
-    const idFilter = [...existingIds].map((id) => encodeURIComponent(id)).join(',');
-    const rows = await supabaseRequest<Array<Record<string, unknown>>>(
-      env,
-      `/rest/v1/private_review_feed?select=review_id,rating,author,content,reviewed_at,priority,category,summary&review_id=in.(${idFilter})`,
-      { method: 'GET', idempotent: true },
-    );
-    existingExtractions = rows.map((row) => {
-      const incoming = incomingReviewsById.get(String(row.review_id || ''));
+    existingExtractions = existingRows.map((row) => {
+      const incoming = incomingReviewsById.get(String(row.review_id || ''))!;
       return {
         ID: row.review_id,
         id: row.review_id,
-        rating: incoming?.rating ?? row.rating,
-        author: incoming?.author ?? row.author,
-        content: incoming?.content ?? row.content,
-        date: incoming?.reviewedAt ?? row.reviewed_at,
+        rating: incoming.rating,
+        author: incoming.author,
+        content: incoming.content,
+        date: incoming.reviewedAt,
         priority: row.priority,
         category: row.category,
         summary: row.summary,
@@ -399,9 +642,6 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
   if (freshReviews.length === 0 && !forceReanalysis) {
     const completion = await completeJobIfNoNewReviews();
     if (!completion.updated) return jobClaimLost(env);
-  } else {
-    const heartbeat = await renewPipelineJobClaim(env, claim, 'extracting');
-    if (heartbeat?.status !== 'running') return jobClaimLost(env);
   }
 
   return jsonResponse(env, 200, {
@@ -446,7 +686,7 @@ async function handleInternalClaimJob(env: Env, request: Request, rawBody: strin
   const fallbackCountry = allowFallback ? normalizeCountry(body.fallbackCountry) : null;
   const fallbackAppName = allowFallback ? normalizeOptionalText(body.fallbackAppName, 120) : null;
 
-  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/claim_pipeline_job', {
+  const rows = await pipelineSupabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/claim_pipeline_job', {
     method: 'POST',
     body: JSON.stringify({
       p_claim_key: claimKey,
@@ -537,6 +777,40 @@ async function handleInternalJobStatus(env: Env, request: Request, rawBody: stri
   return jsonResponse(env, 200, { ok: true, data });
 }
 
+async function handleInternalPipelineHeartbeat(env: Env, request: Request, rawBody: string) {
+  const verified = await verifySignedRequest(env, request, rawBody);
+  if (!verified) return unauthorized(env, 'invalid signature');
+
+  let body: PipelineHeartbeatRequest;
+  try {
+    body = JSON.parse(rawBody) as PipelineHeartbeatRequest;
+  } catch {
+    return badRequest(env, 'invalid payload');
+  }
+
+  const claim = normalizePipelineClaim(body);
+  const stage = (body?.stage || '').toString().trim().toLowerCase();
+  if (!claim || !['extracting', 'clustering'].includes(stage)) {
+    return badRequest(env, 'jobId, claimToken, runId, and an active analysis stage are required');
+  }
+
+  const activeClaim = await renewPipelineJobClaim(
+    env,
+    claim,
+    stage as PipelineHeartbeatRequest['stage'],
+  );
+  if (activeClaim?.status !== 'running') return jobClaimLost(env);
+
+  return jsonResponse(env, 200, {
+    ok: true,
+    data: {
+      status: 'running',
+      stage,
+      leaseExpiresAt: activeClaim.lease_expires_at || null,
+    },
+  });
+}
+
 async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: string) {
   const verified = await verifySignedRequest(env, request, rawBody);
   if (!verified) return unauthorized(env, 'invalid signature');
@@ -570,6 +844,9 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
     );
   };
 
+  if (body.reviews.length < 1 || body.reviews.length > MAX_FETCH_REVIEW_CAP) {
+    return rejectReviewPersistence();
+  }
   if (body.reviews.some((review) => !review || typeof review !== 'object')) {
     return rejectReviewPersistence();
   }
@@ -622,7 +899,7 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
 
   let rows: Array<Record<string, unknown>>;
   try {
-    rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/persist_pipeline_reviews', {
+    rows = await pipelineSupabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/persist_pipeline_reviews', {
       method: 'POST',
       body: JSON.stringify({
         p_job_id: claim.jobId,
@@ -635,6 +912,8 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
         p_reviews: reviewRows,
       }),
       idempotent: true,
+      timeoutMs: 60_000,
+      retries: 0,
     });
   } catch (error) {
     const upstreamCode = error instanceof UpstreamRequestError ? error.upstreamCode : null;
@@ -672,7 +951,10 @@ async function handleInternalUpsertClusters(env: Env, request: Request, rawBody:
     return badRequest(env, 'jobId, claimToken, runId, app scope, modelVersion, and inputReviewIds are required');
   }
 
-  const activeClaim = await renewPipelineJobClaim(env, claim, 'clustering');
+  // persist_issue_clusters owns the atomic transition to publishing. This
+  // guard must not move an already-persisted retry back to clustering when the
+  // first response was lost after the database commit.
+  const activeClaim = await renewPipelineJobClaim(env, claim);
   if (activeClaim?.status !== 'running') return jobClaimLost(env);
 
   let validated;
@@ -694,16 +976,19 @@ async function handleInternalUpsertClusters(env: Env, request: Request, rawBody:
   }
 
   const reviewIds = validated.extractions.map((item) => item.reviewId);
-  const reviewFilter = reviewIds.map((id) => encodeURIComponent(id)).join(',');
-  const reviewRows = await supabaseRequest<Array<Record<string, unknown>>>(
+  const lookup = await fetchScopedReviewRows<Record<string, unknown>>(
     env,
-    '/rest/v1/reviews?select=review_id,reviewed_at&app_store_id=eq.' + encodeURIComponent(appStoreId)
-      + '&country=eq.' + encodeURIComponent(country) + '&review_id=in.(' + reviewFilter + ')',
-    { method: 'GET', idempotent: true },
+    claim,
+    reviewIds,
+    null,
+    { appStoreId, country },
+    false,
   );
+  if (lookup.status === 'claim_lost') return jobClaimLost(env);
+  const reviewRows = lookup.rows;
   const reviewedAtById = new Map(reviewRows.map((row) => [String(row.review_id || ''), String(row.reviewed_at || '')]));
   const missingReviewIds = reviewIds.filter((id) => !reviewedAtById.has(id));
-  if (missingReviewIds.length > 0) {
+  if (lookup.status === 'invalid' || missingReviewIds.length > 0) {
     const completion = await completePipelineJob(env, {
       ...claim,
       status: 'failed',
@@ -742,7 +1027,7 @@ async function handleInternalUpsertClusters(env: Env, request: Request, rawBody:
 
   let rows: Array<Record<string, unknown>>;
   try {
-    rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/persist_issue_clusters', {
+    rows = await pipelineSupabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/persist_issue_clusters', {
       method: 'POST',
       body: JSON.stringify({
         p_job_id: claim.jobId,
@@ -758,6 +1043,8 @@ async function handleInternalUpsertClusters(env: Env, request: Request, rawBody:
         p_validation_result: validationResult,
       }),
       idempotent: true,
+      timeoutMs: 60_000,
+      retries: 0,
     });
   } catch (error) {
     if (error instanceof UpstreamRequestError && error.upstreamCode === '23514') {
@@ -802,25 +1089,78 @@ async function handleInternalClusterContext(env: Env, request: Request, rawBody:
   if (!claim || !appStoreId) return badRequest(env, 'job claim and numeric appStoreId are required');
   const activeClaim = await renewPipelineJobClaim(env, claim, 'clustering');
   if (activeClaim?.status !== 'running') return jobClaimLost(env);
-  const data = await supabaseRequest<Array<Record<string, unknown>>>(
+  const payload = await pipelineSupabaseRequest<unknown>(
     env,
-    '/rest/v1/rpc/get_pipeline_cluster_context',
+    '/rest/v1/rpc/get_pipeline_cluster_context_v2',
     {
       method: 'POST',
       body: JSON.stringify({ p_app_store_id: appStoreId, p_country: country }),
       idempotent: true,
     },
   );
+  const rows = unwrapJsonbArray<Record<string, unknown>>(payload, 'get_pipeline_cluster_context_v2');
+  if (!rows || rows.length > MAX_FETCH_REVIEW_CAP) {
+    return errorResponse(
+      env,
+      502,
+      'cluster_context_invalid',
+      '클러스터 기준 데이터를 확인하지 못했습니다. 기존 공개 리포트는 유지되며 작업을 다시 시도할 수 있습니다.',
+      true,
+    );
+  }
+
+  const seenIssueIds = new Set<string>();
+  const data: Array<Record<string, unknown>> = [];
+  for (const row of rows) {
+    const issueId = String(row.issue_id || '').trim();
+    const canonicalKey = String(row.canonical_key || '').trim();
+    const title = String(row.title || '').trim();
+    const category = String(row.category || '').trim();
+    const summary = String(row.summary || '').trim();
+    const firstSeenAt = String(row.first_seen_at || '').trim();
+    const lastSeenAt = String(row.last_seen_at || '').trim();
+    const reviewCount = Number(row.review_count);
+    if (
+      !isUuid(issueId)
+      || seenIssueIds.has(issueId)
+      || !canonicalKey
+      || canonicalKey.length > 160
+      || !title
+      || title.length > 120
+      || normalizeVocCategory(category, '', '') !== category
+      || !summary
+      || summary.length > 400
+      || !Number.isFinite(new Date(firstSeenAt).getTime())
+      || !Number.isFinite(new Date(lastSeenAt).getTime())
+      || !Number.isInteger(reviewCount)
+      || reviewCount < 1
+    ) {
+      return errorResponse(
+        env,
+        502,
+        'cluster_context_invalid',
+        '클러스터 기준 데이터를 확인하지 못했습니다. 기존 공개 리포트는 유지되며 작업을 다시 시도할 수 있습니다.',
+        true,
+      );
+    }
+    seenIssueIds.add(issueId);
+    data.push({
+      issueId,
+      canonicalKey,
+      title,
+      category,
+      summary,
+      firstSeenAt,
+      lastSeenAt,
+      reviewCount,
+    });
+  }
+
+  const freshClaim = await renewPipelineJobClaim(env, claim, 'clustering');
+  if (freshClaim?.status !== 'running') return jobClaimLost(env);
   return jsonResponse(env, 200, {
     ok: true,
-    data: data.map((row) => ({
-      issueId: row.issue_id,
-      canonicalKey: row.canonical_key,
-      title: row.title,
-      category: row.category,
-      firstSeenAt: row.first_seen_at,
-      lastSeenAt: row.last_seen_at,
-    })),
+    data,
   });
 }
 
@@ -840,7 +1180,7 @@ async function handleInternalParseError(env: Env, request: Request, rawBody: str
     return badRequest(env, 'job claim, parseErrorId, and message are required');
   }
 
-  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/record_pipeline_parse_error', {
+  const rows = await pipelineSupabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/record_pipeline_parse_error', {
     method: 'POST',
     body: JSON.stringify({
       p_job_id: claim.jobId,
@@ -880,7 +1220,7 @@ async function handleInternalPublish(env: Env, request: Request, rawBody: string
   const requestedPublishedAt = normalizeOptionalText(body.publishedAt, 80);
   let rows: Array<Record<string, unknown>>;
   try {
-    rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/publish_pipeline_run', {
+    rows = await pipelineSupabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/publish_pipeline_run', {
       method: 'POST',
       body: JSON.stringify({
         p_job_id: claim.jobId,
@@ -954,7 +1294,7 @@ async function handleInternalAlertEvents(env: Env, request: Request, rawBody: st
     };
   });
 
-  const persisted = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/persist_pipeline_alerts', {
+  const persisted = await pipelineSupabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/persist_pipeline_alerts', {
     method: 'POST',
     body: JSON.stringify({
       p_job_id: claim.jobId,
@@ -979,6 +1319,7 @@ export async function routeInternalRequest(env: Env, request: Request): Promise<
     '/api/internal/pipeline/claim-job': (rawBody) => handleInternalClaimJob(env, request, rawBody),
     '/api/internal/pipeline/fetch-reviews': (rawBody) => handleInternalFetchReviews(env, request, rawBody),
     '/api/internal/pipeline/job-status': (rawBody) => handleInternalJobStatus(env, request, rawBody),
+    '/api/internal/pipeline/heartbeat': (rawBody) => handleInternalPipelineHeartbeat(env, request, rawBody),
     '/api/internal/pipeline/filter-new-reviews': (rawBody) => handleInternalFilterNewReviews(env, request, rawBody),
     '/api/internal/pipeline/upsert-reviews': (rawBody) => handleInternalUpsertReviews(env, request, rawBody),
     '/api/internal/pipeline/upsert-clusters': (rawBody) => handleInternalUpsertClusters(env, request, rawBody),

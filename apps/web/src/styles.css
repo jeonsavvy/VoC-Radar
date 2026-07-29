@@ -56,6 +56,7 @@ button { border: 0; }
 .product-header__actions { justify-self: end; display: flex; align-items: center; gap: 10px; }
 .login-link { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px; border: 1px solid #d5dbe4; border-radius: 6px; background: #fff; font-size: 13px; font-weight: 600; }
 .login-link svg { width: 16px; }
+.login-link--checking { color: #697386; cursor: progress; }
 .icon-button { display: inline-grid; width: 40px; height: 40px; place-items: center; border-radius: 6px; background: transparent; color: #5e6878; }
 .icon-button:hover { background: #f0f3f7; color: #172033; }
 .icon-button svg { width: 18px; }
@@ -167,6 +168,7 @@ button { border: 0; }
 .not-analyzed h2 { margin: 0 0 24px; font-size: 28px; letter-spacing: -.04em; }
 
 .issues-table { border-top: 1px solid #cfd6df; border-bottom: 1px solid #cfd6df; background: #fff; }
+.issues-table__scope { margin: 0; padding: 10px 18px; border-bottom: 1px solid #dbe1e8; color: #606b7a; font-size: 12px; }
 .issues-table__head, .issue-row { display: grid; grid-template-columns: minmax(260px, 2.2fr) 90px 90px 100px 110px 120px; align-items: center; gap: 12px; }
 .issues-table__head { height: 43px; padding: 0 18px; background: #f3f5f8; color: #667181; font-size: 11px; font-weight: 600; }
 .issue-row { width: 100%; min-height: 72px; padding: 11px 18px; border-top: 1px solid #e2e6eb; background: #fff; color: #263246; text-align: left; }
@@ -199,6 +201,7 @@ button { border: 0; }
 .review-search { width: min(420px, 100%); height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid #cfd6df; background: #fff; }
 .review-search svg { width: 15px; color: #798392; }
 .review-search input { flex: 1; border: 0; outline: 0; font-size: 12px; }
+.review-search:focus-within { outline: 2px solid #2457d6; outline-offset: 2px; }
 .review-search input::placeholder { color: #697386; opacity: 1; }
 .reviews-view .report-skeleton, .reviews-view .error-state, .reviews-view .quiet-empty { margin-top: 18px; }
 .public-review-list { margin-top: 18px; border-top: 1px solid #d4dae2; }
@@ -286,6 +289,18 @@ button { border: 0; }
   .overview-columns { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 779px) {
+  .issues-table { border: 0; background: transparent; }
+  .issues-table__head { display: none; }
+  .issue-row { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 10px 12px; min-height: 0; margin-bottom: 10px; padding: 15px; border: 1px solid #dce1e8 !important; background: #fff; }
+  .issue-row__name { grid-column: 1 / -1; padding-right: 72px; }
+  .issue-row__name strong { white-space: normal; }
+  .issue-row > span:nth-child(2) { position: absolute; right: 16px; }
+  .issue-row > span[data-label] { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 5px; }
+  .issue-row > span[data-label]::before { content: attr(data-label); color: #697386; }
+  .issue-row > span:nth-child(3), .issue-row > span:nth-child(6) { display: none; }
+}
+
 @media (max-width: 640px) {
   .product-header__inner { width: calc(100% - 24px); height: 56px; }
   .wordmark { font-size: 17px; }
@@ -309,15 +324,6 @@ button { border: 0; }
   .request-banner { align-items: flex-start; flex-direction: column; }
   .report-tabs { gap: 22px; overflow-x: auto; }
   .report-content { padding-top: 16px; }
-  .issues-table { border: 0; background: transparent; }
-  .issues-table__head { display: none; }
-  .issue-row { position: relative; display: grid; grid-template-columns: 1fr auto; gap: 10px 12px; min-height: 0; margin-bottom: 10px; padding: 15px; border: 1px solid #dce1e8 !important; background: #fff; }
-  .issue-row__name { grid-column: 1 / -1; padding-right: 20px; }
-  .issue-row__name strong { white-space: normal; }
-  .issue-row > span:nth-child(2) { position: absolute; right: 16px; }
-  .issue-row > span[data-label] { display: grid; grid-template-columns: auto auto; justify-content: start; gap: 5px; }
-  .issue-row > span[data-label]::before { content: attr(data-label); color: #697386; }
-  .issue-row > span:nth-child(3), .issue-row > span:nth-child(6) { display: none; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .metric-grid > div { min-height: 98px; border-bottom: 1px solid #e1e5ea; }
   .metric-grid > div:nth-child(2) { border-right: 0; }

@@ -17,6 +17,7 @@ import {
   parseRatingFilter,
   normalizePriorityFilter,
   normalizeSearchKeyword,
+  normalizeTimestampFilter,
   normalizeCountry,
   normalizeAppStoreId,
   normalizeOptionalText,
@@ -183,62 +184,41 @@ async function handlePublicCategories(env: Env, request: Request) {
 async function handlePublicApps(env: Env, request: Request) {
   const { searchParams } = new URL(request.url);
   const limit = clampLimit(searchParams.get('limit'), 20, 100);
-  const runLimit = Math.min(Math.max(limit * 10, limit), 200);
-  const recentRuns = await supabaseRequest<Array<Record<string, unknown>>>(
+  const rows = await supabaseRequest<Array<Record<string, unknown>>>(
     env,
-    `/rest/v1/pipeline_runs?select=app_store_id,country,executed_at,published_at,updated_at,review_count,status&status=eq.published&review_count=gt.0&order=published_at.desc.nullslast&limit=${runLimit}`,
+    '/rest/v1/rpc/get_public_apps',
     {
-      method: 'GET',
+      method: 'POST',
+      body: JSON.stringify({ p_limit: limit }),
       idempotent: true,
     },
   );
 
-  const recentApps: Array<{ app_store_id: string; country: string; updated_at: string }> = [];
+  const data: Array<{
+    app_store_id: string;
+    country: string;
+    app_name: string | null;
+    updated_at: string;
+  }> = [];
   const seen = new Set<string>();
-
-  for (const row of recentRuns) {
+  for (const row of rows) {
     const appStoreId = normalizeAppStoreId(String(row.app_store_id ?? ''));
-    const country = normalizeCountry(String(row.country ?? ''));
-    if (!appStoreId) {
-      continue;
-    }
+    const country = String(row.country ?? '').trim().toLowerCase();
+    const updatedAt = new Date(String(row.updated_at ?? ''));
+    if (!appStoreId || !/^[a-z]{2}$/.test(country) || !Number.isFinite(updatedAt.getTime())) continue;
 
     const key = `${appStoreId}:${country}`;
-    if (seen.has(key)) {
-      continue;
-    }
+    if (seen.has(key)) continue;
 
     seen.add(key);
-    recentApps.push({
+    data.push({
       app_store_id: appStoreId,
       country,
-      updated_at: String(row.published_at || row.executed_at || row.updated_at || new Date().toISOString()),
+      app_name: String(row.app_name || '').trim() || null,
+      updated_at: updatedAt.toISOString(),
     });
-
-    if (recentApps.length >= limit) {
-      break;
-    }
+    if (data.length >= limit) break;
   }
-
-  const appsMeta = await Promise.all(
-    recentApps.map(async (item) => {
-      const rows = await supabaseRequest<Array<Record<string, unknown>>>(
-        env,
-        `/rest/v1/apps?select=app_name&app_store_id=eq.${encodeURIComponent(item.app_store_id)}&country=eq.${encodeURIComponent(item.country)}&limit=1`,
-        {
-          method: 'GET',
-          idempotent: true,
-        },
-      );
-
-      return {
-        ...item,
-        app_name: String(rows[0]?.app_name || '').trim() || null,
-      };
-    }),
-  );
-
-  const data = appsMeta.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 
   return jsonResponse(env, 200, { data });
 }
@@ -648,35 +628,104 @@ function mapIssueCluster(row: Record<string, unknown>) {
   };
 }
 
-async function getPublicIssueClusters(env: Env, appId: string, country: string, limit = 50) {
-  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_issue_clusters', {
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_PUBLIC_REVIEW_WINDOW_MS = 90 * DAY_MS;
+
+function getCurrentReviewWindow() {
+  const nextUtcMidnightMs = (Math.floor(Date.now() / DAY_MS) + 1) * DAY_MS;
+  return {
+    from: new Date(nextUtcMidnightMs - 30 * DAY_MS).toISOString(),
+    to: new Date(nextUtcMidnightMs - 1).toISOString(),
+  };
+}
+
+type RequestedReviewWindow =
+  | { ok: true; from: string; to: string; isDefault: boolean }
+  | { ok: false; message: string };
+
+function parseRequestedReviewWindow(searchParams: URLSearchParams): RequestedReviewWindow {
+  const rawFrom = searchParams.get('from');
+  const rawTo = searchParams.get('to');
+  if ((rawFrom === null) !== (rawTo === null)) {
+    return { ok: false, message: 'from and to must be provided together' };
+  }
+  if (rawFrom === null && rawTo === null) {
+    return { ok: true, ...getCurrentReviewWindow(), isDefault: true };
+  }
+
+  const from = normalizeTimestampFilter(rawFrom);
+  const to = normalizeTimestampFilter(rawTo);
+  if (!from) return { ok: false, message: 'from must be a valid timestamp' };
+  if (!to) return { ok: false, message: 'to must be a valid timestamp' };
+
+  const durationMs = Date.parse(to) - Date.parse(from);
+  if (durationMs < 0) return { ok: false, message: 'from must not be after to' };
+  if (durationMs > MAX_PUBLIC_REVIEW_WINDOW_MS) {
+    return { ok: false, message: 'from and to may cover at most 90 days' };
+  }
+  return { ok: true, from, to, isDefault: false };
+}
+
+async function getPublicIssueClusters(
+  env: Env,
+  appId: string,
+  country: string,
+  limit = 50,
+  from: string | null = null,
+  to: string | null = null,
+) {
+  const useWindowedRpc = boolFromEnv(env.REPORT_V2_ENABLED, false);
+  const requestBody: Record<string, unknown> = {
+    p_app_store_id: appId,
+    p_country: country,
+    p_limit: limit,
+  };
+  if (useWindowedRpc) {
+    requestBody.p_from = from;
+    requestBody.p_to = to;
+  }
+  const rpcName = useWindowedRpc ? 'get_public_issue_clusters_windowed' : 'get_public_issue_clusters';
+  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, `/rest/v1/rpc/${rpcName}`, {
     method: 'POST',
-    body: JSON.stringify({ p_app_store_id: appId, p_country: country, p_limit: limit }),
+    body: JSON.stringify(requestBody),
     idempotent: true,
   });
-  return rows.map(mapIssueCluster);
+  const reportedTotal = Number(rows[0]?.total_count);
+  return {
+    issues: rows.map(mapIssueCluster),
+    totalCount: Number.isSafeInteger(reportedTotal) && reportedTotal >= rows.length
+      ? reportedTotal
+      : rows.length,
+  };
 }
 
 async function handlePublicReport(env: Env, request: Request) {
-  if (!boolFromEnv(env.REPORT_V2_ENABLED, false)) {
-    return errorResponse(env, 404, 'report_v2_disabled', '이 리포트 기능은 현재 사용할 수 없습니다.');
-  }
-  const { searchParams } = new URL(request.url);
+  const reportUrl = new URL(request.url);
+  const { searchParams } = reportUrl;
   const appId = normalizeAppStoreId(searchParams.get('appId'));
   const country = normalizeCountry(searchParams.get('country'));
-  const from = searchParams.get('from');
-  const to = searchParams.get('to');
   if (!appId) return badRequest(env, 'appId is required');
+  const window = parseRequestedReviewWindow(searchParams);
+  if (!window.ok) return badRequest(env, window.message);
+  const { from, to } = window;
 
-  const version = await getCacheVersion(env);
-  const cacheKey = getPublicCacheKey(request, version);
+  const version = `${await getCacheVersion(env)}:${boolFromEnv(env.REPORT_V2_ENABLED, false) ? 'v2' : 'compat'}`;
+  if (window.isDefault) {
+    // Rotate omitted-window cache entries with the same UTC-day bucket used by the response.
+    reportUrl.searchParams.set('from', from || '');
+    reportUrl.searchParams.set('to', to || '');
+  }
+  const cacheKey = getPublicCacheKey(
+    window.isDefault ? new Request(reportUrl.toString(), { headers: request.headers }) : request,
+    version,
+  );
   const cache = await getEdgeCache();
   const cached = await cache.match(cacheKey);
   if (cached) {
     return withCors(env, cached);
   }
 
-  const [overviewRows, categories, trends, issues, runs, apps, catalog] = await Promise.all([
+  const [overviewRows, categories, trends, issueResult, runs, apps, catalog] = await Promise.all([
     supabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/get_public_overview', {
       method: 'POST',
       body: JSON.stringify({ p_app_store_id: appId, p_country: country, p_from: from, p_to: to }),
@@ -692,7 +741,7 @@ async function handlePublicReport(env: Env, request: Request) {
       body: JSON.stringify({ p_app_store_id: appId, p_country: country, p_from: from, p_to: to }),
       idempotent: true,
     }),
-    getPublicIssueClusters(env, appId, country),
+    getPublicIssueClusters(env, appId, country, 50, from, to),
     supabaseRequest<Array<Record<string, unknown>>>(
       env,
       `/rest/v1/pipeline_runs?select=run_id,status,model_version,published_at,updated_at&app_store_id=eq.${encodeURIComponent(appId)}&country=eq.${encodeURIComponent(country)}&status=eq.published&order=published_at.desc&limit=1`,
@@ -707,6 +756,7 @@ async function handlePublicReport(env: Env, request: Request) {
   ]);
 
   const overview = overviewRows[0] || {};
+  const { issues, totalCount: issueCount } = issueResult;
   const run = runs[0] || null;
   const catalogApp = catalog.find((app) => normalizeAppStoreId(String(app.trackId || '')) === appId) || null;
   const appName = normalizeOptionalText(apps[0]?.app_name, 120) || normalizeOptionalText(catalogApp?.trackName, 120);
@@ -722,7 +772,7 @@ async function handlePublicReport(env: Env, request: Request) {
     },
     summary: {
       totalReviews,
-      issueCount: issues.length,
+      issueCount,
       averageRating: Number(overview.average_rating || 0),
       lowRatingCount,
       lowRatingRatio: totalReviews > 0 ? Number(((lowRatingCount / totalReviews) * 100).toFixed(1)) : 0,
@@ -754,13 +804,28 @@ async function handlePublicReport(env: Env, request: Request) {
 }
 
 async function handlePublicIssueDetail(env: Env, request: Request, issueId: string) {
-  if (!boolFromEnv(env.REPORT_V2_ENABLED, false)) {
-    return errorResponse(env, 404, 'report_v2_disabled', '이 리포트 기능은 현재 사용할 수 없습니다.');
+  if (!boolFromEnv(env.DETAIL_VIEW_ENABLED, true)) {
+    return errorResponse(
+      env,
+      403,
+      'detail_view_disabled',
+      '리뷰 상세 조회 기능은 현재 사용할 수 없습니다.',
+    );
   }
   if (!isUuid(issueId)) return badRequest(env, 'issue id must be uuid');
-  const data = await supabaseRequest<Record<string, unknown> | null>(env, '/rest/v1/rpc/get_public_issue_detail', {
+  const { searchParams } = new URL(request.url);
+  const window = parseRequestedReviewWindow(searchParams);
+  if (!window.ok) return badRequest(env, window.message);
+  const { from, to } = window;
+  const requestBody = boolFromEnv(env.REPORT_V2_ENABLED, false)
+    ? { p_issue_id: issueId, p_from: from, p_to: to }
+    : { p_issue_id: issueId };
+  const rpcName = boolFromEnv(env.REPORT_V2_ENABLED, false)
+    ? 'get_public_issue_detail_windowed'
+    : 'get_public_issue_detail';
+  const data = await supabaseRequest<Record<string, unknown> | null>(env, `/rest/v1/rpc/${rpcName}`, {
     method: 'POST',
-    body: JSON.stringify({ p_issue_id: issueId }),
+    body: JSON.stringify(requestBody),
     idempotent: true,
   });
   if (!data) return errorResponse(env, 404, 'issue_not_found', '요청한 이슈를 찾을 수 없습니다.');
@@ -819,17 +884,18 @@ async function handlePublicIssues(env: Env, request: Request) {
   const { searchParams } = new URL(request.url);
   const appId = normalizeAppStoreId(searchParams.get('appId'));
   const country = normalizeCountry(searchParams.get('country'));
-  const from = searchParams.get('from');
-  const to = searchParams.get('to');
   const limit = clampLimit(searchParams.get('limit'), 10, 50);
 
   if (!appId) {
     return badRequest(env, 'appId is required');
   }
+  const window = parseRequestedReviewWindow(searchParams);
+  if (!window.ok) return badRequest(env, window.message);
+  const { from, to } = window;
 
   if (boolFromEnv(env.REPORT_V2_ENABLED, false)) {
-    const data = await getPublicIssueClusters(env, appId, country, limit);
-    return jsonResponse(env, 200, { data });
+    const { issues } = await getPublicIssueClusters(env, appId, country, limit, from, to);
+    return jsonResponse(env, 200, { data: issues });
   }
 
   const data = await getPublicIssuesForApp(env, { appId, country, from, to, limit });
@@ -869,6 +935,10 @@ async function getPublicEvidenceForApp(
 }
 
 async function handlePublicDashboard(env: Env, request: Request) {
+  if (!boolFromEnv(env.DETAIL_VIEW_ENABLED, true)) {
+    return errorResponse(env, 403, 'detail_view_disabled', '리뷰 상세 조회 기능은 현재 사용할 수 없습니다.');
+  }
+
   const { searchParams } = new URL(request.url);
   const appId = normalizeAppStoreId(searchParams.get('appId'));
   const country = normalizeCountry(searchParams.get('country'));
@@ -1121,11 +1191,22 @@ async function handlePublicReviews(env: Env, request: Request) {
   const category = normalizeOptionalText(searchParams.get('category'), 120);
   const issueLabel = normalizeOptionalText(searchParams.get('issueLabel'), 120);
   const search = normalizeSearchKeyword(searchParams.get('search'));
+  const searchScope = searchParams.get('searchScope') === 'content' ? 'content' : 'all';
+  const rawFrom = searchParams.get('from');
+  const rawTo = searchParams.get('to');
+  const from = normalizeTimestampFilter(rawFrom);
+  const to = normalizeTimestampFilter(rawTo);
   const cursor = searchParams.get('cursor');
   if (!appId) return badRequest(env, 'appId must be numeric');
+  if (rawFrom !== null && !from) return badRequest(env, 'from must be a valid timestamp');
+  if (rawTo !== null && !to) return badRequest(env, 'to must be a valid timestamp');
+  if (from && to && Date.parse(from) > Date.parse(to)) return badRequest(env, 'from must not be after to');
   if (cursor && isLegacyTimestampCursor(cursor)) return errorResponse(env, 400, 'legacy_cursor_unsupported', '이전 형식의 리뷰 커서는 안전하게 이어갈 수 없습니다. cursor를 제거하고 첫 페이지부터 다시 조회해 주세요.');
   if (cursor && (sortBy !== 'reviewed_at' || !decodeReviewFeedCursor(cursor))) return badRequest(env, 'cursor is invalid for the selected sort');
-  const filters = buildReviewFeedFilters({ appId, country, limit, page, sortBy, sortDirection, rating, priority, category, issueLabel, search, cursor });
+  const filters = buildReviewFeedFilters({
+    appId, country, limit, page, sortBy, sortDirection, rating, priority, category, issueLabel,
+    search, searchScope, from, to, cursor,
+  });
   const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, `/rest/v1/private_review_feed?${filters.toString()}`, { method: 'GET', idempotent: true });
   const normalized = normalizeReviewFeedRows(rows, limit, sortBy);
   return jsonResponse(env, 200, { data: normalized.data, page, limit, hasNext: normalized.hasNext, nextCursor: normalized.nextCursor });
