@@ -18,10 +18,7 @@ VoC Radar는 앱 이름, App Store URL 또는 ID로 공개 분석 리포트를 �
 
 - `apps/web`: React/Vite 공개 탐색·리포트 UI
 - `apps/worker`: Web 정적 자산과 `public`/`private`/`internal` API를 제공하며 공통 경계를 `platform` 모듈에 둔 Cloudflare Worker
-- `supabase/20260307_voc_radar_bootstrap.sql`: 신규 설치용 최신 스키마
-- `supabase/migrations/202607180001_public_intelligence_v2.sql`: V2 additive migration
-- `supabase/migrations/202607260001_pipeline_stabilization.sql`: claim lease, CAS, 원자적 pipeline write를 추가하는 additive migration
-- `supabase/migrations/202607270001_pipeline_stabilization_runtime_fixes.sql`: pipeline RPC conflict target과 staging FK index를 보정하는 additive migration
+- `supabase`: 데이터베이스 스키마와 변경 이력 ([설치 가이드](supabase/README.md))
 - `n8n/workflow.supabase-only.json`: 리뷰 추출 → 클러스터링 → 검증·게시 workflow
 - `scripts/cluster-contract.mjs`: 리뷰 ID와 enum을 검증하는 deterministic contract
 - `DESIGN.md`: 제품 UI 계약

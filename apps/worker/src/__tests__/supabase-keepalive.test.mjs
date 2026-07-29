@@ -1551,10 +1551,10 @@ test('queue creation succeeds when the optional n8n trigger has a network failur
 
 test('pipeline stabilization SQL keeps lease, transaction, staging, and privilege contracts in parity', () => {
   const migration = readFileSync(resolve(testDir, '../../../../supabase/migrations/202607260001_pipeline_stabilization.sql'), 'utf8');
-  const bootstrap = readFileSync(resolve(testDir, '../../../../supabase/20260307_voc_radar_bootstrap.sql'), 'utf8');
+  const schema = readFileSync(resolve(testDir, '../../../../supabase/schema.sql'), 'utf8');
   const workerSource = workerModulePaths.map((file) => readFileSync(file, 'utf8')).join('\n');
 
-  for (const [name, sql] of [['migration', migration], ['bootstrap', bootstrap]]) {
+  for (const [name, sql] of [['migration', migration], ['schema', schema]]) {
     const functionSql = (functionName) => {
       const start = sql.toLowerCase().lastIndexOf(`create or replace function public.${functionName.toLowerCase()}(`);
       assert.notEqual(start, -1, `${name}: missing ${functionName}`);

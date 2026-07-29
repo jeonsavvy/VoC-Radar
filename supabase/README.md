@@ -1,60 +1,23 @@
-# Supabase 가이드
+# Supabase 설정
 
-VoC-Radar의 Supabase SQL은 두 층으로 관리합니다.
+처음 설치할 때와 기존 데이터베이스를 업그레이드할 때 사용하는 SQL이 다릅니다.
 
-- `20260307_voc_radar_bootstrap.sql`: 신규 설치용 최신 스키마입니다.
-- `migrations/`: 변경 이력 보존용 SQL입니다.
+| 상황 | 사용할 경로 |
+| --- | --- |
+| 비어 있는 새 Supabase 프로젝트 | `supabase/schema.sql` |
+| 이미 운영 중인 프로젝트 | `supabase/migrations/`에서 아직 적용하지 않은 파일 |
 
-## 어떤 파일을 실행해야 하나요
+## 새 프로젝트
 
-### 신규 프로젝트
+SQL Editor에서 `supabase/schema.sql`을 한 번 실행합니다. 이 파일에는 현재 앱에 필요한 테이블, 인덱스, 제약 조건, RLS 정책, view와 RPC가 모두 포함되어 있습니다. 새 프로젝트에서는 과거 migration을 다시 실행하지 않습니다.
 
-아래 파일을 실행해 주시면 됩니다.
+## 기존 프로젝트
 
-```sql
-supabase/20260307_voc_radar_bootstrap.sql
-```
+운영 DB에 적용된 변경 이력을 유지하고, 미적용 파일을 파일명 순서대로 적용합니다. 일부 파일만 골라 적용하거나 운영 DB를 비운 뒤 `schema.sql`로 다시 만드는 방식은 사용하지 않습니다. 실제 적용 전에는 [배포 runbook](../docs/deployment-runbook.md)의 사전 점검과 승인 절차를 따릅니다.
 
-### 운영 중인 프로젝트
+## 관리 원칙
 
-- 기존 migration 체인을 유지해 주셔야 합니다.
-- 운영 DB를 비운 뒤 bootstrap만 다시 적용하는 방식은 사용하지 않습니다.
-- 최근 운영 보정 SQL에는 `202603110001_private_review_feed_security_invoker.sql`이 포함됩니다.
-
-## bootstrap SQL에 포함된 것
-
-- 테이블
-  - `apps`
-  - `reviews`
-  - `review_ai`
-  - `pipeline_runs`
-  - `parse_errors`
-  - `alert_events`
-  - `pipeline_jobs`
-- 인덱스
-- review/category 관련 constraint
-- RLS와 policy
-- `private_review_feed` view (`security_invoker=true`, Worker의 service_role 조회용 read model)
-- public/private 집계 함수와 queue 함수
-
-## 운영 원칙
-
-- 최신 기준은 bootstrap SQL에 반영합니다.
-- 변경 이유와 순서는 migration SQL에 남깁니다.
-- 신규 설치자는 bootstrap 하나만 보시면 됩니다.
-- 운영 유지자는 migration 이력을 기준으로 추적하셔야 합니다.
-
-## private_review_feed 참고
-
-- `private_review_feed`는 리뷰 원문과 AI 분류 결과를 묶은 상세 조회용 view입니다.
-- 이 view는 `security_invoker = true`를 사용합니다.
-- 직접 DB에서 `authenticated`에 노출하지 않고, Worker가 access token 검증 후 `service_role`로 조회합니다.
-
-## 점검 포인트
-
-```sql
-select count(*) from public.reviews;
-select count(*) from public.review_ai;
-select count(*) from public.pipeline_runs;
-select count(*) from public.pipeline_jobs;
-```
+- `schema.sql`은 새 설치를 위한 현재 스키마입니다.
+- `migrations/`는 운영 데이터베이스의 순차 변경 이력이며, 적용된 파일은 이름이나 내용을 바꾸지 않습니다.
+- 스키마 변경 시 `migrations/`에 새 SQL 파일을 추가하고 `schema.sql`도 같은 최종 상태로 갱신합니다.
+- 애플리케이션과 CI는 두 경로의 핵심 보안·파이프라인 계약이 일치하는지 검증합니다.

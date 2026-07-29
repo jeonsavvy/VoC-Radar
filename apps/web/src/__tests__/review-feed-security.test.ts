@@ -14,19 +14,19 @@ async function test(name: string, fn: () => void | Promise<void>) {
 
 async function main() {
   const repoRoot = path.resolve(process.cwd(), '..', '..');
-  const bootstrapSql = readFileSync(path.join(repoRoot, 'supabase/20260307_voc_radar_bootstrap.sql'), 'utf8');
+  const schemaSql = readFileSync(path.join(repoRoot, 'supabase/schema.sql'), 'utf8');
   const workerSource = readFileSync(path.join(repoRoot, 'apps/worker/src/private.ts'), 'utf8');
 
   await test('private_review_feed view uses security_invoker to avoid security definer warnings', () => {
     assert.match(
-      bootstrapSql,
+      schemaSql,
       /create view public\.private_review_feed\s+with \(security_invoker = true\) as/i,
     );
   });
 
   await test('private_review_feed is not directly granted to authenticated users', () => {
     assert.doesNotMatch(
-      bootstrapSql,
+      schemaSql,
       /grant select on table public\.private_review_feed to authenticated;/i,
     );
   });

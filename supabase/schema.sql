@@ -1,3 +1,6 @@
+-- Canonical schema for a new VoC Radar Supabase project.
+-- Apply this file once to an empty project. Upgrade existing projects with migrations/.
+
 -- -----------------------------------------------------------------------------
 -- extension
 -- -----------------------------------------------------------------------------
@@ -882,7 +885,7 @@ revoke all on function public.get_public_issue_detail(uuid) from public;
 grant execute on function public.get_public_issue_clusters(text, text, integer) to anon, authenticated;
 grant execute on function public.get_public_issue_detail(uuid) to anon, authenticated;
 
--- Supabase may provide this event-trigger helper outside this bootstrap. It
+-- Supabase may provide this event-trigger helper outside this schema. It
 -- must not become a callable PostgREST RPC when it exists.
 do $$
 begin

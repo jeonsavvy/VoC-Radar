@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 
-const bootstrap = readFileSync('supabase/20260307_voc_radar_bootstrap.sql', 'utf8');
+const schema = readFileSync('supabase/schema.sql', 'utf8');
 const hardeningMigrationName = readdirSync('supabase/migrations').find((name) =>
   name.endsWith('_harden_internal_rpc_privileges.sql'),
 );
@@ -38,11 +38,11 @@ function extractLatestFunction(source, functionName) {
   return source.slice(start, end + 4);
 }
 
-test('bootstrap embeds the stabilization migration without drift', () => {
+test('schema embeds the stabilization migration without drift', () => {
   const marker = '-- Queue leases, claim fencing, and atomic pipeline persistence.';
-  const start = bootstrap.lastIndexOf(marker);
-  assert.notEqual(start, -1, 'bootstrap stabilization marker must exist');
-  assert.equal(bootstrap.slice(start), stabilizationMigration);
+  const start = schema.lastIndexOf(marker);
+  assert.notEqual(start, -1, 'schema stabilization marker must exist');
+  assert.equal(schema.slice(start), stabilizationMigration);
 });
 
 const legacyInternalFunctions = [
@@ -77,17 +77,17 @@ const fencedInternalFunctions = [
   'get_pipeline_cluster_context\\(text, text\\)',
 ];
 
-test('bootstrap keeps the unchanged review lookup RPC service-role only', () => {
+test('schema keeps the unchanged review lookup RPC service-role only', () => {
   const signature = 'get_existing_review_ids\\(text, text, text\\[\\]\\)';
   assert.match(
-    bootstrap,
+    schema,
     new RegExp(`revoke execute on function public\\.${signature}\\s+from public, anon, authenticated;`, 'i'),
   );
-  assert.match(bootstrap, new RegExp(`grant execute on function public\\.${signature}\\s+to service_role;`, 'i'));
+  assert.match(schema, new RegExp(`grant execute on function public\\.${signature}\\s+to service_role;`, 'i'));
 });
 
 for (const [name, source] of [
-  ['bootstrap', bootstrap],
+  ['schema', schema],
   ['pipeline stabilization migration', stabilizationMigration],
 ]) {
   test(`${name} keeps fenced pipeline SECURITY DEFINER RPCs service-role only`, () => {
@@ -107,7 +107,7 @@ for (const [name, source] of [
 }
 
 for (const [name, source] of [
-  ['bootstrap', bootstrap],
+  ['schema', schema],
   ['pipeline stabilization migration', stabilizationMigration],
   ['pipeline stabilization runtime fix migration', stabilizationFixMigration],
 ]) {
@@ -139,7 +139,7 @@ for (const [name, source] of [
 }
 
 for (const [name, source] of [
-  ['bootstrap', bootstrap.slice(bootstrap.lastIndexOf('-- Queue leases, claim fencing'))],
+  ['schema', schema.slice(schema.lastIndexOf('-- Queue leases, claim fencing'))],
   ['pipeline stabilization migration', stabilizationMigration],
 ]) {
   test(`${name} can replace already-removed legacy queue RPCs`, () => {
@@ -151,7 +151,7 @@ for (const [name, source] of [
 }
 
 for (const [name, source] of [
-  ['bootstrap', bootstrap],
+  ['schema', schema],
   ['hardening migration', hardeningMigration],
 ]) {
   test(`${name} covers V2 foreign-key lookup indexes`, () => {
@@ -161,7 +161,7 @@ for (const [name, source] of [
 }
 
 for (const [name, source] of [
-  ['bootstrap', bootstrap],
+  ['schema', schema],
   ['pipeline stabilization migration', stabilizationMigration],
 ]) {
   test(`${name} preserves queue lease, terminal, and account-deletion invariants`, () => {
@@ -278,7 +278,7 @@ for (const [name, source] of [
 }
 
 for (const [name, source] of [
-  ['bootstrap', bootstrap],
+  ['schema', schema],
   ['pipeline job RLS optimization migration', optimizedRlsMigration],
 ]) {
   test(`${name} evaluates auth.uid once per statement for pipeline job policies`, () => {
@@ -289,7 +289,7 @@ for (const [name, source] of [
 }
 
 for (const [name, source] of [
-  ['bootstrap', bootstrap],
+  ['schema', schema],
   ['latest-run migration', latestRunMigration],
 ]) {
   test(`${name} scopes public issue reads to one latest published run`, () => {

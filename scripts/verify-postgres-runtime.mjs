@@ -87,7 +87,7 @@ try {
   }
 
   runSqlFile('scripts/fixtures/supabase-postgres-shim.sql');
-  runSqlFile('supabase/20260307_voc_radar_bootstrap.sql');
+  runSqlFile('supabase/schema.sql');
   runSqlFile('supabase/migrations/202607260001_pipeline_stabilization.sql');
   runSqlFile('supabase/migrations/202607270001_pipeline_stabilization_runtime_fixes.sql');
   runSqlFile('scripts/fixtures/pipeline-runtime-smoke.sql');

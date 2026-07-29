@@ -54,17 +54,13 @@ Organization 변경이 배포 범위에 포함된 경우 [Supabase project trans
 - Auth user count와 핵심 테이블 row count가 동일한지
 - 기존 Worker `/api/health` 및 공개 read API가 정상인지
 
-### V2 schema
+### 데이터베이스 스키마
 
-신규 프로젝트에서는 SQL Editor에서 아래 파일을 실행합니다.
+신규 프로젝트에서는 SQL Editor에서 `supabase/schema.sql` 전체를 한 번 실행합니다.
 
-```sql
-supabase/20260307_voc_radar_bootstrap.sql
-```
+기존 환경에는 배포된 DB 변경 이력과 `supabase/migrations/`를 비교한 뒤, 미적용 파일을 파일명 순서대로 모두 적용합니다. 최신 파일 몇 개만 골라 적용하거나 이미 적용한 파일을 다시 실행하지 않습니다.
 
-기존 환경에는 `supabase/migrations/`의 미적용 migration만 순서대로 적용합니다.
-
-적용 대상 migration은 아래 파일입니다. 적용 전 active job 중복이 없는지 확인하고, 실제 적용은 별도 승인을 받은 뒤 수행합니다.
+적용 전 active job 중복이 없는지 확인하고, 실제 적용 대상과 순서를 기록한 뒤 별도 승인을 받아 수행합니다.
 
 ```sql
 select app_store_id, country, count(*)
@@ -72,12 +68,6 @@ from public.pipeline_jobs
 where status in ('queued', 'running')
 group by app_store_id, country
 having count(*) > 1;
-```
-
-```text
-supabase/migrations/202607180001_public_intelligence_v2.sql
-supabase/migrations/202607260001_pipeline_stabilization.sql
-supabase/migrations/202607270001_pipeline_stabilization_runtime_fixes.sql
 ```
 
 점검 SQL은 아래와 같습니다.
