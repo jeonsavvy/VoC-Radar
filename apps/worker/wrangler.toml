@@ -4,10 +4,6 @@ compatibility_date = "2026-02-25"
 workers_dev = true
 preview_urls = false
 
-[limits]
-# Free와 Paid plan 모두에서 review fetch의 invocation당 외부 호출 상한을 동일하게 고정한다.
-subrequests = 50
-
 # 공식 Custom Domain은 이 통합 Worker에 직접 연결한다. workers.dev도 계속 활성화해
 # 기존 공유 링크가 같은 Worker와 SPA 자산을 제공하도록 유지한다.
 routes = [

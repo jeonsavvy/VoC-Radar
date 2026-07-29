@@ -17,7 +17,6 @@ const rateLimitSimple = rateLimitSection?.match(
   /^simple\s*=\s*\{\s*limit\s*=\s*(\d+)\s*,\s*period\s*=\s*(\d+)\s*\}\s*$/m,
 );
 const limitsSection = config.match(/^\[limits\]\s*\r?\n([\s\S]*?)(?=^\[[^\]]+\]\s*$|(?![\s\S]))/m)?.[1];
-const subrequestLimit = Number(limitsSection?.match(/^subrequests\s*=\s*(\d+)\s*$/m)?.[1]);
 
 if (reportFlag !== 'false') {
   console.error('wrangler.toml must keep REPORT_V2_ENABLED=false; promote it only with an explicit deploy override.');
@@ -40,8 +39,8 @@ if (
   process.exit(1);
 }
 
-if (subrequestLimit !== 50) {
-  console.error('Worker subrequests must stay capped at 50 for the bounded review-fetch contract.');
+if (limitsSection !== undefined) {
+  console.error('Free-plan Worker config must omit [limits]; Cloudflare already enforces 50 external subrequests.');
   process.exit(1);
 }
 
