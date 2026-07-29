@@ -84,6 +84,8 @@ async function main() {
   await test('HTML metadata uses the official domain while legacy hosting stays runtime-compatible', () => {
     const html = readFileSync('index.html', 'utf8');
 
+    assert.match(html, /<title>VoC Radar<\/title>/);
+    assert.doesNotMatch(html, /Public App Intelligence/);
     assert.match(html, /rel="canonical" href="https:\/\/voc-radar\.satinode\.com\/"/);
     assert.match(html, /property="og:url" content="https:\/\/voc-radar\.satinode\.com\/"/);
     assert.doesNotMatch(html, /jeonsavvy\.workers\.dev/);
