@@ -36,7 +36,10 @@ Worker feature flag는 `apps/worker/wrangler.toml`에서 관리합니다. migrat
 ```bash
 REPORT_V2_ENABLED=true
 DETAIL_VIEW_ENABLED=true
+USER_JOB_DAILY_LIMIT=10
 ```
+
+`USER_JOB_DAILY_LIMIT`은 1–100 범위이며 기본값은 10입니다. 새 Web job은 사용자별 rolling 24시간 한도를 적용하고, 해당 기간에 생성된 `canceled`·`failed` job도 계산합니다. `fresh` 또는 이미 실행 중인 `existing` 응답은 새 job을 만들지 않습니다. Apple Lookup이 필요한 경로는 별도로 인증 사용자당 60초에 10회까지 허용해 존재하지 않는 ID 반복 요청을 제한합니다.
 
 첫 화면은 게시 시각 기준의 최근 공개 리포트를 보여줍니다. 통합 Worker 배포에서는 API가 같은 origin의 `/api`에 있으므로 `VITE_API_BASE_URL`을 설정하지 않습니다.
 
@@ -54,39 +57,52 @@ VITE_DEFAULT_COUNTRY=kr
 
 - `GET /api/public/discover?q&country&limit`
 - `GET /api/public/report?appId&country&from&to`
-- `GET /api/public/issues?appId&country&limit`
-- `GET /api/public/issues/:issueId`
+- `GET /api/public/issues?appId&country&from&to&limit`
+- `GET /api/public/issues/:issueId?from&to`
 - `GET /api/public/reviews?appId&country&page&limit&...`
+- `GET /api/public/apps?limit`
 
 ### Private
 
 - `POST /api/private/jobs` → `fresh | existing | queued`
 - `GET /api/private/jobs?limit`
+- `POST /api/private/jobs/cancel`
 - `DELETE /api/private/account`
+
+`POST /api/private/jobs`는 요청 본문의 앱 이름을 신뢰하지 않고 Apple Lookup에서 숫자 ID와 일치하는 `software` record를 앱 이름의 기준으로 사용합니다. Rolling quota를 넘으면 HTTP 429 `job_daily_limit_reached`, 짧은 lookup 한도를 넘으면 HTTP 429 `job_request_rate_limited`를 반환하며 job을 만들지 않습니다.
+
+`DELETE /api/private/account`는 사용자별 enqueue lock 안에서 active job 취소와 모든 job 메모 삭제를 한 transaction으로 끝낸 뒤 Auth 계정을 삭제합니다. Auth 삭제와 동시에 생성된 Web job도 외래 키 trigger가 사용자 연결과 메모를 함께 제거합니다.
 
 ### Internal
 
 - `POST /api/internal/pipeline/claim-job`
 - `POST /api/internal/pipeline/fetch-reviews`
+- `POST /api/internal/pipeline/job-status`
+- `POST /api/internal/pipeline/heartbeat`
 - `POST /api/internal/pipeline/filter-new-reviews`
 - `POST /api/internal/pipeline/cluster-context`
 - `POST /api/internal/pipeline/upsert-reviews`
 - `POST /api/internal/pipeline/upsert-clusters`
 - `POST /api/internal/pipeline/parse-error`
 - `POST /api/internal/pipeline/publish`
+- `POST /api/internal/pipeline/alert-events`
 
 ## 파이프라인 계약
 
 1. n8n 실행 ID를 `claimKey`로 사용해 작업을 claim합니다. 같은 키의 재시도는 같은 job과 claim token을 반환하며 다른 작업을 가져가지 않습니다.
 2. claim lease는 15분이고 최대 시도 횟수는 3회입니다. 만료된 `running` 작업만 회수하며 3회를 소진한 작업은 `failed`로 종결합니다.
-3. App Store 리뷰를 수집하고 기존 리뷰와 신규 리뷰를 분리합니다.
+3. App Store 리뷰를 기본 최근 30일, 최대 40페이지와 terminal probe 1회로 수집하고 기존 리뷰와 신규 리뷰를 분리합니다. 수집 범위가 완전하다고 증명되지 않으면 HTTP 422 `review_scope_incomplete`로 작업을 실패 처리하며 부분 결과를 분석하거나 게시하지 않습니다.
 4. 신규 리뷰만 모델에 전달해 리뷰별 category·summary를 구조화합니다.
-5. 수집 window의 기존 추출 결과와 신규 결과를 합칩니다.
-6. 기존 issue cluster context와 매칭하거나 신규 cluster를 생성합니다.
+5. 수집 window의 review ID를 최대 10,000개까지 한 JSONB scalar로 조회해 기존 추출 결과와 신규 결과를 합칩니다.
+6. 전체 published 이력에서 cluster별 최신 유효 snapshot을 최대 10,000개까지 조회하고 기존 issue와 매칭하거나 신규 cluster를 생성합니다. 각 clustering batch에는 관련도 기준 최대 160개, 49,152 UTF-8 bytes의 기존 context만 전달합니다. 전체 context가 100개 이하이고 byte budget 이내이면 전부 유지합니다.
 7. Worker가 claim token과 run을 검증하고, 존재하지 않는 review ID, 누락·중복 배정, 잘못된 enum을 차단합니다.
-8. review 원문·AI 결과는 run별 비공개 staging에 보관합니다. cluster snapshot·membership 저장은 원자적으로 처리하고, 검증된 run의 review 병합·공개 pointer 갱신·job 완료를 한 transaction으로 publish합니다.
+8. review 원문·AI 결과는 run별 비공개 staging에 보관합니다. Review, cluster, membership persistence는 각 입력을 1–10,000개로 제한하고 cluster snapshot·membership을 원자적으로 저장합니다. 검증된 run의 review 병합·공개 pointer 갱신·job 완료는 한 transaction으로 publish합니다.
 
-허용되는 job 상태 전이는 `queued → running → completed | failed | canceled`뿐입니다. Terminal 상태는 변경할 수 없고, 취소되거나 claim을 잃은 이전 실행의 후속 요청은 `409 job_claim_lost`로 중단됩니다.
+모델 호출은 제한된 크기의 배치로 직렬 실행합니다. 각 응답은 checkpoint에 보관하고 같은 claim의 heartbeat가 성공한 뒤에만 다음 검증·저장 단계로 넘깁니다. Stage는 `queued → fetching → extracting → clustering → publishing` 순서로만 전진합니다.
+
+Review scope, cluster context, 계정 삭제 준비, 공개 앱 목록 RPC는 service role만 실행할 수 있습니다. 공개 앱 목록은 앱·국가별 최신 published run과 앱 메타를 한 DB 요청으로 최대 100건 반환합니다. Persistence RPC는 최대 60초, 다른 Supabase 요청은 기본 10초 timeout을 사용합니다. 리뷰 수집의 Worker hard deadline은 270초이고 n8n HTTP timeout은 300초입니다. `REPORT_V2_ENABLED=false`는 latest-run compatibility read를 유지하고, `DETAIL_VIEW_ENABLED=false`는 issue detail, legacy dashboard, 공개·로그인 review 목록을 닫습니다.
+
+허용되는 job 상태 전이는 `queued → running → completed | failed | canceled`뿐입니다. Terminal 상태는 변경할 수 없고, 취소되거나 claim을 잃은 이전 실행의 후속 요청과 지연된 이전 stage heartbeat는 `409 job_claim_lost`로 중단됩니다.
 
 ## 검증
 
