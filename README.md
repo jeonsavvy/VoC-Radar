@@ -56,6 +56,7 @@ VITE_DEFAULT_COUNTRY=kr
 ### Public
 
 - `GET /api/public/discover?q&country&limit`
+- `GET /api/public/artwork?appId&country`
 - `GET /api/public/report?appId&country&from&to`
 - `GET /api/public/issues?appId&country&from&to&limit`
 - `GET /api/public/issues/:issueId?from&to`

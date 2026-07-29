@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { JSDOM } from 'jsdom';
 import { AuthSessionBoundary } from '@/App';
-import { AppArtwork } from '@/components/AppArtwork';
+import { AppArtwork, getArtworkSources } from '@/components/AppArtwork';
 import { Shell } from '@/components/Shell';
 import { parseAppIdentity, reportPath } from '@/lib/appIdentity';
 import { DEFAULT_COUNTRY, normalizeDefaultCountry } from '@/lib/config';
@@ -103,16 +103,34 @@ async function main() {
     assert.doesNotMatch(source, /고정 추천|실제 분석|필수 앱|추천 앱|APP DIRECTORY|PUBLIC REPORTS/);
   });
 
-  await test('AppArtwork renders App Store artwork with an initial fallback', () => {
+  await test('AppArtwork renders App Store artwork with a same-origin recovery path', () => {
     const artwork = renderToStaticMarkup(
-      <AppArtwork artworkUrl="https://example.test/app.jpg" appName="당근" size="large" />,
+      <AppArtwork
+        artworkUrl="https://example.test/app.jpg"
+        appName="당근"
+        appStoreId="1018769995"
+        country="kr"
+        size="large"
+      />,
     );
     const fallback = renderToStaticMarkup(<AppArtwork artworkUrl={null} appName="당근" />);
+    const recovered = renderToStaticMarkup(
+      <AppArtwork artworkUrl={null} appName="당근" appStoreId="1018769995" country="kr" />,
+    );
+    const sources = getArtworkSources({
+      artworkUrl: 'https://example.test/app.jpg',
+      appStoreId: '1018769995',
+      country: 'kr',
+    });
 
     assert.match(artwork, /class="app-artwork app-artwork--large"/);
     assert.match(artwork, /src="https:\/\/example\.test\/app\.jpg"/);
     assert.match(fallback, /class="app-initial"/);
     assert.match(fallback, />당</);
+    assert.match(recovered, /src="\/api\/public\/artwork\?appId=1018769995&amp;country=kr/);
+    assert.equal(sources.length, 3);
+    assert.match(sources[1]!, /attempt=0$/);
+    assert.match(sources[2]!, /attempt=1$/);
   });
 
   await test('App registers public report and request-history routes', () => {

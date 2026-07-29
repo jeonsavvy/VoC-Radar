@@ -431,7 +431,13 @@ function AppReportPageContent({ loggedIn, authChecking, appId, country, tab }: P
     {loading ? <ReportSkeleton /> : error ? <div className="error-state" role="alert"><strong>리포트를 열 수 없습니다.</strong><p>{error}</p><button type="button" onClick={() => setReloadKey((value) => value + 1)}>다시 시도</button><Link to="/">앱 다시 찾기</Link></div> : report ? <>
       <header className="app-report-header">
         <div className="app-report-header__identity">
-          <AppArtwork artworkUrl={report.app.artworkUrl} appName={report.app.appName} size="large" />
+          <AppArtwork
+            artworkUrl={report.app.artworkUrl}
+            appName={report.app.appName}
+            appStoreId={report.app.appStoreId}
+            country={report.app.country}
+            size="large"
+          />
           <div><h1>{report.app.appName || `App ${appId}`}</h1><p>{appId} · {country.toUpperCase()} · 최근 30일</p></div>
         </div>
         <div className="app-report-header__meta">

@@ -277,6 +277,9 @@ type AppleCatalogItem = {
   sellerName?: string;
 };
 
+const PUBLIC_ARTWORK_MAX_BYTES = 512 * 1024;
+const PUBLIC_ARTWORK_CACHE_CONTROL = 'public, max-age=86400, s-maxage=604800';
+
 function decodeHtmlMetadata(value: string) {
   return value.replace(/&(amp|quot|apos|lt|gt|nbsp|#\d+|#x[\da-f]+);/gi, (match, entity: string) => {
     const normalized = entity.toLowerCase();
@@ -560,6 +563,107 @@ async function fetchAppleCatalog(env: Env, query: string, country: string, limit
 
   const url = `https://itunes.apple.com/search?term=${encodeURIComponent(query)}&country=${country.toUpperCase()}&entity=software&limit=${limit}`;
   return requestAppleCatalog(env, url);
+}
+
+function noStoreArtworkError(
+  env: Env,
+  status: number,
+  code: string,
+  message: string,
+  retryable = false,
+) {
+  const response = errorResponse(env, status, code, message, retryable);
+  const headers = new Headers(response.headers);
+  headers.set('cache-control', 'no-store');
+  return new Response(response.body, { status: response.status, headers });
+}
+
+async function handlePublicArtwork(env: Env, request: Request) {
+  const requestUrl = new URL(request.url);
+  const appId = normalizeAppStoreId(requestUrl.searchParams.get('appId'));
+  const country = normalizeCountry(requestUrl.searchParams.get('country'));
+  if (!appId) {
+    return noStoreArtworkError(env, 400, 'invalid_request', '앱 아이콘 요청을 확인해 주세요.');
+  }
+
+  const canonicalUrl = new URL('/api/public/artwork', requestUrl.origin);
+  canonicalUrl.searchParams.set('appId', appId);
+  canonicalUrl.searchParams.set('country', country);
+  const version = `${await getCacheVersion(env)}:artwork-v1`;
+  const cacheKey = getPublicCacheKey(new Request(canonicalUrl), version);
+  const cache = await getEdgeCache();
+  const cached = await cache.match(cacheKey);
+  if (cached) return withCors(env, cached);
+
+  const catalog = await fetchAppleCatalogByIds(env, [appId], country, { timeoutMs: 3500, retries: 1 }).catch(
+    () => [],
+  );
+  const catalogApp = catalog.find((item) => normalizeAppStoreId(String(item.trackId || '')) === appId) || null;
+  const artworkUrl = normalizeAppStoreArtworkUrl(String(catalogApp?.artworkUrl100 || ''));
+  if (!artworkUrl) {
+    return noStoreArtworkError(
+      env,
+      404,
+      'artwork_unavailable',
+      '앱 아이콘을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.',
+      true,
+    );
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetchWithRetry(env, artworkUrl, {
+      upstream: 'apple',
+      method: 'GET',
+      headers: { accept: 'image/avif,image/webp,image/png,image/jpeg' },
+      timeoutMs: 5000,
+      retries: 1,
+      idempotent: true,
+    });
+  } catch {
+    return noStoreArtworkError(
+      env,
+      502,
+      'artwork_unavailable',
+      '앱 아이콘을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.',
+      true,
+    );
+  }
+
+  const contentType = (upstream.headers.get('content-type') || '').split(';', 1)[0]?.trim().toLowerCase() || '';
+  if (!upstream.ok || !['image/avif', 'image/jpeg', 'image/png', 'image/webp'].includes(contentType)) {
+    return noStoreArtworkError(
+      env,
+      502,
+      'artwork_unavailable',
+      '앱 아이콘을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.',
+      true,
+    );
+  }
+
+  const image = await upstream.arrayBuffer();
+  if (image.byteLength === 0 || image.byteLength > PUBLIC_ARTWORK_MAX_BYTES) {
+    return noStoreArtworkError(
+      env,
+      502,
+      'artwork_unavailable',
+      '앱 아이콘을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.',
+      true,
+    );
+  }
+
+  const response = withCors(
+    env,
+    new Response(image, {
+      headers: {
+        'cache-control': PUBLIC_ARTWORK_CACHE_CONTROL,
+        'content-type': contentType,
+        'x-content-type-options': 'nosniff',
+      },
+    }),
+  );
+  await cache.put(cacheKey, response.clone());
+  return response;
 }
 
 async function handlePublicDiscover(env: Env, request: Request) {
@@ -1342,6 +1446,7 @@ async function handlePublicReviews(env: Env, request: Request) {
 /** Returns null when the request is not a public API route. */
 export async function routePublicRequest(env: Env, request: Request): Promise<Response | null> {
   const url = new URL(request.url);
+  if (request.method === 'GET' && url.pathname === '/api/public/artwork') return handlePublicArtwork(env, request);
   if (request.method === 'GET' && url.pathname === '/api/public/discover') return handlePublicDiscover(env, request);
   if (request.method === 'GET' && url.pathname === '/api/public/report') return handlePublicReport(env, request);
   const issueDetailMatch = url.pathname.match(/^\/api\/public\/issues\/([0-9a-f-]+)$/i);

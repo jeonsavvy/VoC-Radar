@@ -241,6 +241,89 @@ test('public discovery batches app metadata and reuses the edge cache', async ()
   }
 });
 
+test('public artwork proxy returns a bounded same-origin image and ignores retry query cache noise', async () => {
+  const originalFetch = globalThis.fetch;
+  const cacheStorage = createMemoryCacheStorage();
+  const restoreCaches = replaceGlobalCaches(cacheStorage);
+  const calls = [];
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    calls.push(url);
+    if (url.includes('itunes.apple.com/lookup?')) {
+      return Response.json({
+        results: [{
+          trackId: 1018769995,
+          trackName: '당근',
+          artworkUrl100: 'https://is1-ssl.mzstatic.com/image/thumb/Purple/carrot/AppIcon/100x100bb.jpg',
+        }],
+      });
+    }
+    if (url === 'https://is1-ssl.mzstatic.com/image/thumb/Purple/carrot/AppIcon/100x100bb.jpg') {
+      return new Response(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), {
+        headers: { 'content-type': 'image/jpeg' },
+      });
+    }
+    return Response.json({ error: `unexpected ${url}` }, { status: 500 });
+  };
+
+  try {
+    const env = {
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      SUPABASE_ANON_KEY: 'anon-key',
+      PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      API_RETRY_COUNT: '0',
+    };
+    const baseUrl = 'https://worker.example/api/public/artwork?appId=1018769995&country=kr';
+
+    const firstResponse = await workerModule.default.fetch(new Request(`${baseUrl}&attempt=0`), env);
+    assert.equal(firstResponse.status, 200);
+    assert.equal(firstResponse.headers.get('content-type'), 'image/jpeg');
+    assert.equal(firstResponse.headers.get('cache-control'), 'public, max-age=86400, s-maxage=604800');
+    assert.equal(firstResponse.headers.get('x-content-type-options'), 'nosniff');
+    assert.deepEqual([...new Uint8Array(await firstResponse.arrayBuffer())], [0xff, 0xd8, 0xff, 0xd9]);
+    assert.equal(cacheStorage.size, 1);
+    assert.equal(calls.length, 2);
+
+    const cachedResponse = await workerModule.default.fetch(new Request(`${baseUrl}&attempt=1`), env);
+    assert.equal(cachedResponse.status, 200);
+    assert.equal(cachedResponse.headers.get('content-type'), 'image/jpeg');
+    assert.equal(calls.length, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreCaches();
+  }
+});
+
+test('public artwork proxy rejects invalid identities without an upstream request', async () => {
+  const originalFetch = globalThis.fetch;
+  const restoreCaches = replaceGlobalCaches(createMemoryCacheStorage());
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return new Response(null, { status: 500 });
+  };
+
+  try {
+    const response = await workerModule.default.fetch(
+      new Request('https://worker.example/api/public/artwork?appId=not-an-id&country=kr'),
+      {
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+        SUPABASE_ANON_KEY: 'anon-key',
+        PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      },
+    );
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    restoreCaches();
+  }
+});
+
 test('public discovery revalidates missing artwork without repeating database reads', async () => {
   const originalFetch = globalThis.fetch;
   const cacheStorage = createMemoryCacheStorage();

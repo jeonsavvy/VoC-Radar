@@ -201,7 +201,12 @@ export function GlobalSearch({ country = DEFAULT_COUNTRY, variant = 'compact', a
               onClick={() => goToApp(item.appStoreId, item.country)}
               className="search-result"
             >
-              <AppArtwork artworkUrl={item.artworkUrl} appName={item.appName} />
+              <AppArtwork
+                artworkUrl={item.artworkUrl}
+                appName={item.appName}
+                appStoreId={item.appStoreId}
+                country={item.country}
+              />
               <span className="search-result__copy">
                 <strong>{item.appName || `App ${item.appStoreId}`}</strong>
                 <small>{item.developerName || `${item.appStoreId} · ${item.country.toUpperCase()}`}</small>

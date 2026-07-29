@@ -52,7 +52,12 @@ export function ExplorePage() {
           <div className="recent-apps">
             {recent.map((app) => (
               <Link key={`${app.appStoreId}-${app.country}`} to={reportPath(app.appStoreId, app.country)} className="recent-app-row">
-                <AppArtwork artworkUrl={app.artworkUrl} appName={app.appName} />
+                <AppArtwork
+                  artworkUrl={app.artworkUrl}
+                  appName={app.appName}
+                  appStoreId={app.appStoreId}
+                  country={app.country}
+                />
                 <span>
                   <strong>{app.appName || `App ${app.appStoreId}`}</strong>
                   <small>{app.appStoreId} · {app.country.toUpperCase()}</small>

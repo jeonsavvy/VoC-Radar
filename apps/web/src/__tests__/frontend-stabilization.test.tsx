@@ -329,7 +329,7 @@ async function main() {
     const compatibleReviewsUrl = new URL(requests[3]!, 'https://example.test');
     assert.equal(reportUrl.searchParams.get('from'), window.from);
     assert.equal(reportUrl.searchParams.get('to'), window.to);
-    assert.equal(reportUrl.searchParams.get('artworkRevision'), '2');
+    assert.equal(reportUrl.searchParams.get('artworkRevision'), '3');
     assert.equal(issueDetailUrl.searchParams.get('from'), window.from);
     assert.equal(issueDetailUrl.searchParams.get('to'), window.to);
     assert.equal(scopedReviewsUrl.searchParams.get('from'), window.from);
@@ -354,7 +354,7 @@ async function main() {
       globalThis.fetch = originalFetch;
     }
 
-    assert.equal(new URL(requestUrl, 'https://example.test').searchParams.get('artworkRevision'), '2');
+    assert.equal(new URL(requestUrl, 'https://example.test').searchParams.get('artworkRevision'), '3');
   });
 
   await test('report route state is app-scoped and issue rows expose every meaningful cell', () => {

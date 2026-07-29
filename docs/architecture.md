@@ -11,12 +11,14 @@
 ```mermaid
 flowchart LR
   U["Public user"] --> W["Unified Worker Web URL report"]
-  W --> D["Same-origin discover/report/issues/reviews"]
+  W --> D["Same-origin discover/artwork/report/issues/reviews"]
   D --> S["Supabase RPC/read models"]
   D --> A["Apple Search API metadata"]
 ```
 
 `/api/public/report`는 앱 메타, overview, category/trend, issue cluster를 하나의 canonical 응답으로 합치며 모든 집계와 issue membership에 같은 inclusive `from`/`to` 범위를 적용합니다. 범위를 생략하면 Web과 동일하게 다음 UTC 자정 1밀리초 전까지의 최근 30개 UTC 날짜를 사용합니다. 이슈 집계는 범위 안의 리뷰마다 가장 최근 `published + passed` run의 membership 하나만 채택합니다. 따라서 증분 run에 없는 이전 리뷰는 유지되고, 이후 재분석에서 다른 cluster로 이동한 리뷰는 이전 분류에서 빠집니다. 제목·심각도·요약은 해당 cluster의 가장 최근 유효 snapshot을 사용하며, 범위 집계에는 snapshot 전체의 변화율을 섞지 않습니다. 상세 응답의 `reviewCount`와 `evidenceCount`는 전체 근거 수이고, `reviews` 원문 배열은 대표 근거와 최신 근거 우선 최대 50개입니다.
+
+`/api/public/artwork`는 검증된 App Store ID와 국가만 받아 Apple의 100px 아이콘을 같은 origin으로 중계합니다. JPEG·PNG·WebP·AVIF만 허용하고 응답 본문을 512KiB로 제한합니다. 성공한 아이콘은 브라우저에서 1일, edge에서 7일 캐시하며 실패 응답은 저장하지 않습니다. Web은 메타데이터에 아이콘 URL이 없거나 직접 이미지 로드가 실패할 때 이 경로를 최대 두 번 사용합니다.
 
 `/api/public/apps`는 앱·국가별 최신 `published` run 중 review가 있는 행만 선택하고 `apps` 메타와 정확한 복합 키로 결합해 한 service-role RPC에서 최대 100건을 반환합니다. 앱별 DB fan-out 없이 최근순과 고유성을 SQL에서 확정합니다. `DETAIL_VIEW_ENABLED=false`이면 원문을 포함하는 issue detail, legacy dashboard, 공개·로그인 review feed는 cache나 DB 조회 전에 HTTP 403으로 닫히며 overview와 issue 목록은 유지됩니다.
 
