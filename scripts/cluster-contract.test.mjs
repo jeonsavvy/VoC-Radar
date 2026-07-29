@@ -85,6 +85,34 @@ const existingClusterRow = (index, overrides = {}) => ({
   ...overrides,
 });
 
+test('terminates an empty queue through an explicit claim gate', () => {
+  const empty = executeWorkflowCodeNode('Prepare Run Context', [{
+    json: { data: { status: 'empty' } },
+  }]);
+  assert.deepEqual(empty, [{ json: { hasClaim: false, status: 'empty' } }]);
+
+  const claimed = executeWorkflowCodeNode(
+    'Prepare Run Context',
+    [{ json: { data: {
+      status: 'running',
+      jobId: 'job-1',
+      claimToken: 'claim-1',
+      leaseExpiresAt: '2026-07-29T15:00:00.000Z',
+      attemptCount: 1,
+      appStoreId: '1585915174',
+      country: 'kr',
+      source: 'reanalysis',
+    } } }],
+    { 'Prepare Claim Job Payload': [{ json: { claimKey: 'execution-1' } }] },
+  );
+  assert.equal(claimed[0].json.hasClaim, true);
+  assert.equal(claimed[0].json.fetchPayload.jobId, 'job-1');
+
+  assert.deepEqual(mainTargets('Prepare Run Context'), ['Has Active Claim?']);
+  assert.deepEqual(mainTargets('Has Active Claim?', 0), ['HTTP Request']);
+  assert.deepEqual(mainTargets('Has Active Claim?', 1), []);
+});
+
 test('accepts an exact one-cluster assignment', () => {
   for (const validate of validators) {
     const result = validate(['r1', 'r2'], base);

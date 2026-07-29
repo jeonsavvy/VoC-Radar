@@ -296,11 +296,42 @@ if (/RUN_.*Date\.now/.test(runContextCode)) {
   fail('runId must be deterministic for the claimed job attempt');
 }
 if (
-  !/if\s*\(!jobId\s*\|\|\s*status\s*!==\s*'running'\)\s*{[\s\S]*?return\s*\[\];[\s\S]*?}/.test(
+  !/if\s*\(!jobId\s*\|\|\s*status\s*!==\s*'running'\)\s*{[\s\S]*?hasClaim\s*:\s*false[\s\S]*?}/.test(
     runContextCode,
   )
 ) {
-  fail('Prepare Run Context must stop on empty or terminal idempotent claim responses');
+  fail('Prepare Run Context must emit an explicit false claim marker for empty responses');
+}
+if (!/hasClaim\s*:\s*true/.test(runContextCode)) {
+  fail('Prepare Run Context must mark valid claimed jobs before the pipeline branch');
+}
+const activeClaimGate = nodes.find((node) => node.name === 'Has Active Claim?');
+if (activeClaimGate?.type !== 'n8n-nodes-base.if') {
+  fail('workflow must include an explicit active-claim gate');
+}
+const activeClaimConditions = activeClaimGate?.parameters?.conditions?.conditions || [];
+const activeClaimCondition = activeClaimConditions[0];
+if (
+  activeClaimGate?.typeVersion !== 2
+  || activeClaimConditions.length !== 1
+  || activeClaimCondition?.leftValue !== "={{ $json.hasClaim === true ? 'yes' : 'no' }}"
+  || activeClaimCondition?.rightValue !== 'yes'
+  || activeClaimCondition?.operator?.type !== 'string'
+  || activeClaimCondition?.operator?.operation !== 'equals'
+) {
+  fail('active-claim gate must preserve its boolean polarity and strict string comparison');
+}
+const runContextTargets = workflow.connections?.['Prepare Run Context']?.main?.[0] || [];
+const claimedTargets = workflow.connections?.['Has Active Claim?']?.main?.[0] || [];
+const emptyClaimTargets = workflow.connections?.['Has Active Claim?']?.main?.[1] || [];
+if (
+  runContextTargets.length !== 1
+  || runContextTargets[0]?.node !== 'Has Active Claim?'
+  || claimedTargets.length !== 1
+  || claimedTargets[0]?.node !== 'HTTP Request'
+  || emptyClaimTargets.length !== 0
+) {
+  fail('active-claim gate must continue only claimed jobs and terminate the empty queue branch');
 }
 const fetchPayloadBlock = runContextCode.match(/const\s+fetchPayload\s*=\s*{([\s\S]*?)};/)?.[1] || '';
 for (const field of ['jobId', 'claimToken', 'runId']) {
@@ -401,6 +432,16 @@ const requireOnlyMainSources = (targetName, expectedSources, message) => {
     fail(`${message}: ${actualSources.join(', ') || '(none)'} -> ${targetName}`);
   }
 };
+requireOnlyMainSources(
+  'Has Active Claim?',
+  ['Prepare Run Context'],
+  'only normalized claim responses may enter the active-claim gate',
+);
+requireOnlyMainSources(
+  'HTTP Request',
+  ['Has Active Claim?'],
+  'review collection must not bypass the active-claim gate',
+);
 const hasMainPath = (sourceName, targetName) => {
   const pending = [sourceName];
   const visited = new Set();

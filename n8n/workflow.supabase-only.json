@@ -55,7 +55,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        880,
+        1100,
         0
       ],
       "id": "638e245b-1e11-4e26-92d5-36de6e727396",
@@ -463,7 +463,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const data = $json.data || {};\nconst status = (data.status || '').toString().trim().toLowerCase();\nconst jobId = (data.jobId || '').toString().trim() || null;\n\nif (!jobId || status !== 'running') {\n  console.log('No active claim. Stop this run.');\n  return [];\n}\n\nconst claimToken = (data.claimToken || '').toString().trim();\nconst leaseExpiresAt = (data.leaseExpiresAt || '').toString().trim();\nconst attemptCount = Number(data.attemptCount);\nif (!claimToken || !leaseExpiresAt || !Number.isInteger(attemptCount) || attemptCount < 1) {\n  throw new Error('claim response is incomplete');\n}\n\nconst appStoreId = (data.appStoreId || '').toString().trim();\nif (!appStoreId) {\n  throw new Error('claim response missing appStoreId');\n}\n\nconst country = (data.country || 'kr').toString().trim().toLowerCase();\nconst appName = (data.appName || '').toString().trim();\nconst source = (data.source || '').toString().trim().toLowerCase();\nconst forceReanalysis = source === 'reanalysis';\nconst claimKey = $('Prepare Claim Job Payload').first().json.claimKey;\nconst runId = 'RUN_' + jobId + '_' + attemptCount;\n\nconst rawWindowDays = ($env.VOC_FETCH_WINDOW_DAYS || '30').toString().trim();\nconst parsedWindowDays = Number(rawWindowDays);\nconst fetchWindowDays = Number.isFinite(parsedWindowDays)\n  ? Math.min(Math.max(Math.floor(parsedWindowDays), 1), 90)\n  : 30;\n\nconst rawMaxPages = ($env.VOC_FETCH_MAX_PAGES || '40').toString().trim();\nconst parsedMaxPages = Number(rawMaxPages);\nconst fetchMaxPages = Number.isFinite(parsedMaxPages)\n  ? Math.min(Math.max(Math.floor(parsedMaxPages), 1), 40)\n  : 40;\n\nconst fetchPayload = {\n  jobId,\n  claimToken,\n  runId,\n  appStoreId,\n  country,\n  windowDays: fetchWindowDays,\n  maxPages: fetchMaxPages,\n};\n\nreturn [{ json: {\n  runId,\n  jobId,\n  claimKey,\n  claimToken,\n  leaseExpiresAt,\n  attemptCount,\n  appStoreId,\n  country,\n  appName,\n  source,\n  forceReanalysis,\n  status,\n  fetchPayload,\n} }];"
+        "jsCode": "const data = $json.data || {};\nconst status = (data.status || '').toString().trim().toLowerCase();\nconst jobId = (data.jobId || '').toString().trim() || null;\n\nif (!jobId || status !== 'running') {\n  return [{ json: { hasClaim: false, status: status || 'empty' } }];\n}\n\nconst claimToken = (data.claimToken || '').toString().trim();\nconst leaseExpiresAt = (data.leaseExpiresAt || '').toString().trim();\nconst attemptCount = Number(data.attemptCount);\nif (!claimToken || !leaseExpiresAt || !Number.isInteger(attemptCount) || attemptCount < 1) {\n  throw new Error('claim response is incomplete');\n}\n\nconst appStoreId = (data.appStoreId || '').toString().trim();\nif (!appStoreId) {\n  throw new Error('claim response missing appStoreId');\n}\n\nconst country = (data.country || 'kr').toString().trim().toLowerCase();\nconst appName = (data.appName || '').toString().trim();\nconst source = (data.source || '').toString().trim().toLowerCase();\nconst forceReanalysis = source === 'reanalysis';\nconst claimKey = $('Prepare Claim Job Payload').first().json.claimKey;\nconst runId = 'RUN_' + jobId + '_' + attemptCount;\n\nconst rawWindowDays = ($env.VOC_FETCH_WINDOW_DAYS || '30').toString().trim();\nconst parsedWindowDays = Number(rawWindowDays);\nconst fetchWindowDays = Number.isFinite(parsedWindowDays)\n  ? Math.min(Math.max(Math.floor(parsedWindowDays), 1), 90)\n  : 30;\n\nconst rawMaxPages = ($env.VOC_FETCH_MAX_PAGES || '40').toString().trim();\nconst parsedMaxPages = Number(rawMaxPages);\nconst fetchMaxPages = Number.isFinite(parsedMaxPages)\n  ? Math.min(Math.max(Math.floor(parsedMaxPages), 1), 40)\n  : 40;\n\nconst fetchPayload = {\n  jobId,\n  claimToken,\n  runId,\n  appStoreId,\n  country,\n  windowDays: fetchWindowDays,\n  maxPages: fetchMaxPages,\n};\n\nreturn [{ json: {\n  hasClaim: true,\n  runId,\n  jobId,\n  claimKey,\n  claimToken,\n  leaseExpiresAt,\n  attemptCount,\n  appStoreId,\n  country,\n  appName,\n  source,\n  forceReanalysis,\n  status,\n  fetchPayload,\n} }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -482,7 +482,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1100,
+        1320,
         0
       ],
       "id": "prepare-preflight-reviews-payload-v2",
@@ -525,7 +525,7 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.3,
       "position": [
-        1320,
+        1540,
         0
       ],
       "id": "filter-new-reviews-via-bff-v2",
@@ -542,7 +542,7 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1540,
+        1760,
         0
       ],
       "id": "ensure-new-reviews-v2",
@@ -892,7 +892,7 @@
       "type": "n8n-nodes-base.splitInBatches",
       "typeVersion": 3,
       "position": [
-        1760,
+        1980,
         0
       ],
       "id": "loop-extraction-batches-v2",
@@ -1203,6 +1203,39 @@
       "id": "loop-consolidation-batches-v2",
       "name": "Loop Consolidation Batches",
       "notes": "각 모델 배치를 단독 실행하고 완료 결과를 순서대로 결합한다."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-active-claim",
+              "leftValue": "={{ $json.hasClaim === true ? 'yes' : 'no' }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "has-active-claim-v2",
+      "name": "Has Active Claim?",
+      "notes": "빈 queue는 명시적인 false terminal branch로 종료해 production concurrency slot을 반환한다."
     }
   ],
   "pinData": {},
@@ -1371,7 +1404,7 @@
       "main": [
         [
           {
-            "node": "HTTP Request",
+            "node": "Has Active Claim?",
             "type": "main",
             "index": 0
           }
@@ -1792,6 +1825,18 @@
             "index": 0
           }
         ]
+      ]
+    },
+    "Has Active Claim?": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
       ]
     }
   },

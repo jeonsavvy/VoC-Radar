@@ -161,8 +161,7 @@ const status = (data.status || '').toString().trim().toLowerCase();
 const jobId = (data.jobId || '').toString().trim() || null;
 
 if (!jobId || status !== 'running') {
-  console.log('No active claim. Stop this run.');
-  return [];
+  return [{ json: { hasClaim: false, status: status || 'empty' } }];
 }
 
 const claimToken = (data.claimToken || '').toString().trim();
@@ -207,6 +206,7 @@ const fetchPayload = {
 };
 
 return [{ json: {
+  hasClaim: true,
   runId,
   jobId,
   claimKey,
@@ -221,6 +221,28 @@ return [{ json: {
   status,
   fetchPayload,
 } }];`;
+
+setNode({
+  parameters: {
+    conditions: {
+      options: { caseSensitive: false, leftValue: '', typeValidation: 'strict' },
+      conditions: [{
+        id: 'has-active-claim',
+        leftValue: "={{ $json.hasClaim === true ? 'yes' : 'no' }}",
+        rightValue: 'yes',
+        operator: { type: 'string', operation: 'equals' },
+      }],
+      combinator: 'and',
+    },
+    options: {},
+  },
+  type: 'n8n-nodes-base.if',
+  typeVersion: 2,
+  position: [0, 0],
+  id: 'has-active-claim-v2',
+  name: 'Has Active Claim?',
+  notes: '빈 queue는 명시적인 false terminal branch로 종료해 production concurrency slot을 반환한다.',
+});
 
 byName.get('Prepare Preflight Reviews Payload').parameters.jsCode = `const context = $('Prepare Run Context').first().json || {};
 const appStoreId = (context.appStoreId || '').toString().trim();
@@ -1438,6 +1460,11 @@ workflow.connections['Prepare Cluster Upsert'] = { main: [[{ node: 'Upsert Clust
 workflow.connections['Upsert Clusters to BFF'] = { main: [[{ node: 'Prepare Publish Payload', type: 'main', index: 0 }]] };
 
 workflow.connections['Prepare Claim Job Payload'] = { main: [[{ node: 'Claim Job from BFF', type: 'main', index: 0 }]] };
+workflow.connections['Prepare Run Context'] = { main: [[{ node: 'Has Active Claim?', type: 'main', index: 0 }]] };
+workflow.connections['Has Active Claim?'] = { main: [
+  [{ node: 'HTTP Request', type: 'main', index: 0 }],
+  [],
+] };
 workflow.connections['Prepare Preflight Reviews Payload'] = { main: [[{ node: 'Filter New Reviews via BFF', type: 'main', index: 0 }]] };
 workflow.connections['Prepare Upsert Payload'] = { main: [[{ node: 'Upsert Reviews to BFF', type: 'main', index: 0 }]] };
 workflow.connections['Prepare Publish Payload'] = { main: [[{ node: 'Notify Publish to BFF', type: 'main', index: 0 }]] };
@@ -1453,11 +1480,12 @@ const layout = {
   'Prepare Claim Job Payload': [220, 0],
   'Claim Job from BFF': [440, 0],
   'Prepare Run Context': [660, 0],
-  'HTTP Request': [880, 0],
-  'Prepare Preflight Reviews Payload': [1100, 0],
-  'Filter New Reviews via BFF': [1320, 0],
-  'Ensure New Reviews': [1540, 0],
-  'Loop Extraction Batches': [1760, 0],
+  'Has Active Claim?': [880, 0],
+  'HTTP Request': [1100, 0],
+  'Prepare Preflight Reviews Payload': [1320, 0],
+  'Filter New Reviews via BFF': [1540, 0],
+  'Ensure New Reviews': [1760, 0],
+  'Loop Extraction Batches': [1980, 0],
 
   'Basic LLM Chain': [0, 260],
   'Checkpoint Extraction Lease': [220, 260],
