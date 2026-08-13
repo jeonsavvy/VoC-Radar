@@ -742,12 +742,6 @@ const geminiModel = nodes.find((node) => node.name === 'Google Gemini Chat Model
 if (geminiModel?.parameters?.modelName !== expectedModelName) {
   fail('Google Gemini Chat Model must resolve its model from VOC_MODEL_VERSION');
 }
-const persistedModelVersionCode = String(
-  nodes.find((node) => node.name === 'Prepare Upsert Payload')?.parameters?.jsCode || '',
-);
-if (!persistedModelVersionCode.includes(`const modelVersion = ${modelVersionResolver};`)) {
-  fail('persisted modelVersion must use the same resolver as the Gemini model node');
-}
 for (const requiredName of [
   'Cluster Review Issues',
   'Validate Cluster Output',
@@ -793,23 +787,6 @@ if (!consolidatedValidationOutputs.some((connection) => connection.node === 'Has
 const clusterUpsert = nodes.find((node) => node.name === 'Upsert Clusters to BFF');
 if (!String(clusterUpsert?.parameters?.url || '').includes('/api/internal/pipeline/upsert-clusters')) {
   fail('cluster upsert endpoint is missing from workflow');
-}
-
-const prepareUpsert = nodes.find((node) => node.name === 'Prepare Upsert Payload');
-const prepareClusterUpsert = nodes.find((node) => node.name === 'Prepare Cluster Upsert');
-const prepareClusterContext = nodes.find((node) => node.name === 'Prepare Cluster Context');
-if (
-  !String(prepareClusterContext?.parameters?.jsCode || '').includes(
-    'forceReanalysis: runContext.forceReanalysis === true',
-  )
-) {
-  fail('cluster context must preserve the reanalysis boundary');
-}
-if (!String(prepareUpsert?.parameters?.jsCode || '').includes('comparisonEligible: context.forceReanalysis !== true')) {
-  fail('reanalysis must disable non-comparable change metrics');
-}
-if (!String(prepareClusterUpsert?.parameters?.jsCode || '').includes('comparisonEligible: upsert.comparisonEligible')) {
-  fail('cluster upsert must carry the comparison eligibility boundary');
 }
 
 const publishInputs = workflow.connections?.['Upsert Clusters to BFF']?.main?.[0] || [];

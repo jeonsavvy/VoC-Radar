@@ -848,6 +848,9 @@ test('builds the 10k review persistence payload without duplicating raw review f
   );
 
   assert.equal(prepared.length, 1);
+  assert.equal(prepared[0].json.modelVersion, 'gemini-3-flash-preview');
+  assert.equal(prepared[0].json.comparisonEligible, true);
+  assert.ok(prepared[0].json.payload.reviews.every((review) => review.modelVersion === 'gemini-3-flash-preview'));
   assert.equal(prepared[0].json.payload.reviews.length, 10_000);
   assert.ok(prepared[0].json.payload.reviews.every((review) => !Object.hasOwn(review, 'rawSource')));
   assert.equal(Object.hasOwn(prepared[0].json, 'reviewItems'), false);
@@ -861,6 +864,55 @@ test('builds the 10k review persistence payload without duplicating raw review f
       `raw content ${index} must appear exactly once in the persistence request`,
     );
   }
+});
+
+test('normalizes the persisted model version and carries the reanalysis comparison boundary', () => {
+  const review = {
+    ...workflowFixtures.runContext,
+    ID: 'review-reanalysis',
+    rating: 2,
+    author: 'tester',
+    content: '재분석 리뷰 원문',
+    date: '2026-08-13T00:00:00.000Z',
+    priority: 'High',
+    category: '버그 및 성능',
+    summary: '재분석 리뷰',
+    appStoreId: '123456789',
+    country: 'kr',
+    appName: '테스트 앱',
+  };
+  const reanalysisContext = executeWorkflowCodeNode(
+    'Prepare Cluster Context',
+    [{ json: {} }],
+    {
+      'Filter Duplicates': [{ json: review }],
+      'Prepare Run Context': [{ json: { ...workflowFixtures.runContext, forceReanalysis: true } }],
+      'Filter New Reviews via BFF': [{ json: { data: { existingExtractions: [] } } }],
+    },
+  );
+  assert.equal(reanalysisContext[0].json.forceReanalysis, true);
+
+  const prepared = executeWorkflowCodeNode(
+    'Prepare Upsert Payload',
+    [{ json: {
+      ...reanalysisContext[0].json,
+      inputReviewIds: [review.ID],
+      result: { extractions: [], clusters: [] },
+    } }],
+    {},
+    { VOC_MODEL_VERSION: 'models/gemini-custom' },
+  );
+  assert.equal(prepared[0].json.modelVersion, 'gemini-custom');
+  assert.equal(prepared[0].json.payload.reviews[0].modelVersion, 'gemini-custom');
+  assert.equal(prepared[0].json.comparisonEligible, false);
+
+  const clusterUpsert = executeWorkflowCodeNode(
+    'Prepare Cluster Upsert',
+    [{ json: {} }],
+    { 'Prepare Upsert Payload': prepared },
+  );
+  assert.equal(clusterUpsert[0].json.payload.modelVersion, 'gemini-custom');
+  assert.equal(clusterUpsert[0].json.payload.comparisonEligible, false);
 });
 
 test('budgets persistence HTTP requests for their complete Worker endpoint paths', () => {
