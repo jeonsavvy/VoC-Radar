@@ -195,7 +195,10 @@ test('report, V2 issues, and issue detail use the current requested review windo
     assert.equal(defaultReport.status, 200, await defaultReport.clone().text());
     assert.equal(defaultIssues.status, 200, await defaultIssues.clone().text());
     assert.equal(detail.status, 200, await detail.clone().text());
-    assert.equal((await report.clone().json()).data.summary.issueCount, 73);
+    const reportPayload = await report.clone().json();
+    const defaultReportPayload = await defaultReport.clone().json();
+    assert.equal(reportPayload.data.summary.issueCount, 73);
+    assert.deepEqual(reportPayload.data.window, { from, to });
     assert.equal((await issues.clone().json()).data.length, 1);
     assert.equal(issueBodies.length, 4);
     for (const body of issueBodies.slice(0, 2)) {
@@ -221,6 +224,10 @@ test('report, V2 issues, and issue detail use the current requested review windo
       assert.equal(body.p_from, issueBodies[2].p_from);
       assert.equal(body.p_to, issueBodies[2].p_to);
     }
+    assert.deepEqual(defaultReportPayload.data.window, {
+      from: issueBodies[2].p_from,
+      to: issueBodies[2].p_to,
+    });
     assert.equal(detailBodies.length, 1);
     const detailFrom = Date.parse(detailBodies[0].p_from);
     const detailTo = Date.parse(detailBodies[0].p_to);
@@ -304,7 +311,7 @@ test('report compatibility mode keeps legacy issue RPCs available while V2 is ga
     assert.equal((await report.json()).data.summary.issueCount, 1);
     assert.deepEqual(listBodies, [{ p_app_store_id: '1018769995', p_country: 'kr', p_limit: 50 }]);
     assert.deepEqual(detailBodies, [{ p_issue_id: '11111111-1111-4111-8111-111111111111' }]);
-    assert.ok(cacheVersions.every((version) => version === '0:compat'));
+    assert.ok(cacheVersions.every((version) => version === '0:compat:window-v1'));
   } finally {
     globalThis.fetch = originalFetch;
     if (originalCaches) Object.defineProperty(globalThis, 'caches', originalCaches);

@@ -43,6 +43,19 @@ export type RequestInitWithRetry = RequestInit & {
 
 export const encoder = new TextEncoder();
 
+function boundedIntegerFromEnv(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum = Number.MAX_SAFE_INTEGER,
+): number {
+  if (value == null || value.trim() === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed)) return fallback;
+  if (parsed < minimum || parsed > maximum) return fallback;
+  return parsed;
+}
+
 export const boolFromEnv = (value: string | undefined, fallback: boolean) => {
   if (value == null) {
     return fallback;
@@ -121,8 +134,17 @@ export async function fetchWithRetry(
   init: RequestInitWithRetry,
 ): Promise<Response> {
   const method = (init.method || 'GET').toUpperCase();
-  const retries = init.retries ?? Number(env.API_RETRY_COUNT || DEFAULT_RETRY_COUNT);
-  const timeoutMs = init.timeoutMs ?? Number(env.API_TIMEOUT_MS || DEFAULT_TIMEOUT_MS);
+  const retries = init.retries ?? boundedIntegerFromEnv(
+    env.API_RETRY_COUNT,
+    DEFAULT_RETRY_COUNT,
+    0,
+  );
+  const timeoutMs = init.timeoutMs ?? boundedIntegerFromEnv(
+    env.API_TIMEOUT_MS,
+    DEFAULT_TIMEOUT_MS,
+    1,
+    2_147_483_647,
+  );
   const idempotent = init.idempotent ?? ['GET', 'HEAD', 'OPTIONS'].includes(method);
   const { timeoutMs: _timeoutMs, retries: _retries, idempotent: _idempotent, upstream, ...requestInit } = init;
   const upstreamKind = upstream || 'database';
@@ -349,16 +371,26 @@ export async function signMessage(secret: string, message: string): Promise<stri
   return [...new Uint8Array(signature)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-export function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    return false;
+export async function timingSafeEqual(a: string, b: string): Promise<boolean> {
+  const [aHash, bHash] = await Promise.all([
+    crypto.subtle.digest('SHA-256', encoder.encode(a)),
+    crypto.subtle.digest('SHA-256', encoder.encode(b)),
+  ]);
+  const subtle = crypto.subtle as SubtleCrypto & {
+    timingSafeEqual?: (left: BufferSource, right: BufferSource) => boolean;
+  };
+  if (typeof subtle.timingSafeEqual === 'function') {
+    return subtle.timingSafeEqual(aHash, bHash);
   }
 
+  // Node's Web Crypto test runtime does not implement the Workers extension.
+  // Production Workers always take the crypto.subtle.timingSafeEqual branch.
+  const left = new Uint8Array(aHash);
+  const right = new Uint8Array(bHash);
   let mismatch = 0;
-  for (let index = 0; index < a.length; index += 1) {
-    mismatch |= a.charCodeAt(index) ^ b.charCodeAt(index);
+  for (let index = 0; index < left.length; index += 1) {
+    mismatch |= left[index]! ^ right[index]!;
   }
-
   return mismatch === 0;
 }
 

@@ -15,12 +15,7 @@ export function getArtworkSources({
   country,
 }: Pick<Props, 'artworkUrl' | 'appStoreId' | 'country'>) {
   const directSource = artworkUrl?.trim() || null;
-  const proxySources = appStoreId
-    ? [
-        getPublicArtworkUrl(appStoreId, country, 0),
-        getPublicArtworkUrl(appStoreId, country, 1),
-      ]
-    : [];
+  const proxySources = appStoreId ? [getPublicArtworkUrl(appStoreId, country)] : [];
   return [directSource, ...proxySources].filter(
     (source, index, sources): source is string => Boolean(source) && sources.indexOf(source) === index,
   );

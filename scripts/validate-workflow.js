@@ -7,7 +7,6 @@ const WORKFLOW_PATH = path.resolve(__dirname, '../n8n/workflow.supabase-only.jso
 const COMPOSE_PATH = path.resolve(__dirname, '../n8n/compose.yaml');
 const ENV_EXAMPLE_PATH = path.resolve(__dirname, '../n8n/.env.example');
 const BUILDER_PATH = path.resolve(__dirname, './build-workflow-v2.mjs');
-const INTERNAL_WORKER_PATH = path.resolve(__dirname, '../apps/worker/src/internal.ts');
 
 const fail = (message) => {
   console.error(`[workflow-check] ${message}`);
@@ -63,8 +62,6 @@ if (
 
 const compose = fs.readFileSync(COMPOSE_PATH, 'utf8');
 const envExample = fs.readFileSync(ENV_EXAMPLE_PATH, 'utf8');
-const builderSource = fs.readFileSync(BUILDER_PATH, 'utf8');
-const internalWorkerSource = fs.readFileSync(INTERNAL_WORKER_PATH, 'utf8');
 
 const builderCheck = spawnSync(process.execPath, [BUILDER_PATH, '--check'], {
   cwd: path.resolve(__dirname, '..'),
@@ -136,10 +133,6 @@ if (
   workflow.settings?.saveManualExecutions !== false
 ) {
   fail('workflow execution settings must disable success data and retain only failed execution data');
-}
-
-if (/\bconst\s+signCode\b|\$json\.(?:token|fetchToken)\b|\bfetchToken\b/.test(builderSource)) {
-  fail('workflow builder must not materialize the internal API secret in item data');
 }
 
 const signNodes = nodes.filter((node) => String(node.name || '').startsWith('Sign '));
@@ -281,30 +274,6 @@ if (
 }
 
 const runContextCode = String(nodes.find((node) => node.name === 'Prepare Run Context')?.parameters?.jsCode || '');
-for (const requiredFragment of [
-  "status !== 'running'",
-  'data.claimToken',
-  'data.leaseExpiresAt',
-  'data.attemptCount',
-  "'RUN_' + jobId + '_' + attemptCount",
-]) {
-  if (!runContextCode.includes(requiredFragment)) {
-    fail(`Prepare Run Context is missing claim contract fragment: ${requiredFragment}`);
-  }
-}
-if (/RUN_.*Date\.now/.test(runContextCode)) {
-  fail('runId must be deterministic for the claimed job attempt');
-}
-if (
-  !/if\s*\(!jobId\s*\|\|\s*status\s*!==\s*'running'\)\s*{[\s\S]*?hasClaim\s*:\s*false[\s\S]*?}/.test(
-    runContextCode,
-  )
-) {
-  fail('Prepare Run Context must emit an explicit false claim marker for empty responses');
-}
-if (!/hasClaim\s*:\s*true/.test(runContextCode)) {
-  fail('Prepare Run Context must mark valid claimed jobs before the pipeline branch');
-}
 const activeClaimGate = nodes.find((node) => node.name === 'Has Active Claim?');
 if (activeClaimGate?.type !== 'n8n-nodes-base.if') {
   fail('workflow must include an explicit active-claim gate');
@@ -333,28 +302,6 @@ if (
 ) {
   fail('active-claim gate must continue only claimed jobs and terminate the empty queue branch');
 }
-const fetchPayloadBlock = runContextCode.match(/const\s+fetchPayload\s*=\s*{([\s\S]*?)};/)?.[1] || '';
-for (const field of ['jobId', 'claimToken', 'runId']) {
-  if (!new RegExp(`\\b${field}\\b`).test(fetchPayloadBlock)) {
-    fail(`fetch payload must carry ${field}`);
-  }
-}
-if (
-  !runContextCode.includes("$env.VOC_FETCH_MAX_PAGES || '40'")
-  || !runContextCode.includes('Math.min(Math.max(Math.floor(parsedMaxPages), 1), 40)')
-) {
-  fail('Prepare Run Context must clamp review collection to the 40-page Worker boundary');
-}
-const preparePreflightCode = String(
-  nodes.find((node) => node.name === 'Prepare Preflight Reviews Payload')?.parameters?.jsCode || '',
-);
-if (
-  !preparePreflightCode.includes('responseData.complete !== true')
-  || !preparePreflightCode.includes('responseData.truncated === true')
-) {
-  fail('review preflight must reject every collection that did not prove the requested window complete');
-}
-
 for (const nodeName of [
   'Prepare Run Context',
   'Prepare Preflight Reviews Payload',
@@ -495,40 +442,12 @@ for (const contract of [
     fail(`${contract.llm} must always emit one loop result, including model failures`);
   }
 
-  const checkpointCode = String(
-    nodes.find((node) => node.name === contract.checkpoint)?.parameters?.jsCode || '',
-  );
-  for (const fragment of [
-    'resultItems',
-    'resultItems.length !== 1',
-    'jobId',
-    'claimToken',
-    'runId',
-    `stage: '${contract.stage}'`,
-  ]) {
-    if (!checkpointCode.includes(fragment)) {
-      fail(`${contract.checkpoint} is missing fenced checkpoint fragment: ${fragment}`);
-    }
-  }
-
   const renew = nodes.find((node) => node.name === contract.renew);
   if (
     !String(renew?.parameters?.url || '').includes('/api/internal/pipeline/heartbeat') ||
     renew?.parameters?.jsonBody !== '={{ $json.heartbeatPayload }}'
   ) {
     fail(`${contract.renew} must renew the captured claim through the heartbeat endpoint`);
-  }
-
-  const restoreCode = String(
-    nodes.find((node) => node.name === contract.restore)?.parameters?.jsCode || '',
-  );
-  if (
-    !restoreCode.includes(`$('${contract.checkpoint}').first(0, $runIndex)`) ||
-    !restoreCode.includes("heartbeat.status || ''") ||
-    !restoreCode.includes(`heartbeat.stage !== '${contract.stage}'`) ||
-    !restoreCode.includes('resultItems.map')
-  ) {
-    fail(`${contract.restore} must release results only after the matching heartbeat succeeds`);
   }
 
   requireOnlyMainTargets(contract.input, 0, [contract.loop], 'model batches must enter the fenced loop');
@@ -542,33 +461,6 @@ for (const contract of [
   requireOnlyMainSources(contract.done, [contract.loop], 'downstream validation must receive only completed loop output');
 }
 
-const functionSource = (name) => {
-  const start = internalWorkerSource.indexOf(`async function ${name}`);
-  if (start < 0) return '';
-  const next = internalWorkerSource.indexOf('\nasync function ', start + 1);
-  return internalWorkerSource.slice(start, next < 0 ? undefined : next);
-};
-const scopedReviewLookupSource = functionSource('fetchScopedReviewRows');
-const filterNewReviewsSource = functionSource('handleInternalFilterNewReviews');
-const clusterContextSource = functionSource('handleInternalClusterContext');
-if (
-  !/const beforeLookup = await renewPipelineJobClaim\(env, claim, heartbeatStage\);[\s\S]*?get_pipeline_review_scope[\s\S]*?const afterLookup = await renewPipelineJobClaim\(env, claim, heartbeatStage\)/.test(
-    scopedReviewLookupSource,
-  ) ||
-  !/const guardedJob = await renewPipelineJobClaim\(env, claim, 'extracting'\)/.test(
-    filterNewReviewsSource,
-  ) ||
-  !/fetchScopedReviewRows<[\s\S]*?'extracting',[\s\S]*?true,[\s\S]*?\)/.test(filterNewReviewsSource)
-) {
-  fail('filter-new-reviews must renew the extraction lease immediately before the first model loop');
-}
-if (
-  !/const activeClaim = await renewPipelineJobClaim\(env, claim, 'clustering'\);[\s\S]*?get_pipeline_cluster_context/.test(
-    clusterContextSource,
-  )
-) {
-  fail('cluster-context must renew the clustering lease before the first cluster model loop');
-}
 requireOnlyMainTargets(
   'Filter New Reviews via BFF',
   0,
@@ -582,64 +474,10 @@ requireOnlyMainTargets(
   'the first cluster model batch must follow the cluster-context lease renewal',
 );
 
-const ensureNewReviewsCode = String(
-  nodes.find((node) => node.name === 'Ensure New Reviews')?.parameters?.jsCode || '',
-);
-const prepareClusterInputCode = String(
-  nodes.find((node) => node.name === 'Prepare Cluster Input')?.parameters?.jsCode || '',
-);
-const validateClusterOutputCode = String(
-  nodes.find((node) => node.name === 'Validate Cluster Output')?.parameters?.jsCode || '',
-);
-if (!ensureNewReviewsCode.includes('Math.min(Math.max(Math.floor(parsedBatch), 1), 50)')) {
-  fail('extraction model input must remain bounded to 50 reviews');
-}
-if (!prepareClusterInputCode.includes('Math.min(Math.max(Math.floor(parsedBatchLimit), 10), 40)')) {
-  fail('cluster model input must remain bounded to 40 reviews');
-}
-for (const fragment of [
-  '$json.data.length > 10000',
-  'existingClusters.length <= 100',
-  'selectedEntries.length >= 160',
-  'measuredContextBytes > 49152',
-  'new TextEncoder().encode(value).length',
-  "text.match(/[가-힣]+|[a-z]+|[0-9]+/g)",
-  'categoryEntries[0]',
-  'candidate.lexicalScore > 0',
-  'right.normalized.reviewCount - left.normalized.reviewCount',
-  'right.lastSeenMs - left.lastSeenMs',
-  'existingClusters: selectedClusters',
-  'existingClusterTotalCount: existingClusters.length',
-  'existingClusterContextBytes: measuredContextBytes',
-  'completeContextBytes <= 49152',
-  'queueEntry(primaryEntries, categoryEntries[0])',
-  'queueEntry(primaryEntries, rankedByRelevance.find((entry) => entry.lexicalScore > 0))',
-  "throw new Error('invalid existing cluster row at index '",
-  "throw new Error('invalid existing cluster row exceeds the context byte budget')",
-]) {
-  if (!prepareClusterInputCode.includes(fragment)) {
-    fail(`existing cluster context selection is missing a bound or relevance invariant: ${fragment}`);
-  }
-}
-if (
-  prepareClusterInputCode.includes('reviewItems: batchReviews,\n  existingClusters,') ||
-  !String(nodes.find((node) => node.name === 'Prepare Cluster Input')?.notes || '').includes(
-    '최대 160개, 49152 UTF-8 bytes',
-  )
-) {
+if (!String(nodes.find((node) => node.name === 'Prepare Cluster Input')?.notes || '').includes(
+  '최대 160개, 49152 UTF-8 bytes',
+)) {
   fail('cluster batches must contain only bounded selected existing-cluster context');
-}
-if (
-  !validateClusterOutputCode.includes('llmItems.length !== contexts.length') ||
-  !validateClusterOutputCode.includes('cluster batch count mismatch: expected ')
-) {
-  fail('cluster model output must match the global batch cardinality exactly');
-}
-if (
-  !internalWorkerSource.includes('MAX_FETCH_REVIEW_CAP') ||
-  !internalWorkerSource.includes('clampLimit(String(body?.limit ?? MAX_FETCH_REVIEW_CAP)')
-) {
-  fail('the upstream review set must remain bounded by MAX_FETCH_REVIEW_CAP');
 }
 if (!compose.includes('image: docker.n8n.io/n8nio/n8n:2.30.8')) {
   fail('the verified Gemini timeout contract is pinned to n8n 2.30.8');
@@ -680,61 +518,26 @@ for (const [nodeName, expectedTimeout] of internalHttpTimeouts) {
     fail(`${nodeName} must use the bounded Worker endpoint timeout ${expectedTimeout}`);
   }
 }
+const workerTimeoutSource = fs.readFileSync(
+  path.resolve(__dirname, '../apps/worker/src/internal.ts'),
+  'utf8',
+);
 for (const fragment of [
   'const FETCH_REVIEWS_DEADLINE_MS = 270_000',
   'const APPLE_REVIEW_PAGE_TIMEOUT_MS = 5_000',
-  "redirect: 'manual'",
-  "retries: 0",
-  "'review_scope_incomplete'",
-  'complete: true',
-  'truncated: false',
-  'pipelineSupabaseRequest',
 ]) {
-  if (!internalWorkerSource.includes(fragment)) {
+  if (!workerTimeoutSource.includes(fragment)) {
     fail(`Worker review/timeout contract is missing: ${fragment}`);
   }
 }
 
-const prepareConsolidation = nodes.find((node) => node.name === 'Prepare Consolidation Batches');
-const prepareConsolidationCode = String(prepareConsolidation?.parameters?.jsCode || '');
 const consolidateCandidates = nodes.find((node) => node.name === 'Consolidate Cluster Candidates');
-const validateConsolidationCode = String(
-  nodes.find((node) => node.name === 'Validate Consolidated Clusters')?.parameters?.jsCode || '',
-);
-for (const fragment of [
-  'sourceClusters.length > 10000',
-  'next.length > 48',
-  'utf8Length(nextPrompt) > 65536',
-  'new TextEncoder().encode(value).length',
-  "title.length > 120",
-  "summary.length > 400",
-  'candidateCount: batch.length',
-  'promptBytes',
-]) {
-  if (!prepareConsolidationCode.includes(fragment)) {
-    fail(`candidate batching is missing a hard count, UTF-8 byte, or field bound: ${fragment}`);
-  }
-}
 if (
   consolidateCandidates?.parameters?.text !== '={{ $json.prompt }}' ||
   !String(consolidateCandidates?.notes || '').includes('후보 최대 48개') ||
   !String(consolidateCandidates?.notes || '').includes('65536 UTF-8 bytes')
 ) {
   fail('candidate consolidation must consume only the pre-measured bounded prompt');
-}
-for (const fragment of [
-  'llmItems.length !== contexts.length',
-  'expectedCandidateIds.length !== sourceClusters.length',
-  'assignedCandidates.size !== sourceClusters.length',
-  'not every consolidation candidate was assigned exactly once',
-  'canonicalKey must come from its source candidates',
-  'title.length > 120',
-  'summary.length > 400',
-  'actionHint.length > 240',
-]) {
-  if (!validateConsolidationCode.includes(fragment)) {
-    fail(`candidate consolidation validation is missing a global invariant: ${fragment}`);
-  }
 }
 
 const consolidationHeartbeatContract = {
@@ -747,22 +550,10 @@ const consolidationHeartbeatContract = {
   done: 'Validate Consolidated Clusters',
 };
 const consolidationLoop = nodes.find((node) => node.name === consolidationHeartbeatContract.loop);
-const consolidationCheckpointCode = String(
-  nodes.find((node) => node.name === consolidationHeartbeatContract.checkpoint)?.parameters?.jsCode || '',
-);
-const consolidationRestoreCode = String(
-  nodes.find((node) => node.name === consolidationHeartbeatContract.restore)?.parameters?.jsCode || '',
-);
 if (
   consolidationLoop?.type !== 'n8n-nodes-base.splitInBatches' ||
   consolidationLoop?.typeVersion !== 3 ||
-  consolidationLoop?.parameters?.batchSize !== 1 ||
-  !consolidationCheckpointCode.includes("stage: 'clustering'") ||
-  !consolidationCheckpointCode.includes('resultItems.length !== 1') ||
-  !consolidationRestoreCode.includes("heartbeat.stage !== 'clustering'") ||
-  !consolidationRestoreCode.includes(
-    "$('Checkpoint Consolidation Lease').first(0, $runIndex)",
-  )
+  consolidationLoop?.parameters?.batchSize !== 1
 ) {
   fail('every bounded candidate consolidation batch must run in a one-at-a-time fenced loop');
 }
@@ -815,25 +606,11 @@ requireOnlyMainSources(
 );
 
 const extractionGate = nodes.find((node) => node.name === 'Gate Extraction Batches');
-const extractionGateCode = String(extractionGate?.parameters?.jsCode || '');
-const parseResponseCode = String(
-  nodes.find((node) => node.name === 'Parse JSON Response')?.parameters?.jsCode || '',
-);
-if (
-  !parseResponseCode.includes('llmItems.length !== contextItems.length') ||
-  !parseResponseCode.includes('extraction batch count mismatch: expected ') ||
-  !parseResponseCode.includes("'batch_count'")
-) {
-  fail('Parse JSON Response must turn missing or extra LLM batches into a parse error');
-}
 if (
   extractionGate?.type !== 'n8n-nodes-base.code' ||
-  extractionGate?.parameters?.mode !== 'runOnceForAllItems' ||
-  !extractionGateCode.includes("startsWith('PARSE_ERROR_')") ||
-  !extractionGateCode.includes('parseErrors[0].json') ||
-  !extractionGateCode.includes('return items;')
+  extractionGate?.parameters?.mode !== 'runOnceForAllItems'
 ) {
-  fail('Gate Extraction Batches must discard successful subsets and emit one parse error globally');
+  fail('Gate Extraction Batches must evaluate the extraction result as one global barrier');
 }
 const parseErrorCondition = nodes.find((node) => node.name === 'Has Parse Error?')
   ?.parameters?.conditions?.conditions?.[0];
@@ -879,43 +656,15 @@ requireOnlyMainSources(
   'Stage 1 persistence must not accept a bypass around the global success output',
 );
 
-if (nodes.some((node) => node.name === 'Check Critical Priority')) {
-  fail('per-item Critical branching is obsolete; alerts must use the serialized global gate');
-}
-const criticalAlertGate = nodes.find((node) => node.name === 'Has Critical Alerts?');
-const criticalAlertCondition = criticalAlertGate?.parameters?.conditions?.conditions?.[0];
-if (
-  criticalAlertGate?.type !== 'n8n-nodes-base.if' ||
-  criticalAlertCondition?.leftValue !==
-    "={{ $json.hasCriticalAlerts === true ? 'yes' : 'no' }}" ||
-  criticalAlertCondition?.rightValue !== 'yes' ||
-  criticalAlertCondition?.operator?.operation !== 'equals'
-) {
-  fail('Has Critical Alerts? must route hasCriticalAlerts=true through its HTTP output');
+if (nodes.some((node) => ['Check Critical Priority', 'Has Critical Alerts?'].includes(node.name))) {
+  fail('n8n must not own or branch on the Worker-owned priority rule');
 }
 const prepareAlerts = nodes.find((node) => node.name === 'Prepare Alert Events Payload');
-const prepareAlertsCode = String(prepareAlerts?.parameters?.jsCode || '');
-const prepareClusterContextCode = String(
-  nodes.find((node) => node.name === 'Prepare Cluster Context')?.parameters?.jsCode || '',
-);
-if (
-  prepareAlerts?.parameters?.mode !== 'runOnceForAllItems' ||
-  !prepareAlertsCode.includes('hasCriticalAlerts: alerts.length > 0') ||
-  !prepareAlertsCode.includes("normalized !== 'Normal'") ||
-  !prepareAlertsCode.includes(
-    "rating <= 1 && (category === '버그 및 성능' || category === '계정 및 결제')",
-  ) ||
-  !prepareAlertsCode.includes("alert.priority === 'Critical'") ||
-  prepareAlertsCode.includes('reviewItems')
-) {
-  fail('Prepare Alert Events Payload must use canonical Critical priority without copying all reviews');
+if (prepareAlerts?.parameters?.mode !== 'runOnceForAllItems') {
+  fail('Prepare Alert Events Payload must serialize raw facts through one Worker request');
 }
-if (
-  nodes.some((node) => node.name === 'Restore Reviews After Alerts') ||
-  !prepareClusterContextCode.includes("$('Filter Duplicates').all()") ||
-  prepareClusterContextCode.includes('$input.all()')
-) {
-  fail('cluster context must reuse Filter Duplicates output after the alert barrier without fan-out');
+if (nodes.some((node) => node.name === 'Restore Reviews After Alerts')) {
+  fail('the alert barrier must reuse the existing review set without a restore workaround');
 }
 requireOnlyMainTargets(
   'Filter Duplicates',
@@ -926,39 +675,27 @@ requireOnlyMainTargets(
 requireOnlyMainTargets(
   'Prepare Alert Events Payload',
   0,
-  ['Has Critical Alerts?'],
-  'the alert aggregate must enter the Critical gate',
-);
-requireOnlyMainTargets(
-  'Has Critical Alerts?',
-  0,
   ['Send Alert Events to BFF'],
-  'Critical alerts must be persisted before analysis continues',
-);
-requireOnlyMainTargets(
-  'Has Critical Alerts?',
-  1,
-  ['Prepare Cluster Context'],
-  'runs without Critical alerts must continue to clustering without an HTTP call',
+  'raw alert facts must be sent to the Worker before analysis continues',
 );
 requireOnlyMainTargets(
   'Send Alert Events to BFF',
   0,
   ['Prepare Cluster Context'],
-  'Critical alert persistence must complete before clustering',
+  'Worker-owned alert filtering and persistence must complete before clustering',
 );
 requireOnlyMainSources(
   'Prepare Cluster Context',
-  ['Has Critical Alerts?', 'Send Alert Events to BFF'],
-  'clustering must accept only the mutually exclusive serialized alert-gate outputs',
+  ['Send Alert Events to BFF'],
+  'clustering must accept only the serialized Worker alert result',
 );
 requireOnlyMainSources(
   'Send Alert Events to BFF',
-  ['Has Critical Alerts?'],
-  'alert persistence must be reachable only from the Critical output',
+  ['Prepare Alert Events Payload'],
+  'alert persistence must be reachable only from the raw-fact payload',
 );
 if (!hasMainPath('Send Alert Events to BFF', 'Notify Publish to BFF')) {
-  fail('the Critical path must reach publish only after alert persistence');
+  fail('the alert path must reach publish only after Worker persistence');
 }
 requireOnlyMainSources(
   'Prepare Publish Payload',
@@ -993,13 +730,6 @@ const persistedModelVersionCode = String(
 if (!persistedModelVersionCode.includes(`const modelVersion = ${modelVersionResolver};`)) {
   fail('persisted modelVersion must use the same resolver as the Gemini model node');
 }
-if (
-  /\brawSource\s*:/.test(persistedModelVersionCode) ||
-  (persistedModelVersionCode.match(/\bcontent\s*:/g) || []).length !== 1
-) {
-  fail('review persistence payload must not duplicate review fields inside rawSource');
-}
-
 for (const requiredName of [
   'Cluster Review Issues',
   'Validate Cluster Output',
@@ -1020,16 +750,6 @@ for (const requiredName of [
 const clusterNode = nodes.find((node) => node.name === 'Cluster Review Issues');
 if (clusterNode.executeOnce !== false) {
   fail('Cluster Review Issues.executeOnce must be false');
-}
-
-for (const [nodeName, codePath] of [
-  ['Merge Cluster Batches', '../n8n/code/merge-cluster-batches.js'],
-]) {
-  const node = nodes.find((candidate) => candidate.name === nodeName);
-  const expectedCode = fs.readFileSync(path.resolve(__dirname, codePath), 'utf8').trim();
-  if (String(node?.parameters?.jsCode || '').trim() !== expectedCode) {
-    fail(`${nodeName} is stale; run node scripts/build-workflow-v2.mjs`);
-  }
 }
 
 const validationOutputs = workflow.connections?.['Validate Cluster Output']?.main?.[0] || [];

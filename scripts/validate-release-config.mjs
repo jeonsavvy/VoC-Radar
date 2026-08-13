@@ -44,9 +44,9 @@ if (limitsSection !== undefined) {
   process.exit(1);
 }
 
-if (!String(workerPackage.scripts?.deploy || '').includes('wrangler deploy --keep-vars')) {
-  console.error('Worker deploy script must retain dashboard-managed variables with --keep-vars.');
+if (workerPackage.scripts?.deploy !== 'node ../../scripts/deploy-worker.mjs') {
+  console.error('Worker deploy script must use the explicit feature-flag deployment wrapper.');
   process.exit(1);
 }
 
-console.log('Release config is fail-closed for the V2 report path.');
+console.log('Release config is fail-closed and production deploys require explicit feature flags.');

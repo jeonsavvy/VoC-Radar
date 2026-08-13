@@ -11,7 +11,7 @@ let workerModule;
 let tempDir;
 const testDir = dirname(fileURLToPath(import.meta.url));
 const workerEntry = resolve(testDir, '../index.ts');
-const workerModulePaths = ['index.ts', 'platform.ts', 'public.ts', 'private.ts', 'internal.ts']
+const workerModulePaths = ['index.ts', 'platform.ts', 'public.ts', 'private.ts', 'internal.ts', 'review-feed.ts']
   .map((file) => resolve(testDir, '..', file));
 const JOB_ID = '33333333-3333-4333-8333-333333333333';
 const CLAIM_TOKEN = '66666666-6666-4666-8666-666666666666';
@@ -89,20 +89,25 @@ test('worker configuration retains workers.dev alongside the official custom dom
   assert.match(config, /pattern = "voc-radar\.satinode\.com", custom_domain = true/);
   assert.match(config, /not_found_handling = "single-page-application"/);
   assert.match(config, /run_worker_first = \["\/api\/\*"\]/);
+  assert.match(config, /required = \[[\s\S]*?"N8N_PIPELINE_TRIGGER_SECRET"/);
 });
 
-test('worker entry delegates routes to focused modules without changing route fallthrough', () => {
-  const [entry, platform, publicRoutes, privateRoutes, internalRoutes] = workerModulePaths
-    .map((file) => readFileSync(file, 'utf8'));
-
-  assert.ok(entry.split(/\r?\n/).length <= 250, 'entry stays limited to Worker orchestration');
-  assert.match(entry, /routePublicRequest, routePrivateRequest, routeInternalRequest/);
-  assert.match(entry, /if \(response\) return response;/);
-  assert.match(platform, /export async function supabaseRequest/);
-  assert.match(publicRoutes, /export async function routePublicRequest[\s\S]*?return null;/);
-  assert.match(privateRoutes, /export async function routePrivateRequest[\s\S]*?return null;/);
-  assert.match(internalRoutes, /export async function routeInternalRequest[\s\S]*?return null;/);
-  assert.ok(internalRoutes.includes('return handler ? handler(await request.text()) : null;'));
+test('route fallthrough preserves unknown API 404 behavior', async () => {
+  const env = {
+    SUPABASE_URL: 'https://example.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    SUPABASE_ANON_KEY: 'anon-key', PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+  };
+  for (const [method, path] of [
+    ['GET', '/api/unknown'],
+    ['POST', '/api/internal/pipeline/unknown'],
+  ]) {
+    const response = await workerModule.default.fetch(
+      new Request(`https://worker.example${path}`, { method }),
+      env,
+    );
+    assert.equal(response.status, 404);
+    assert.equal((await response.json()).error, 'not_found');
+  }
 });
 
 test('scheduled keepalive performs multiple cheap Supabase GET probes', async () => {
@@ -2888,14 +2893,17 @@ test('only the measured large persistence RPCs use one 60 second database attemp
   assert.equal(source.match(/timeoutMs:\s*60_000/g)?.length, 2);
 });
 
-test('pipeline stabilization SQL keeps lease, transaction, staging, and privilege contracts in parity', () => {
+test('pipeline stabilization migration and Worker adapter preserve the fenced persistence contract', () => {
   const migration = readFileSync(resolve(testDir, '../../../../supabase/migrations/202607260001_pipeline_stabilization.sql'), 'utf8');
-  const schema = readFileSync(resolve(testDir, '../../../../supabase/schema.sql'), 'utf8');
   const workerSource = workerModulePaths.map((file) => readFileSync(file, 'utf8')).join('\n');
 
-  for (const [name, sql] of [['migration', migration], ['schema', schema]]) {
+  for (const [name, sql] of [['migration', migration]]) {
     const functionSql = (functionName) => {
-      const start = sql.toLowerCase().lastIndexOf(`create or replace function public.${functionName.toLowerCase()}(`);
+      const candidates = [...sql.matchAll(new RegExp(
+        `create(?: or replace)? function public\\.${functionName}\\(`,
+        'gi',
+      ))];
+      const start = candidates.at(-1)?.index ?? -1;
       assert.notEqual(start, -1, `${name}: missing ${functionName}`);
       const end = sql.indexOf('\n$$;', start);
       assert.notEqual(end, -1, `${name}: unterminated ${functionName}`);

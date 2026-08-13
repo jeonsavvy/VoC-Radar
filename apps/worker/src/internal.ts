@@ -53,6 +53,27 @@ const APPLE_RSS_REVIEW_PAGE_SIZE = 50;
 const APPLE_REVIEW_PAGE_TIMEOUT_MS = 5_000;
 const FETCH_REVIEWS_DEADLINE_MS = 270_000;
 
+const internalAuthBrand: unique symbol = Symbol('authenticated-internal-request');
+
+type AuthenticatedInternalRequest = Readonly<{
+  rawBody: string;
+  idempotencyKey: string | null;
+  [internalAuthBrand]: true;
+}>;
+
+async function authenticateInternalRequest(
+  env: Env,
+  request: Request,
+): Promise<AuthenticatedInternalRequest | null> {
+  const rawBody = await request.text();
+  if (!await verifySignedRequest(env, request, rawBody)) return null;
+  return Object.freeze({
+    rawBody,
+    idempotencyKey: request.headers.get('x-idempotency-key'),
+    [internalAuthBrand]: true as const,
+  });
+}
+
 const pipelineSupabaseRequest = <T>(
   env: Env,
   path: string,
@@ -147,11 +168,8 @@ async function fetchScopedReviewRows<T extends Record<string, unknown>>(
   };
 }
 
-async function handleInternalFetchReviews(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) {
-    return unauthorized(env, 'invalid signature');
-  }
+async function handleInternalFetchReviews(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: FetchReviewsRequest;
   try {
@@ -506,11 +524,8 @@ async function handleInternalFetchReviews(env: Env, request: Request, rawBody: s
     },
   });
 }
-async function handleInternalFilterNewReviews(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) {
-    return unauthorized(env, 'invalid signature');
-  }
+async function handleInternalFilterNewReviews(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: FilterNewReviewsRequest;
   try {
@@ -662,11 +677,8 @@ async function handleInternalFilterNewReviews(env: Env, request: Request, rawBod
 // Internal API: n8n 파이프라인 전용
 // -----------------------------------------------------------------------------
 
-async function handleInternalClaimJob(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) {
-    return unauthorized(env, 'invalid signature');
-  }
+async function handleInternalClaimJob(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: Partial<ClaimJobRequest> = {};
   try {
@@ -676,7 +688,7 @@ async function handleInternalClaimJob(env: Env, request: Request, rawBody: strin
   }
 
   const claimKey = normalizeOptionalText(body.claimKey, 200);
-  const idempotencyKey = normalizeOptionalText(request.headers.get('x-idempotency-key'), 200);
+  const idempotencyKey = normalizeOptionalText(context.idempotencyKey, 200);
   if (!claimKey || !idempotencyKey || claimKey !== idempotencyKey) {
     return badRequest(env, 'claimKey must match x-idempotency-key');
   }
@@ -721,11 +733,8 @@ async function handleInternalClaimJob(env: Env, request: Request, rawBody: strin
   return jsonResponse(env, 200, { ok: true, data });
 }
 
-async function handleInternalJobStatus(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) {
-    return unauthorized(env, 'invalid signature');
-  }
+async function handleInternalJobStatus(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: JobStatusRequest;
   try {
@@ -777,9 +786,8 @@ async function handleInternalJobStatus(env: Env, request: Request, rawBody: stri
   return jsonResponse(env, 200, { ok: true, data });
 }
 
-async function handleInternalPipelineHeartbeat(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) return unauthorized(env, 'invalid signature');
+async function handleInternalPipelineHeartbeat(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: PipelineHeartbeatRequest;
   try {
@@ -811,9 +819,8 @@ async function handleInternalPipelineHeartbeat(env: Env, request: Request, rawBo
   });
 }
 
-async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) return unauthorized(env, 'invalid signature');
+async function handleInternalUpsertReviews(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: UpsertReviewRequest;
   try {
@@ -931,9 +938,8 @@ async function handleInternalUpsertReviews(env: Env, request: Request, rawBody: 
   });
 }
 
-async function handleInternalUpsertClusters(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) return unauthorized(env, 'invalid signature');
+async function handleInternalUpsertClusters(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: UpsertClustersRequest;
   try {
@@ -1074,9 +1080,8 @@ async function handleInternalUpsertClusters(env: Env, request: Request, rawBody:
   });
 }
 
-async function handleInternalClusterContext(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) return unauthorized(env, 'invalid signature');
+async function handleInternalClusterContext(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
   let body: ClusterContextRequest;
   try {
     body = JSON.parse(rawBody) as ClusterContextRequest;
@@ -1164,9 +1169,8 @@ async function handleInternalClusterContext(env: Env, request: Request, rawBody:
   });
 }
 
-async function handleInternalParseError(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) return unauthorized(env, 'invalid signature');
+async function handleInternalParseError(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: ParseErrorRequest;
   try {
@@ -1199,9 +1203,8 @@ async function handleInternalParseError(env: Env, request: Request, rawBody: str
   return jsonResponse(env, 200, { ok: true, parseErrorId: body.parseErrorId });
 }
 
-async function handleInternalPublish(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) return unauthorized(env, 'invalid signature');
+async function handleInternalPublish(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: PublishRequest;
   try {
@@ -1259,11 +1262,8 @@ async function handleInternalPublish(env: Env, request: Request, rawBody: string
   });
 }
 
-async function handleInternalAlertEvents(env: Env, request: Request, rawBody: string) {
-  const verified = await verifySignedRequest(env, request, rawBody);
-  if (!verified) {
-    return unauthorized(env, 'invalid signature');
-  }
+async function handleInternalAlertEvents(env: Env, context: AuthenticatedInternalRequest) {
+  const { rawBody } = context;
 
   let body: AlertEventsRequest;
   try {
@@ -1279,20 +1279,22 @@ async function handleInternalAlertEvents(env: Env, request: Request, rawBody: st
     return badRequest(env, 'job claim, app scope, and alerts are required');
   }
 
-  const rows = body.alerts.map((alert) => {
-    const normalizedCategory = normalizeVocCategory(alert.category, alert.summary, '');
-    const normalizedPriority = derivePriorityValue(alert.rating, normalizedCategory, alert.priority);
+  const rows = body.alerts
+    .map((alert) => {
+      const normalizedCategory = normalizeVocCategory(alert.category, alert.summary, '');
+      const normalizedPriority = derivePriorityValue(alert.rating, normalizedCategory, alert.priority);
 
-    return {
-      event_id: `${appStoreId}_${normalizedCountry}_${alert.reviewId}`,
-      review_id: alert.reviewId,
-      rating: alert.rating,
-      priority: normalizedPriority,
-      category: normalizedCategory,
-      summary: alert.summary,
-      sent_at: alert.sentAt || new Date().toISOString(),
-    };
-  });
+      return {
+        event_id: `${appStoreId}_${normalizedCountry}_${alert.reviewId}`,
+        review_id: alert.reviewId,
+        rating: alert.rating,
+        priority: normalizedPriority,
+        category: normalizedCategory,
+        summary: alert.summary,
+        sent_at: alert.sentAt || new Date().toISOString(),
+      };
+    })
+    .filter((alert) => alert.priority === 'Critical');
 
   const persisted = await pipelineSupabaseRequest<Array<Record<string, unknown>>>(env, '/rest/v1/rpc/persist_pipeline_alerts', {
     method: 'POST',
@@ -1311,23 +1313,29 @@ async function handleInternalAlertEvents(env: Env, request: Request, rawBody: st
   return jsonResponse(env, 200, { ok: true, inserted: Number(persisted[0].inserted ?? rows.length) });
 }
 
-/** Returns null when the request is not an internal pipeline route. */
+type InternalHandler = (env: Env, context: AuthenticatedInternalRequest) => Promise<Response>;
+
+const INTERNAL_ROUTES: Readonly<Record<string, InternalHandler>> = Object.freeze({
+  '/api/internal/pipeline/claim-job': handleInternalClaimJob,
+  '/api/internal/pipeline/fetch-reviews': handleInternalFetchReviews,
+  '/api/internal/pipeline/job-status': handleInternalJobStatus,
+  '/api/internal/pipeline/heartbeat': handleInternalPipelineHeartbeat,
+  '/api/internal/pipeline/filter-new-reviews': handleInternalFilterNewReviews,
+  '/api/internal/pipeline/upsert-reviews': handleInternalUpsertReviews,
+  '/api/internal/pipeline/upsert-clusters': handleInternalUpsertClusters,
+  '/api/internal/pipeline/cluster-context': handleInternalClusterContext,
+  '/api/internal/pipeline/parse-error': handleInternalParseError,
+  '/api/internal/pipeline/publish': handleInternalPublish,
+  '/api/internal/pipeline/alert-events': handleInternalAlertEvents,
+});
+
+/** Returns null when the request is not a known internal pipeline route. */
 export async function routeInternalRequest(env: Env, request: Request): Promise<Response | null> {
-  const url = new URL(request.url);
   if (request.method !== 'POST') return null;
-  const routes: Record<string, (rawBody: string) => Promise<Response>> = {
-    '/api/internal/pipeline/claim-job': (rawBody) => handleInternalClaimJob(env, request, rawBody),
-    '/api/internal/pipeline/fetch-reviews': (rawBody) => handleInternalFetchReviews(env, request, rawBody),
-    '/api/internal/pipeline/job-status': (rawBody) => handleInternalJobStatus(env, request, rawBody),
-    '/api/internal/pipeline/heartbeat': (rawBody) => handleInternalPipelineHeartbeat(env, request, rawBody),
-    '/api/internal/pipeline/filter-new-reviews': (rawBody) => handleInternalFilterNewReviews(env, request, rawBody),
-    '/api/internal/pipeline/upsert-reviews': (rawBody) => handleInternalUpsertReviews(env, request, rawBody),
-    '/api/internal/pipeline/upsert-clusters': (rawBody) => handleInternalUpsertClusters(env, request, rawBody),
-    '/api/internal/pipeline/cluster-context': (rawBody) => handleInternalClusterContext(env, request, rawBody),
-    '/api/internal/pipeline/parse-error': (rawBody) => handleInternalParseError(env, request, rawBody),
-    '/api/internal/pipeline/publish': (rawBody) => handleInternalPublish(env, request, rawBody),
-    '/api/internal/pipeline/alert-events': (rawBody) => handleInternalAlertEvents(env, request, rawBody),
-  };
-  const handler = routes[url.pathname];
-  return handler ? handler(await request.text()) : null;
+  const handler = INTERNAL_ROUTES[new URL(request.url).pathname];
+  if (!handler) return null;
+
+  const context = await authenticateInternalRequest(env, request);
+  if (!context) return unauthorized(env, 'invalid signature');
+  return handler(env, context);
 }

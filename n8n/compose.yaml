@@ -35,7 +35,6 @@ services:
       VOC_LLM_BATCH_LIMIT: ${VOC_LLM_BATCH_LIMIT:-50}
       VOC_CLUSTER_BATCH_LIMIT: ${VOC_CLUSTER_BATCH_LIMIT:-30}
       VOC_MODEL_VERSION: ${VOC_MODEL_VERSION:-gemini-3-flash-preview}
-      VOC_ALERT_MAX_RATING: ${VOC_ALERT_MAX_RATING:-2}
     volumes:
       - n8n_data:/home/node/.n8n
       - ./:/voc-radar-workflows:ro

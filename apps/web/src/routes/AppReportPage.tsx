@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowRight, ArrowUp, Clock3, RefreshCw, Search, Star, X } from 'lucide-react';
 import { Link, NavLink, Navigate, useLocation, useNavigate, useParams } from 'react-router';
 import { AppArtwork } from '@/components/AppArtwork';
@@ -15,8 +15,6 @@ const TABS = ['overview', 'issues', 'reviews'] as const;
 type ReportTab = (typeof TABS)[number];
 
 const severityLabel = { high: '높음', medium: '중간', low: '낮음' } as const;
-const REPORT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
-const REPORT_WINDOW_BUCKET_MS = 24 * 60 * 60 * 1000;
 
 const formatDate = (value: string | null | undefined, withTime = false) => {
   if (!value) return '—';
@@ -25,16 +23,6 @@ const formatDate = (value: string | null | undefined, withTime = false) => {
     ? '—'
     : date.toLocaleString('ko-KR', withTime ? { dateStyle: 'medium', timeStyle: 'short' } : { dateStyle: 'medium' });
 };
-
-export function createRecentReviewWindow(now = new Date()) {
-  // Inclusive filters must stop 1 ms before the next UTC day to avoid sharing
-  // the midnight review with two adjacent calendar windows.
-  const nextUtcMidnightMs = (Math.floor(now.getTime() / REPORT_WINDOW_BUCKET_MS) + 1)
-    * REPORT_WINDOW_BUCKET_MS;
-  const from = new Date(nextUtcMidnightMs - REPORT_WINDOW_MS);
-  const to = new Date(nextUtcMidnightMs - 1);
-  return { from: from.toISOString(), to: to.toISOString() };
-}
 
 export function getIssueAccessibleName(issue: IssueClusterItem) {
   const change = issue.changePercent == null
@@ -73,15 +61,15 @@ function IssuePanel({ issue, from, to, onClose }: {
 
   useEffect(() => {
     if (!issue) return;
-    let active = true;
+    const controller = new AbortController();
     setDetail(null);
     setError(null);
-    getIssueDetail(issue.issueId, from, to)
-      .then((response) => active && setDetail(response.data))
-      .catch(() => active && setError(
+    getIssueDetail(issue.issueId, from, to, controller.signal)
+      .then((response) => !controller.signal.aborted && setDetail(response.data))
+      .catch(() => !controller.signal.aborted && setError(
         '이슈 상세를 불러오지 못했습니다. 현재 리포트는 그대로 유지됩니다. 잠시 후 다시 시도하세요.',
       ));
-    return () => { active = false; };
+    return () => controller.abort();
   }, [from, issue, reloadKey, to]);
 
   return (
@@ -188,15 +176,13 @@ function OverviewView({ report }: { report: PublicReport }) {
   </div>;
 }
 
-function useDebouncedValue<T>(value: T, revision: number, delayMs: number) {
-  const [debouncedValue, setDebouncedValue] = useState({ value, revision });
+function useDebouncedValue<T>(value: T, delayMs: number) {
+  const [debouncedValue, setDebouncedValue] = useState(value);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedValue((current) =>
-      Object.is(current.value, value) && current.revision === revision ? current : { value, revision },
-    ), delayMs);
+    const timer = window.setTimeout(() => setDebouncedValue(value), delayMs);
     return () => window.clearTimeout(timer);
-  }, [delayMs, revision, value]);
+  }, [delayMs, value]);
 
   return debouncedValue;
 }
@@ -210,31 +196,31 @@ export function mergeReviewItems(current: ReviewItem[], incoming: ReviewItem[]) 
   }));
 }
 
-function ReviewsView({ appId, country, from, to }: { appId: string; country: string; from: string; to: string }) {
-  const [items, setItems] = useState<ReviewItem[]>([]);
+type ReviewsResource =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | {
+      status: 'ready';
+      items: ReviewItem[];
+      nextCursor: string | null;
+      hasNext: boolean;
+      more: 'idle' | 'loading' | 'error';
+    };
+
+export function ReviewsView({ appId, country, from, to }: { appId: string; country: string; from: string; to: string }) {
   const [query, setQuery] = useState('');
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [hasNext, setHasNext] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [resource, setResource] = useState<ReviewsResource>({ status: 'loading' });
   const [reloadKey, setReloadKey] = useState(0);
-  const [queryRevision, setQueryRevision] = useState(0);
-  const [error, setError] = useState<{ scope: 'initial' | 'more'; message: string } | null>(null);
-  const requestSequence = useRef(0);
-  const loadMoreInFlight = useRef<string | null>(null);
-  const debouncedSearch = useDebouncedValue(query.trim(), queryRevision, 350);
-  const debouncedQuery = debouncedSearch.value;
+  const initialRequest = useRef<AbortController | null>(null);
+  const moreRequest = useRef<AbortController | null>(null);
+  const debouncedQuery = useDebouncedValue(query.trim(), 350);
 
   useEffect(() => {
-    let active = true;
-    const requestId = ++requestSequence.current;
-    loadMoreInFlight.current = null;
-    setItems([]);
-    setNextCursor(null);
-    setHasNext(false);
-    setLoading(true);
-    setLoadingMore(false);
-    setError(null);
+    const controller = new AbortController();
+    initialRequest.current = controller;
+    moreRequest.current?.abort();
+    moreRequest.current = null;
+    setResource({ status: 'loading' });
 
     getPublicReviews(appId, {
       country,
@@ -243,36 +229,41 @@ function ReviewsView({ appId, country, from, to }: { appId: string; country: str
       limit: 50,
       search: debouncedQuery || undefined,
       searchScope: 'content',
+      signal: controller.signal,
     })
       .then((response) => {
-        if (!active || requestId !== requestSequence.current) return;
-        setItems(mergeReviewItems([], response.data));
-        setNextCursor(response.nextCursor);
-        setHasNext(Boolean(response.hasNext && response.nextCursor));
-      })
-      .catch(() => {
-        if (!active || requestId !== requestSequence.current) return;
-        setError({
-          scope: 'initial',
-          message: '리뷰를 불러오지 못했습니다. 현재 목록은 비어 있습니다. 잠시 후 다시 시도하세요.',
+        if (controller.signal.aborted) return;
+        setResource({
+          status: 'ready',
+          items: mergeReviewItems([], response.data),
+          nextCursor: response.nextCursor,
+          hasNext: Boolean(response.hasNext && response.nextCursor),
+          more: 'idle',
         });
       })
-      .finally(() => {
-        if (active && requestId === requestSequence.current) setLoading(false);
+      .catch(() => {
+        if (controller.signal.aborted) return;
+        setResource({
+          status: 'error',
+          message: '리뷰를 불러오지 못했습니다. 현재 목록은 비어 있습니다. 잠시 후 다시 시도하세요.',
+        });
       });
 
-    return () => { active = false; };
-  }, [appId, country, debouncedQuery, debouncedSearch.revision, from, reloadKey, to]);
+    return () => {
+      controller.abort();
+      if (initialRequest.current === controller) initialRequest.current = null;
+      moreRequest.current?.abort();
+      moreRequest.current = null;
+    };
+  }, [appId, country, debouncedQuery, from, reloadKey, to]);
 
   const loadMore = useCallback(async () => {
-    if (loading || loadingMore || !hasNext || !nextCursor) return;
-
-    const requestId = requestSequence.current;
-    const requestKey = `${requestId}:${nextCursor}`;
-    if (loadMoreInFlight.current === requestKey) return;
-    loadMoreInFlight.current = requestKey;
-    setLoadingMore(true);
-    setError(null);
+    if (resource.status !== 'ready' || resource.more === 'loading'
+      || !resource.hasNext || !resource.nextCursor || moreRequest.current) return;
+    const cursor = resource.nextCursor;
+    const controller = new AbortController();
+    moreRequest.current = controller;
+    setResource((current) => current.status === 'ready' ? { ...current, more: 'loading' } : current);
 
     try {
       const response = await getPublicReviews(appId, {
@@ -282,24 +273,24 @@ function ReviewsView({ appId, country, from, to }: { appId: string; country: str
         limit: 50,
         search: debouncedQuery || undefined,
         searchScope: 'content',
-        cursor: nextCursor,
+        cursor,
+        signal: controller.signal,
       });
-      if (requestId !== requestSequence.current) return;
-
-      setItems((current) => mergeReviewItems(current, response.data));
-      setNextCursor(response.nextCursor);
-      setHasNext(Boolean(response.hasNext && response.nextCursor && response.nextCursor !== nextCursor));
+      if (controller.signal.aborted) return;
+      setResource((current) => current.status === 'ready' ? {
+        status: 'ready',
+        items: mergeReviewItems(current.items, response.data),
+        nextCursor: response.nextCursor,
+        hasNext: Boolean(response.hasNext && response.nextCursor && response.nextCursor !== cursor),
+        more: 'idle',
+      } : current);
     } catch {
-      if (requestId !== requestSequence.current) return;
-      setError({
-        scope: 'more',
-        message: '리뷰를 더 불러오지 못했습니다. 기존 리뷰는 그대로 유지됩니다. 다시 시도하세요.',
-      });
+      if (controller.signal.aborted) return;
+      setResource((current) => current.status === 'ready' ? { ...current, more: 'error' } : current);
     } finally {
-      if (loadMoreInFlight.current === requestKey) loadMoreInFlight.current = null;
-      if (requestId === requestSequence.current) setLoadingMore(false);
+      if (moreRequest.current === controller) moreRequest.current = null;
     }
-  }, [appId, country, debouncedQuery, from, hasNext, loading, loadingMore, nextCursor, to]);
+  }, [appId, country, debouncedQuery, from, resource, to]);
 
   return <div className="reviews-view">
     <label className="review-search">
@@ -308,40 +299,35 @@ function ReviewsView({ appId, country, from, to }: { appId: string; country: str
       <input
         value={query}
         onChange={(event) => {
-          requestSequence.current += 1;
-          loadMoreInFlight.current = null;
-          setLoadingMore(false);
-          setItems([]);
-          setNextCursor(null);
-          setHasNext(false);
-          setLoading(true);
+          initialRequest.current?.abort();
+          moreRequest.current?.abort();
+          moreRequest.current = null;
           setQuery(event.target.value);
-          setQueryRevision((value) => value + 1);
-          setError(null);
+          setResource({ status: 'loading' });
         }}
         placeholder="리뷰 내용 검색"
       />
     </label>
-    {loading ? <ReportSkeleton /> : error?.scope === 'initial' ? <div className="error-state" role="alert">
+    {resource.status === 'loading' ? <ReportSkeleton /> : resource.status === 'error' ? <div className="error-state" role="alert">
       <strong>리뷰를 표시하지 못했습니다.</strong>
-      <p>{error.message}</p>
+      <p>{resource.message}</p>
       <button type="button" onClick={() => setReloadKey((value) => value + 1)}>다시 시도</button>
-    </div> : items.length ? <>
+    </div> : resource.items.length ? <>
       <div className="public-review-list">
-        {items.map((review) => <article key={review.review_id}>
+        {resource.items.map((review) => <article key={review.review_id}>
           <div className="review-meta"><span><Star aria-hidden="true" /> {review.rating}</span><span>{review.category}</span><time>{formatDate(review.reviewed_at)}</time></div>
           <p>{review.content}</p><small>{review.author || '작성자 미상'} · {review.review_id}</small>
         </article>)}
       </div>
-      {error?.scope === 'more' ? <p className="review-load-error" role="alert">{error.message}</p> : null}
-      {hasNext ? <button
+      {resource.more === 'error' ? <p className="review-load-error" role="alert">리뷰를 더 불러오지 못했습니다. 기존 리뷰는 그대로 유지됩니다. 다시 시도하세요.</p> : null}
+      {resource.hasNext ? <button
         type="button"
         className="review-load-more"
-        disabled={loadingMore}
-        aria-busy={loadingMore}
+        disabled={resource.more === 'loading'}
+        aria-busy={resource.more === 'loading'}
         onClick={() => void loadMore()}
       >
-        {loadingMore ? '리뷰 불러오는 중…' : error?.scope === 'more' ? '다시 시도' : '리뷰 더 보기'}
+        {resource.more === 'loading' ? '리뷰 불러오는 중…' : resource.more === 'error' ? '다시 시도' : '리뷰 더 보기'}
       </button> : null}
     </> : <div className="quiet-empty">조건에 맞는 리뷰가 없습니다.</div>}
   </div>;
@@ -349,10 +335,14 @@ function ReviewsView({ appId, country, from, to }: { appId: string; country: str
 
 type Props = { loggedIn: boolean; authChecking: boolean };
 
+type ReportResource =
+  | { status: 'loading'; scope: string }
+  | { status: 'error'; scope: string; message: string }
+  | { status: 'ready'; scope: string; data: PublicReport };
+
 export function AppReportPage(props: Props) {
   const { appId = '', country = DEFAULT_COUNTRY, tab = 'overview' } = useParams();
-  const appScope = `${country}:${appId}`;
-  return <AppReportPageContent key={appScope} {...props} appId={appId} country={country} tab={tab} />;
+  return <AppReportPageContent {...props} appId={appId} country={country} tab={tab} />;
 }
 
 function AppReportPageContent({ loggedIn, authChecking, appId, country, tab }: Props & {
@@ -362,68 +352,82 @@ function AppReportPageContent({ loggedIn, authChecking, appId, country, tab }: P
 }) {
   const navigate = useNavigate();
   const location = useLocation();
-  const [report, setReport] = useState<PublicReport | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const scope = `${country}:${appId}`;
+  const [reportResource, setReportResource] = useState<ReportResource>({ status: 'loading', scope });
   const [selectedIssue, setSelectedIssue] = useState<IssueClusterItem | null>(null);
-  const [requestMessage, setRequestMessage] = useState<string | null>(null);
-  const [requesting, setRequesting] = useState(false);
+  const [analysisRequest, setAnalysisRequest] = useState<{
+    scope: string;
+    status: 'idle' | 'loading' | 'done';
+    message: string | null;
+  }>({ scope, status: 'idle', message: null });
   const [reloadKey, setReloadKey] = useState(0);
-  const requestInFlight = useRef(false);
-  const reportWindow = useMemo(() => createRecentReviewWindow(), [appId, country, reloadKey]);
+  const requestInFlightScope = useRef<string | null>(null);
+  const report = reportResource.scope === scope && reportResource.status === 'ready' ? reportResource.data : null;
+  const error = reportResource.scope === scope && reportResource.status === 'error' ? reportResource.message : null;
+  const loading = reportResource.scope !== scope || reportResource.status === 'loading';
+  const requesting = analysisRequest.scope === scope && analysisRequest.status === 'loading';
+  const requestMessage = analysisRequest.scope === scope ? analysisRequest.message : null;
 
   const activeTab = TABS.includes(tab as ReportTab) ? (tab as ReportTab) : null;
 
   useEffect(() => {
-    if (activeTab !== 'issues') setSelectedIssue(null);
-  }, [activeTab]);
+    setSelectedIssue(null);
+  }, [activeTab, scope]);
 
   useEffect(() => {
     if (!/^\d{5,20}$/.test(appId) || !/^[a-z]{2}$/.test(country)) {
-      setError('유효하지 않은 App Store ID 또는 국가 코드입니다.');
-      setLoading(false);
+      setReportResource({ status: 'error', scope, message: '유효하지 않은 App Store ID 또는 국가 코드입니다.' });
       return;
     }
-    let active = true;
-    setLoading(true); setError(null);
-    getPublicReport(appId, country, reportWindow.from, reportWindow.to)
-      .then((response) => active && setReport(response.data))
-      .catch(() => active && setError(
-        '리포트를 불러오지 못했습니다. 공개 데이터는 변경되지 않았습니다. 잠시 후 다시 시도하세요.',
-      ))
-      .finally(() => active && setLoading(false));
-    return () => { active = false; };
-  }, [appId, country, reloadKey, reportWindow.from, reportWindow.to]);
+    const controller = new AbortController();
+    setReportResource({ status: 'loading', scope });
+    getPublicReport(appId, country, controller.signal)
+      .then((response) => !controller.signal.aborted
+        && setReportResource({ status: 'ready', scope, data: response.data }))
+      .catch(() => !controller.signal.aborted && setReportResource({
+        status: 'error',
+        scope,
+        message: '리포트를 불러오지 못했습니다. 공개 데이터는 변경되지 않았습니다. 잠시 후 다시 시도하세요.',
+      }));
+    return () => controller.abort();
+  }, [appId, country, reloadKey, scope]);
 
   if (!activeTab) return <Navigate to={reportPath(appId, country)} replace />;
 
   const requestRefresh = async () => {
-    if (authChecking || requestInFlight.current) return;
+    if (authChecking || requestInFlightScope.current === scope) return;
     if (!loggedIn) {
       navigate(`/login?returnTo=${encodeURIComponent(location.pathname)}`);
       return;
     }
-    requestInFlight.current = true;
-    setRequesting(true); setRequestMessage(null);
+    requestInFlightScope.current = scope;
+    setAnalysisRequest({ scope, status: 'loading', message: null });
     try {
       const { getAccessToken } = await import('@/lib/auth');
       const token = await getAccessToken();
       if (!token) {
-        setRequestMessage(ANALYSIS_REQUEST_SESSION_MESSAGE);
+        setAnalysisRequest({ scope, status: 'done', message: ANALYSIS_REQUEST_SESSION_MESSAGE });
         return;
       }
       const response = await requestAnalysis(token, { appStoreId: appId, country, appName: report?.app.appName || undefined });
-      setRequestMessage(response.result === 'fresh'
-        ? `재분석 가능: ${formatDate(response.data.nextAllowedAt, true)}`
-        : response.result === 'existing' ? '이미 진행 중인 분석 요청이 있습니다.' : '분석 요청을 대기열에 등록했습니다.');
+      setAnalysisRequest({
+        scope,
+        status: 'done',
+        message: response.result === 'fresh'
+          ? `재분석 가능: ${formatDate(response.data.nextAllowedAt, true)}`
+          : response.result === 'existing' ? '이미 진행 중인 분석 요청이 있습니다.' : '분석 요청을 대기열에 등록했습니다.',
+      });
     } catch (error) {
-      setRequestMessage(getAnalysisRequestFailureMessage(
-        error,
-        '분석 요청 상태를 확인하지 못했습니다. 동일 요청이 이미 등록되었을 수 있습니다. 요청 내역을 확인한 뒤 다시 시도하세요.',
-      ));
+      setAnalysisRequest({
+        scope,
+        status: 'done',
+        message: getAnalysisRequestFailureMessage(
+          error,
+          '분석 요청 상태를 확인하지 못했습니다. 동일 요청이 이미 등록되었을 수 있습니다. 요청 내역을 확인한 뒤 다시 시도하세요.',
+        ),
+      });
     } finally {
-      requestInFlight.current = false;
-      setRequesting(false);
+      if (requestInFlightScope.current === scope) requestInFlightScope.current = null;
     }
   };
 
@@ -461,12 +465,12 @@ function AppReportPageContent({ loggedIn, authChecking, appId, country, tab }: P
       </section> : <section className="report-content">
         {activeTab === 'issues' ? <IssuesView issues={report.issues} totalCount={report.summary.issueCount} onSelect={setSelectedIssue} /> : null}
         {activeTab === 'overview' ? <OverviewView report={report} /> : null}
-        {activeTab === 'reviews' ? <ReviewsView appId={appId} country={country} from={reportWindow.from} to={reportWindow.to} /> : null}
+        {activeTab === 'reviews' ? <ReviewsView appId={appId} country={country} from={report.window.from} to={report.window.to} /> : null}
       </section>}
       <IssuePanel
         issue={selectedIssue}
-        from={reportWindow.from}
-        to={reportWindow.to}
+        from={report.window.from}
+        to={report.window.to}
         onClose={() => setSelectedIssue(null)}
       />
     </> : null}

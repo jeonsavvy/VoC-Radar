@@ -1,18 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { transform } from 'esbuild';
+import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 import { validateClusterContract } from './cluster-contract.mjs';
+import { createClusterContractFixtures } from '../contracts/cluster-contract.fixtures.mjs';
 
-const workerSource = await readFile(new URL('../apps/worker/src/cluster-contract.ts', import.meta.url), 'utf8');
-const workerJavaScript = await transform(workerSource, { loader: 'ts', format: 'esm', target: 'es2022' });
-const workerContract = await import(`data:text/javascript;base64,${Buffer.from(workerJavaScript.code).toString('base64')}`);
-const workerPlatformSource = await readFile(new URL('../apps/worker/src/platform.ts', import.meta.url), 'utf8');
-const workerPlatformJavaScript = await transform(workerPlatformSource, {
-  loader: 'ts', format: 'esm', target: 'es2022',
+const workerBundle = await build({
+  entryPoints: [fileURLToPath(new URL('../apps/worker/src/cluster-contract.ts', import.meta.url))],
+  bundle: true,
+  format: 'esm',
+  platform: 'neutral',
+  target: 'es2022',
+  write: false,
 });
-const workerPlatform = await import(
-  `data:text/javascript;base64,${Buffer.from(workerPlatformJavaScript.code).toString('base64')}`
+const workerContract = await import(
+  `data:text/javascript;base64,${Buffer.from(workerBundle.outputFiles[0].text).toString('base64')}`
 );
 const validators = [validateClusterContract, workerContract.validateClusterContract];
 const workflow = JSON.parse(
@@ -57,6 +60,46 @@ const executeWorkflowCodeNode = (name, inputItems, nodeItems = {}, env = {}, run
 
 const mainTargets = (name, outputIndex = 0) =>
   (workflow.connections?.[name]?.main?.[outputIndex] || []).map((connection) => connection.node);
+
+const executeN8nClusterContract = (fixture) => {
+  const extractionById = new Map(
+    (fixture.candidate.extractions || []).map((extraction) => [extraction.reviewId, extraction]),
+  );
+  const reviewItems = fixture.inputReviewIds.map((reviewId) => {
+    const extraction = extractionById.get(reviewId) || {};
+    return {
+      ID: reviewId,
+      category: extraction.category || '기능 및 사용성',
+      summary: extraction.summary || '검증 리뷰',
+      appStoreId: '1',
+      country: 'kr',
+    };
+  });
+  return executeWorkflowCodeNode(
+    'Validate Cluster Output',
+    [{ json: { text: JSON.stringify({ clusters: fixture.candidate.clusters }) } }],
+    { 'Prepare Cluster Input': [{ json: { reviewItems } }] },
+  );
+};
+
+for (const fixture of createClusterContractFixtures()) {
+  test(`keeps Worker, Node, and n8n contract parity: ${fixture.name}`, () => {
+    if (fixture.outcome === 'valid') {
+      const canonical = validateClusterContract(fixture.inputReviewIds, fixture.candidate);
+      assert.deepEqual(workerContract.validateClusterContract(fixture.inputReviewIds, fixture.candidate), canonical);
+      const workflowResult = executeN8nClusterContract(fixture);
+      assert.equal(workflowResult.length, 1);
+      assert.deepEqual(workflowResult[0].json.result, canonical);
+      return;
+    }
+
+    assert.throws(() => validateClusterContract(fixture.inputReviewIds, fixture.candidate));
+    assert.throws(() => workerContract.validateClusterContract(fixture.inputReviewIds, fixture.candidate));
+    const workflowResult = executeN8nClusterContract(fixture);
+    assert.equal(workflowResult.length, 1);
+    assert.match(String(workflowResult[0].json.ID), /^PARSE_ERROR_CLUSTER_/);
+  });
+}
 
 const base = {
   extractions: [
@@ -106,7 +149,19 @@ test('terminates an empty queue through an explicit claim gate', () => {
     { 'Prepare Claim Job Payload': [{ json: { claimKey: 'execution-1' } }] },
   );
   assert.equal(claimed[0].json.hasClaim, true);
-  assert.equal(claimed[0].json.fetchPayload.jobId, 'job-1');
+  assert.equal(claimed[0].json.claimToken, 'claim-1');
+  assert.equal(claimed[0].json.leaseExpiresAt, '2026-07-29T15:00:00.000Z');
+  assert.equal(claimed[0].json.attemptCount, 1);
+  assert.equal(claimed[0].json.runId, 'RUN_job-1_1');
+  assert.deepEqual(
+    {
+      jobId: claimed[0].json.fetchPayload.jobId,
+      claimToken: claimed[0].json.fetchPayload.claimToken,
+      runId: claimed[0].json.fetchPayload.runId,
+      maxPages: claimed[0].json.fetchPayload.maxPages,
+    },
+    { jobId: 'job-1', claimToken: 'claim-1', runId: 'RUN_job-1_1', maxPages: 40 },
+  );
 
   assert.deepEqual(mainTargets('Prepare Run Context'), ['Has Active Claim?']);
   assert.deepEqual(mainTargets('Has Active Claim?', 0), ['HTTP Request']);
@@ -178,7 +233,7 @@ test('turns missing or extra Stage 1 LLM batches into one atomic parse error', (
   }
 });
 
-test('persists canonical Critical alerts before reusing every review in the publish path', () => {
+test('sends raw alert facts to the Worker before reusing every review in the publish path', () => {
   const prepared = executeWorkflowCodeNode(
     'Prepare Alert Events Payload',
     workflowFixtures.alertInputItems,
@@ -186,18 +241,15 @@ test('persists canonical Critical alerts before reusing every review in the publ
   );
 
   assert.equal(prepared.length, 1);
-  assert.equal(prepared[0].json.hasCriticalAlerts, true);
-  const canonicalCriticalIds = workflowFixtures.alertInputItems
-    .filter(({ json }) => {
-      const category = workerPlatform.normalizeVocCategory(json.category, json.summary, '');
-      return workerPlatform.derivePriorityValue(Number(json.rating), category, json.priority) === 'Critical';
-    })
-    .map(({ json }) => json.ID);
   assert.deepEqual(
     prepared[0].json.payload.alerts.map((alert) => alert.reviewId),
-    canonicalCriticalIds,
+    workflowFixtures.alertInputItems.map(({ json }) => json.ID),
   );
-  assert.ok(prepared[0].json.payload.alerts.every((alert) => alert.priority === 'Critical'));
+  assert.deepEqual(
+    prepared[0].json.payload.alerts.map((alert) => alert.priority),
+    workflowFixtures.alertInputItems.map(({ json }) => json.priority),
+  );
+  assert.equal(Object.hasOwn(prepared[0].json, 'hasCriticalAlerts'), false);
   assert.equal(Object.hasOwn(prepared[0].json, 'reviewItems'), false);
 
   const clusterContext = executeWorkflowCodeNode('Prepare Cluster Context', prepared, {
@@ -211,14 +263,13 @@ test('persists canonical Critical alerts before reusing every review in the publ
   );
 
   assert.deepEqual(mainTargets('Filter Duplicates'), ['Prepare Alert Events Payload']);
-  assert.deepEqual(mainTargets('Prepare Alert Events Payload'), ['Has Critical Alerts?']);
-  assert.deepEqual(mainTargets('Has Critical Alerts?', 0), ['Send Alert Events to BFF']);
-  assert.deepEqual(mainTargets('Has Critical Alerts?', 1), ['Prepare Cluster Context']);
+  assert.deepEqual(mainTargets('Prepare Alert Events Payload'), ['Send Alert Events to BFF']);
   assert.deepEqual(mainTargets('Send Alert Events to BFF'), ['Prepare Cluster Context']);
+  assert.equal(workflowNode('Has Critical Alerts?'), undefined);
   assert.equal(workflowNode('Restore Reviews After Alerts'), undefined);
 });
 
-test('skips the alert HTTP path and reuses every review when no Critical alert exists', () => {
+test('forwards non-Critical raw facts through the same Worker-owned alert path', () => {
   const prepared = executeWorkflowCodeNode(
     'Prepare Alert Events Payload',
     workflowFixtures.nonCriticalAlertInputItems,
@@ -226,14 +277,11 @@ test('skips the alert HTTP path and reuses every review when no Critical alert e
   );
 
   assert.equal(prepared.length, 1);
-  assert.equal(prepared[0].json.hasCriticalAlerts, false);
-  assert.deepEqual(prepared[0].json.payload.alerts, []);
-
-  const selectedOutput = prepared[0].json.hasCriticalAlerts ? 0 : 1;
-  assert.deepEqual(mainTargets('Has Critical Alerts?', selectedOutput), [
-    'Prepare Cluster Context',
-  ]);
-  assert.ok(!mainTargets('Has Critical Alerts?', selectedOutput).includes('Send Alert Events to BFF'));
+  assert.deepEqual(
+    prepared[0].json.payload.alerts.map((alert) => alert.reviewId),
+    ['review-high', 'review-normal'],
+  );
+  assert.deepEqual(mainTargets('Prepare Alert Events Payload'), ['Send Alert Events to BFF']);
 
   const clusterContext = executeWorkflowCodeNode('Prepare Cluster Context', prepared, {
     'Filter Duplicates': workflowFixtures.nonCriticalAlertInputItems,
@@ -263,8 +311,8 @@ test('keeps a 10k-review alert barrier singleton without copying the full review
   });
 
   assert.equal(prepared.length, 1);
-  assert.equal(prepared[0].json.hasCriticalAlerts, false);
-  assert.equal(prepared[0].json.payload.alerts.length, 0);
+  assert.equal(prepared[0].json.payload.alerts.length, 10_000);
+  assert.equal(Object.hasOwn(prepared[0].json, 'hasCriticalAlerts'), false);
   assert.equal(Object.hasOwn(prepared[0].json, 'reviewItems'), false);
 
   const clusterContext = executeWorkflowCodeNode('Prepare Cluster Context', prepared, {
