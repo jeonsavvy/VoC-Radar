@@ -212,6 +212,8 @@ order by attempt_count desc, lease_expires_at asc nulls first, id;
 | `pipeline_job_claims` | claim key 재사용을 영구 거부하는 fencing history로 보존 | 개인정보·용량·법적 보존 기간을 정한 뒤 idempotency를 깨지 않는 삭제 설계와 runtime proof가 있을 때만 TTL 도입 |
 | service-only table의 `RLS enabled, no policy` advisor | `anon`·`authenticated`에는 정책을 두지 않고 service role만 명시적으로 허용 | 새 public/private caller 계약이 생길 때만 최소 정책 추가 |
 | `get_public_*` read RPC | 함수 이름과 달리 unified Worker 전용입니다. `anon`·`authenticated` 직접 실행은 허용하지 않고 service role만 호출합니다. | 브라우저가 Worker를 우회해야 하는 새 공개 API 계약과 동등한 validation·rate-limit·cache 경계가 승인될 때만 직접 권한 추가 |
+| `maintenance.bak_*`의 primary key 없음 advisor | serving path가 아닌 과거 복구용 snapshot에는 쓰기 성능을 위한 key를 임의 추가하지 않습니다. 보존 목적과 소유자가 확인되기 전에는 삭제도 하지 않습니다. | 복구 보존 기간·소유자·삭제 승인이 정해지면 snapshot 자체를 정리하고, 실제 조회 계약이 생기면 그때 key를 설계 |
+| `unused_index` advisor | 통계 reset과 저빈도 경로 때문에 아직 사용 횟수가 0인 관측값입니다. queue quota, public directory, lease recovery, claim lookup, staging cleanup처럼 드물지만 필요한 경로의 index를 단일 시점 수치로 제거하지 않습니다. | 대표 운영 기간의 `pg_stat_user_indexes`, 실제 query plan, 쓰기 비용을 함께 측정해 제거가 유리함을 증명한 별도 migration |
 | Supabase leaked-password protection | Free plan에서는 활성화할 수 없는 비차단 운영 항목 | 유료 plan 전환이 별도로 승인되면 Auth 설정에서 활성화하고 로그인·가입 smoke 재검증 |
 | n8n Code node의 `$env` 접근 | 외부 task-runner 격리와 신뢰된 편집자 제한 아래 보존 | pipeline secret/config를 Code 실행 context 밖으로 옮긴 뒤 `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` 검증 |
 | n8n 성공 execution payload 미보존 | 리뷰 원문과 webhook 인증 header를 execution DB에 남기지 않도록 workflow와 instance 모두 `save success=none`, progress/manual save off를 유지합니다. n8n 2.30.8은 완료 행을 `deletedAt`이 있는 soft-delete 대상으로 먼저 만들므로 pruning 전까지 `status='running'`으로 잠깐 보일 수 있습니다. | 민감 payload를 저장하지 않으면서 terminal metadata만 남기는 upstream 동작이 독립적으로 검증되거나, 별도 승인된 보안 저장소·보존 정책이 생길 때만 변경 |
