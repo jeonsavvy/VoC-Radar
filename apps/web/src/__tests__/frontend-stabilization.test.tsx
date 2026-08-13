@@ -12,15 +12,23 @@ import {
   ANALYSIS_REQUEST_SESSION_MESSAGE,
   getAnalysisRequestFailureMessage,
 } from '@/lib/analysisRequestError';
-import { ApiError, deleteAccount, discoverApps, getIssueDetail, getPublicReport, getPublicReviews } from '@/lib/api';
-import { createRecentReviewWindow, getIssueAccessibleName, mergeReviewItems } from '@/routes/AppReportPage';
+import {
+  ApiError,
+  deleteAccount,
+  discoverApps,
+  getIssueDetail,
+  getPublicReport,
+  getPublicReviews,
+  parseApiIntegerConfig,
+} from '@/lib/api';
+import { getIssueAccessibleName, mergeReviewItems } from '@/routes/AppReportPage';
 import {
   canRetryPipelineJob,
   getPipelineJobFailureMessage,
   getPipelineStagePresentation,
   hasActivePipelineJobs,
 } from '@/routes/RequestsPage';
-import type { DiscoveryItem, IssueClusterItem, PipelineJobItem, ReviewItem } from '@/types';
+import type { DiscoveryItem, IssueClusterItem, PipelineJobItem, PublicReport, ReviewItem } from '@/types';
 
 async function test(name: string, fn: () => void | Promise<void>) {
   try {
@@ -60,6 +68,30 @@ const reviewFixture = (reviewId: string, content = reviewId): ReviewItem => ({
   summary: 'fixture',
   confidence: null,
 });
+
+const reportFixture: PublicReport = {
+  window: { from: '2026-07-01T00:00:00.000Z', to: '2026-07-30T23:59:59.999Z' },
+  app: { appStoreId: '123456789', country: 'kr', appName: 'Fixture App', artworkUrl: null },
+  summary: {
+    totalReviews: 1,
+    issueCount: 0,
+    averageRating: 3,
+    lowRatingCount: 0,
+    lowRatingRatio: 0,
+    positiveRatio: 0,
+    lastReviewAt: '2026-07-01T00:00:00.000Z',
+  },
+  analysis: {
+    status: 'analyzed',
+    runId: 'run-fixture',
+    modelVersion: 'model-fixture',
+    lastAnalyzedAt: '2026-07-01T00:00:00.000Z',
+    stale: false,
+  },
+  issues: [],
+  categories: [],
+  trends: [],
+};
 
 const jobFixture = (status: PipelineJobItem['status']): PipelineJobItem => ({
   id: `job-${status}`,
@@ -261,60 +293,125 @@ async function main() {
     assert.equal(moveSearchResultIndex(-1, 3, 'previous'), 2);
     assert.equal(moveSearchResultIndex(0, 3, 'previous'), 2);
 
-    const source = readFileSync('src/components/GlobalSearch.tsx', 'utf8');
-    assert.match(source, /requestSequence/);
-    assert.match(source, /onChange=\{\(event\) => \{\s*requestSequence\.current \+= 1/);
-    assert.match(source, /aria-activedescendant/);
-    assert.match(source, /ArrowDown/);
-    assert.match(source, /ArrowUp/);
-    assert.match(source, /Escape/);
   });
 
-  await test('review pagination deduplicates cursor overlap and exposes debounce and recovery controls', () => {
+  await test('malformed 200 report, review, and issue payloads fail before render', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => Response.json({ data: { unexpected: true } })) as typeof fetch;
+
+    const isInvalidResponse = (error: unknown) => error instanceof ApiError
+      && error.status === 200
+      && error.code === 'invalid_response'
+      && error.message === '서비스 응답을 처리하지 못했습니다.';
+    try {
+      await assert.rejects(() => getPublicReport('123456789'), isInvalidResponse);
+      await assert.rejects(() => getPublicReviews('123456789'), isInvalidResponse);
+      await assert.rejects(
+        () => getIssueDetail(
+          '11111111-1111-4111-8111-111111111111',
+          reportFixture.window.from,
+          reportFixture.window.to,
+        ),
+        isInvalidResponse,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await test('caller cancellation reaches fetch and is never retried', async () => {
+    const originalFetch = globalThis.fetch;
+    const controller = new AbortController();
+    let calls = 0;
+    let receivedSignal: AbortSignal | null = null;
+    globalThis.fetch = ((_, init) => {
+      calls += 1;
+      receivedSignal = init?.signal || null;
+      return new Promise<Response>((_, reject) => {
+        receivedSignal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+      });
+    }) as typeof fetch;
+
+    try {
+      const request = discoverApps('fixture', 'kr', 8, controller.signal);
+      controller.abort();
+      await assert.rejects(
+        () => request,
+        (error: unknown) => error instanceof ApiError && error.code === 'request_aborted' && !error.retryable,
+      );
+      assert.equal((receivedSignal as AbortSignal | null)?.aborted, true);
+      assert.equal(calls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  await test('API timeout and retry config preserve valid integers without imposing a cap', () => {
+    assert.equal(parseApiIntegerConfig('25000', 10000, 1), 25000);
+    assert.equal(parseApiIntegerConfig('2147483647', 10000, 1, 2_147_483_647), 2_147_483_647);
+    assert.equal(parseApiIntegerConfig('2147483648', 10000, 1, 2_147_483_647), 10000);
+    assert.equal(parseApiIntegerConfig('12', 2, 0), 12);
+    assert.equal(parseApiIntegerConfig(String(Number.MAX_SAFE_INTEGER), 2, 0), Number.MAX_SAFE_INTEGER);
+    assert.equal(parseApiIntegerConfig('0', 2, 0), 0);
+    for (const invalid of ['', 'NaN', 'Infinity', '1.5', '-1', Number.MAX_SAFE_INTEGER + 1]) {
+      assert.equal(parseApiIntegerConfig(invalid, 2, 0), 2);
+    }
+    assert.equal(parseApiIntegerConfig('0', 10000, 1), 10000);
+  });
+
+  await test('review pagination deduplicates cursor overlap', () => {
     const first = reviewFixture('review-1', 'first');
     const overlapping = reviewFixture('review-1', 'new duplicate');
     const second = reviewFixture('review-2', 'second');
     assert.deepEqual(mergeReviewItems([first], [overlapping, second]), [first, second]);
 
-    const source = readFileSync('src/routes/AppReportPage.tsx', 'utf8');
-    assert.match(source, /useDebouncedValue\(query\.trim\(\), queryRevision, 350\)/);
-    assert.match(source, /cursor: nextCursor/);
-    assert.match(source, /onChange=\{\(event\) => \{\s*requestSequence\.current \+= 1;\s*loadMoreInFlight\.current = null;\s*setLoadingMore\(false\);\s*setItems\(\[\]\);\s*setNextCursor\(null\);\s*setHasNext\(false\)/);
-    assert.match(source, /setQueryRevision\(\(value\) => value \+ 1\)/);
-    assert.match(source, /setError\(null\)/);
-    assert.match(source, /리뷰 더 보기/);
-    assert.match(source, /기존 리뷰는 그대로 유지됩니다/);
   });
 
-  await test('report, issue detail, and review requests share one explicit 30-day window', async () => {
-    const window = createRecentReviewWindow(new Date('2026-07-29T08:00:59.999Z'));
-    assert.deepEqual(window, {
-      from: '2026-06-30T00:00:00.000Z',
-      to: '2026-07-29T23:59:59.999Z',
-    });
-    assert.deepEqual(
-      createRecentReviewWindow(new Date('2026-07-29T23:59:59.999Z')),
-      window,
-    );
-    assert.deepEqual(createRecentReviewWindow(new Date('2026-07-30T00:00:00.000Z')), {
-      from: '2026-07-01T00:00:00.000Z',
-      to: '2026-07-30T23:59:59.999Z',
-    });
-
+  await test('report returns the Worker-canonical window for dependent requests', async () => {
     const originalFetch = globalThis.fetch;
     const requests: string[] = [];
     globalThis.fetch = (async (input) => {
       requests.push(String(input));
+      if (requests.length === 1) return Response.json({ data: reportFixture });
+      if (requests.length === 2) {
+        return Response.json({
+          data: {
+            issue: {
+              issueId: '11111111-1111-4111-8111-111111111111',
+              appStoreId: '123456789',
+              country: 'kr',
+              title: 'fixture',
+              category: 'fixture',
+              severity: 'low',
+              reviewCount: 0,
+              changePercent: null,
+              evidenceCount: 0,
+              lastOccurredAt: null,
+              summary: 'fixture',
+              actionHint: null,
+              runId: 'run-fixture',
+              modelVersion: 'model-fixture',
+              validation: {},
+              analyzedAt: null,
+            },
+            reviews: [],
+          },
+        });
+      }
       return Response.json({ data: [], page: 1, limit: 50, hasNext: false, nextCursor: null });
     }) as typeof fetch;
 
     try {
-      await getPublicReport('123456789', 'kr', window.from, window.to);
-      await getIssueDetail('11111111-1111-4111-8111-111111111111', window.from, window.to);
+      const report = await getPublicReport('123456789', 'kr');
+      await getIssueDetail(
+        '11111111-1111-4111-8111-111111111111',
+        report.data.window.from,
+        report.data.window.to,
+      );
       await getPublicReviews('123456789', {
         country: 'kr',
-        from: window.from,
-        to: window.to,
+        from: report.data.window.from,
+        to: report.data.window.to,
         search: 'fixture',
         searchScope: 'content',
       });
@@ -327,20 +424,19 @@ async function main() {
     const issueDetailUrl = new URL(requests[1]!, 'https://example.test');
     const scopedReviewsUrl = new URL(requests[2]!, 'https://example.test');
     const compatibleReviewsUrl = new URL(requests[3]!, 'https://example.test');
-    assert.equal(reportUrl.searchParams.get('from'), window.from);
-    assert.equal(reportUrl.searchParams.get('to'), window.to);
-    assert.equal(reportUrl.searchParams.get('artworkRevision'), '3');
-    assert.equal(issueDetailUrl.searchParams.get('from'), window.from);
-    assert.equal(issueDetailUrl.searchParams.get('to'), window.to);
-    assert.equal(scopedReviewsUrl.searchParams.get('from'), window.from);
-    assert.equal(scopedReviewsUrl.searchParams.get('to'), window.to);
+    assert.equal(reportUrl.searchParams.has('from'), false);
+    assert.equal(reportUrl.searchParams.has('to'), false);
+    assert.equal(issueDetailUrl.searchParams.get('from'), reportFixture.window.from);
+    assert.equal(issueDetailUrl.searchParams.get('to'), reportFixture.window.to);
+    assert.equal(scopedReviewsUrl.searchParams.get('from'), reportFixture.window.from);
+    assert.equal(scopedReviewsUrl.searchParams.get('to'), reportFixture.window.to);
     assert.equal(scopedReviewsUrl.searchParams.get('searchScope'), 'content');
     assert.equal(compatibleReviewsUrl.searchParams.has('from'), false);
     assert.equal(compatibleReviewsUrl.searchParams.has('to'), false);
     assert.equal(compatibleReviewsUrl.searchParams.has('searchScope'), false);
   });
 
-  await test('artwork requests bypass the previous browser cache representation', async () => {
+  await test('discovery uses the canonical request without browser-owned artwork revision', async () => {
     const originalFetch = globalThis.fetch;
     let requestUrl = '';
     globalThis.fetch = (async (input) => {
@@ -354,10 +450,10 @@ async function main() {
       globalThis.fetch = originalFetch;
     }
 
-    assert.equal(new URL(requestUrl, 'https://example.test').searchParams.get('artworkRevision'), '3');
+    assert.equal(new URL(requestUrl, 'https://example.test').searchParams.has('artworkRevision'), false);
   });
 
-  await test('report route state is app-scoped and issue rows expose every meaningful cell', () => {
+  await test('issue rows expose every meaningful cell', () => {
     const issue: IssueClusterItem = {
       issueId: '11111111-1111-4111-8111-111111111111',
       title: '앱 실행 오류',
@@ -382,14 +478,6 @@ async function main() {
     assert.match(accessibleName, /근거 리뷰 3건/);
     assert.match(accessibleName, /최근 발생/);
 
-    const source = readFileSync('src/routes/AppReportPage.tsx', 'utf8');
-    assert.match(source, /<AppReportPageContent key=\{appScope\}/);
-    assert.match(source, /if \(activeTab !== 'issues'\) setSelectedIssue\(null\)/);
-    assert.match(source, /getIssueDetail\(issue\.issueId, from, to\)/);
-    assert.match(source, /<IssuePanel[\s\S]*?from=\{reportWindow\.from\}[\s\S]*?to=\{reportWindow\.to\}/);
-    assert.match(source, /detail\.reviews\.length < detail\.issue\.evidenceCount/);
-    assert.match(source, /<span>\{report\.summary\.issueCount\}<\/span>/);
-    assert.match(source, /전체 \{totalCount\.toLocaleString\(\)\}건 중 \{issues\.length\.toLocaleString\(\)\}건을 표시합니다/);
   });
 
   await test('request polling is limited to visible pages with active jobs and retries are guarded', () => {
@@ -458,9 +546,6 @@ async function main() {
     }), fallback), ANALYSIS_REQUEST_SESSION_MESSAGE);
     assert.equal(getAnalysisRequestFailureMessage(new Error('network detail'), fallback), fallback);
 
-    const source = readFileSync('src/routes/AppReportPage.tsx', 'utf8');
-    assert.match(source, /catch \(error\)[\s\S]*?getAnalysisRequestFailureMessage\(\s*error,/);
-    assert.match(source, /if \(!token\) \{\s*setRequestMessage\(ANALYSIS_REQUEST_SESSION_MESSAGE\);\s*return;/);
   });
 
   await test('retry requests show the safe daily-limit message without claiming an enqueue result', () => {

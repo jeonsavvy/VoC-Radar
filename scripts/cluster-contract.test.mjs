@@ -1,18 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { transform } from 'esbuild';
+import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
 import { validateClusterContract } from './cluster-contract.mjs';
+import { createClusterContractFixtures } from '../contracts/cluster-contract.fixtures.mjs';
 
-const workerSource = await readFile(new URL('../apps/worker/src/cluster-contract.ts', import.meta.url), 'utf8');
-const workerJavaScript = await transform(workerSource, { loader: 'ts', format: 'esm', target: 'es2022' });
-const workerContract = await import(`data:text/javascript;base64,${Buffer.from(workerJavaScript.code).toString('base64')}`);
-const workerPlatformSource = await readFile(new URL('../apps/worker/src/platform.ts', import.meta.url), 'utf8');
-const workerPlatformJavaScript = await transform(workerPlatformSource, {
-  loader: 'ts', format: 'esm', target: 'es2022',
+const workerBundle = await build({
+  entryPoints: [fileURLToPath(new URL('../apps/worker/src/cluster-contract.ts', import.meta.url))],
+  bundle: true,
+  format: 'esm',
+  platform: 'neutral',
+  target: 'es2022',
+  write: false,
 });
-const workerPlatform = await import(
-  `data:text/javascript;base64,${Buffer.from(workerPlatformJavaScript.code).toString('base64')}`
+const workerContract = await import(
+  `data:text/javascript;base64,${Buffer.from(workerBundle.outputFiles[0].text).toString('base64')}`
 );
 const validators = [validateClusterContract, workerContract.validateClusterContract];
 const workflow = JSON.parse(
@@ -46,17 +50,97 @@ const executeWorkflowCodeNode = (name, inputItems, nodeItems = {}, env = {}, run
     first: () => structuredClone(inputItems[0] || { json: {} }),
   };
 
-  return new Function('$input', '$', '$env', '$json', '$runIndex', code)(
+  return new Function('$input', '$', '$env', '$json', '$runIndex', 'require', code)(
     input,
     selectNode,
     env,
     structuredClone(inputItems[0]?.json || {}),
     runIndex,
+    (specifier) => {
+      assert.equal(specifier, 'crypto');
+      return { createHmac, timingSafeEqual };
+    },
   );
 };
 
 const mainTargets = (name, outputIndex = 0) =>
   (workflow.connections?.[name]?.main?.[outputIndex] || []).map((connection) => connection.node);
+
+test('accepts only a fresh exact-body HMAC at the webhook boundary', () => {
+  const secret = 'trigger-secret';
+  const timestamp = Date.now().toString();
+  const body = {
+    jobId: '33333333-3333-4333-8333-333333333333',
+    appStoreId: '123456789',
+    country: 'kr',
+    requestedAt: '2026-08-13T00:00:00.000Z',
+  };
+  const signature = createHmac('sha256', secret)
+    .update(`${timestamp}.${JSON.stringify(body)}`)
+    .digest('hex');
+  const valid = executeWorkflowCodeNode('Validate Trigger Secret', [{ json: {
+    headers: { 'x-voc-timestamp': timestamp, 'x-voc-signature': signature },
+    body,
+  } }], {}, { N8N_PIPELINE_TRIGGER_SECRET: secret });
+  assert.deepEqual(valid, [{ json: { triggerSource: 'webhook' } }]);
+
+  assert.throws(() => executeWorkflowCodeNode('Validate Trigger Secret', [{ json: {
+    headers: { 'x-voc-trigger-secret': secret },
+    body,
+  } }], {}, { N8N_PIPELINE_TRIGGER_SECRET: secret }), /trigger secret rejected/);
+  assert.throws(() => executeWorkflowCodeNode('Validate Trigger Secret', [{ json: {
+    headers: { 'x-voc-timestamp': timestamp, 'x-voc-signature': signature },
+    body: { ...body, country: 'us' },
+  } }], {}, { N8N_PIPELINE_TRIGGER_SECRET: secret }), /trigger secret rejected/);
+  const staleTimestamp = (Date.now() - 300_001).toString();
+  const staleSignature = createHmac('sha256', secret)
+    .update(`${staleTimestamp}.${JSON.stringify(body)}`)
+    .digest('hex');
+  assert.throws(() => executeWorkflowCodeNode('Validate Trigger Secret', [{ json: {
+    headers: { 'x-voc-timestamp': staleTimestamp, 'x-voc-signature': staleSignature },
+    body,
+  } }], {}, { N8N_PIPELINE_TRIGGER_SECRET: secret }), /trigger secret rejected/);
+});
+
+const executeN8nClusterContract = (fixture) => {
+  const extractionById = new Map(
+    (fixture.candidate.extractions || []).map((extraction) => [extraction.reviewId, extraction]),
+  );
+  const reviewItems = fixture.inputReviewIds.map((reviewId) => {
+    const extraction = extractionById.get(reviewId) || {};
+    return {
+      ID: reviewId,
+      category: extraction.category || '기능 및 사용성',
+      summary: extraction.summary || '검증 리뷰',
+      appStoreId: '1',
+      country: 'kr',
+    };
+  });
+  return executeWorkflowCodeNode(
+    'Validate Cluster Output',
+    [{ json: { text: JSON.stringify({ clusters: fixture.candidate.clusters }) } }],
+    { 'Prepare Cluster Input': [{ json: { reviewItems } }] },
+  );
+};
+
+for (const fixture of createClusterContractFixtures()) {
+  test(`keeps Worker, Node, and n8n contract parity: ${fixture.name}`, () => {
+    if (fixture.outcome === 'valid') {
+      const canonical = validateClusterContract(fixture.inputReviewIds, fixture.candidate);
+      assert.deepEqual(workerContract.validateClusterContract(fixture.inputReviewIds, fixture.candidate), canonical);
+      const workflowResult = executeN8nClusterContract(fixture);
+      assert.equal(workflowResult.length, 1);
+      assert.deepEqual(workflowResult[0].json.result, canonical);
+      return;
+    }
+
+    assert.throws(() => validateClusterContract(fixture.inputReviewIds, fixture.candidate));
+    assert.throws(() => workerContract.validateClusterContract(fixture.inputReviewIds, fixture.candidate));
+    const workflowResult = executeN8nClusterContract(fixture);
+    assert.equal(workflowResult.length, 1);
+    assert.match(String(workflowResult[0].json.ID), /^PARSE_ERROR_CLUSTER_/);
+  });
+}
 
 const base = {
   extractions: [
@@ -106,7 +190,19 @@ test('terminates an empty queue through an explicit claim gate', () => {
     { 'Prepare Claim Job Payload': [{ json: { claimKey: 'execution-1' } }] },
   );
   assert.equal(claimed[0].json.hasClaim, true);
-  assert.equal(claimed[0].json.fetchPayload.jobId, 'job-1');
+  assert.equal(claimed[0].json.claimToken, 'claim-1');
+  assert.equal(claimed[0].json.leaseExpiresAt, '2026-07-29T15:00:00.000Z');
+  assert.equal(claimed[0].json.attemptCount, 1);
+  assert.equal(claimed[0].json.runId, 'RUN_job-1_1');
+  assert.deepEqual(
+    {
+      jobId: claimed[0].json.fetchPayload.jobId,
+      claimToken: claimed[0].json.fetchPayload.claimToken,
+      runId: claimed[0].json.fetchPayload.runId,
+      maxPages: claimed[0].json.fetchPayload.maxPages,
+    },
+    { jobId: 'job-1', claimToken: 'claim-1', runId: 'RUN_job-1_1', maxPages: 40 },
+  );
 
   assert.deepEqual(mainTargets('Prepare Run Context'), ['Has Active Claim?']);
   assert.deepEqual(mainTargets('Has Active Claim?', 0), ['HTTP Request']);
@@ -178,7 +274,7 @@ test('turns missing or extra Stage 1 LLM batches into one atomic parse error', (
   }
 });
 
-test('persists canonical Critical alerts before reusing every review in the publish path', () => {
+test('sends raw alert facts to the Worker before reusing every review in the publish path', () => {
   const prepared = executeWorkflowCodeNode(
     'Prepare Alert Events Payload',
     workflowFixtures.alertInputItems,
@@ -186,18 +282,15 @@ test('persists canonical Critical alerts before reusing every review in the publ
   );
 
   assert.equal(prepared.length, 1);
-  assert.equal(prepared[0].json.hasCriticalAlerts, true);
-  const canonicalCriticalIds = workflowFixtures.alertInputItems
-    .filter(({ json }) => {
-      const category = workerPlatform.normalizeVocCategory(json.category, json.summary, '');
-      return workerPlatform.derivePriorityValue(Number(json.rating), category, json.priority) === 'Critical';
-    })
-    .map(({ json }) => json.ID);
   assert.deepEqual(
     prepared[0].json.payload.alerts.map((alert) => alert.reviewId),
-    canonicalCriticalIds,
+    workflowFixtures.alertInputItems.map(({ json }) => json.ID),
   );
-  assert.ok(prepared[0].json.payload.alerts.every((alert) => alert.priority === 'Critical'));
+  assert.deepEqual(
+    prepared[0].json.payload.alerts.map((alert) => alert.priority),
+    workflowFixtures.alertInputItems.map(({ json }) => json.priority),
+  );
+  assert.equal(Object.hasOwn(prepared[0].json, 'hasCriticalAlerts'), false);
   assert.equal(Object.hasOwn(prepared[0].json, 'reviewItems'), false);
 
   const clusterContext = executeWorkflowCodeNode('Prepare Cluster Context', prepared, {
@@ -211,14 +304,13 @@ test('persists canonical Critical alerts before reusing every review in the publ
   );
 
   assert.deepEqual(mainTargets('Filter Duplicates'), ['Prepare Alert Events Payload']);
-  assert.deepEqual(mainTargets('Prepare Alert Events Payload'), ['Has Critical Alerts?']);
-  assert.deepEqual(mainTargets('Has Critical Alerts?', 0), ['Send Alert Events to BFF']);
-  assert.deepEqual(mainTargets('Has Critical Alerts?', 1), ['Prepare Cluster Context']);
+  assert.deepEqual(mainTargets('Prepare Alert Events Payload'), ['Send Alert Events to BFF']);
   assert.deepEqual(mainTargets('Send Alert Events to BFF'), ['Prepare Cluster Context']);
+  assert.equal(workflowNode('Has Critical Alerts?'), undefined);
   assert.equal(workflowNode('Restore Reviews After Alerts'), undefined);
 });
 
-test('skips the alert HTTP path and reuses every review when no Critical alert exists', () => {
+test('forwards non-Critical raw facts through the same Worker-owned alert path', () => {
   const prepared = executeWorkflowCodeNode(
     'Prepare Alert Events Payload',
     workflowFixtures.nonCriticalAlertInputItems,
@@ -226,14 +318,11 @@ test('skips the alert HTTP path and reuses every review when no Critical alert e
   );
 
   assert.equal(prepared.length, 1);
-  assert.equal(prepared[0].json.hasCriticalAlerts, false);
-  assert.deepEqual(prepared[0].json.payload.alerts, []);
-
-  const selectedOutput = prepared[0].json.hasCriticalAlerts ? 0 : 1;
-  assert.deepEqual(mainTargets('Has Critical Alerts?', selectedOutput), [
-    'Prepare Cluster Context',
-  ]);
-  assert.ok(!mainTargets('Has Critical Alerts?', selectedOutput).includes('Send Alert Events to BFF'));
+  assert.deepEqual(
+    prepared[0].json.payload.alerts.map((alert) => alert.reviewId),
+    ['review-high', 'review-normal'],
+  );
+  assert.deepEqual(mainTargets('Prepare Alert Events Payload'), ['Send Alert Events to BFF']);
 
   const clusterContext = executeWorkflowCodeNode('Prepare Cluster Context', prepared, {
     'Filter Duplicates': workflowFixtures.nonCriticalAlertInputItems,
@@ -263,8 +352,8 @@ test('keeps a 10k-review alert barrier singleton without copying the full review
   });
 
   assert.equal(prepared.length, 1);
-  assert.equal(prepared[0].json.hasCriticalAlerts, false);
-  assert.equal(prepared[0].json.payload.alerts.length, 0);
+  assert.equal(prepared[0].json.payload.alerts.length, 10_000);
+  assert.equal(Object.hasOwn(prepared[0].json, 'hasCriticalAlerts'), false);
   assert.equal(Object.hasOwn(prepared[0].json, 'reviewItems'), false);
 
   const clusterContext = executeWorkflowCodeNode('Prepare Cluster Context', prepared, {
@@ -759,6 +848,9 @@ test('builds the 10k review persistence payload without duplicating raw review f
   );
 
   assert.equal(prepared.length, 1);
+  assert.equal(prepared[0].json.modelVersion, 'gemini-3-flash-preview');
+  assert.equal(prepared[0].json.comparisonEligible, true);
+  assert.ok(prepared[0].json.payload.reviews.every((review) => review.modelVersion === 'gemini-3-flash-preview'));
   assert.equal(prepared[0].json.payload.reviews.length, 10_000);
   assert.ok(prepared[0].json.payload.reviews.every((review) => !Object.hasOwn(review, 'rawSource')));
   assert.equal(Object.hasOwn(prepared[0].json, 'reviewItems'), false);
@@ -772,6 +864,55 @@ test('builds the 10k review persistence payload without duplicating raw review f
       `raw content ${index} must appear exactly once in the persistence request`,
     );
   }
+});
+
+test('normalizes the persisted model version and carries the reanalysis comparison boundary', () => {
+  const review = {
+    ...workflowFixtures.runContext,
+    ID: 'review-reanalysis',
+    rating: 2,
+    author: 'tester',
+    content: '재분석 리뷰 원문',
+    date: '2026-08-13T00:00:00.000Z',
+    priority: 'High',
+    category: '버그 및 성능',
+    summary: '재분석 리뷰',
+    appStoreId: '123456789',
+    country: 'kr',
+    appName: '테스트 앱',
+  };
+  const reanalysisContext = executeWorkflowCodeNode(
+    'Prepare Cluster Context',
+    [{ json: {} }],
+    {
+      'Filter Duplicates': [{ json: review }],
+      'Prepare Run Context': [{ json: { ...workflowFixtures.runContext, forceReanalysis: true } }],
+      'Filter New Reviews via BFF': [{ json: { data: { existingExtractions: [] } } }],
+    },
+  );
+  assert.equal(reanalysisContext[0].json.forceReanalysis, true);
+
+  const prepared = executeWorkflowCodeNode(
+    'Prepare Upsert Payload',
+    [{ json: {
+      ...reanalysisContext[0].json,
+      inputReviewIds: [review.ID],
+      result: { extractions: [], clusters: [] },
+    } }],
+    {},
+    { VOC_MODEL_VERSION: 'models/gemini-custom' },
+  );
+  assert.equal(prepared[0].json.modelVersion, 'gemini-custom');
+  assert.equal(prepared[0].json.payload.reviews[0].modelVersion, 'gemini-custom');
+  assert.equal(prepared[0].json.comparisonEligible, false);
+
+  const clusterUpsert = executeWorkflowCodeNode(
+    'Prepare Cluster Upsert',
+    [{ json: {} }],
+    { 'Prepare Upsert Payload': prepared },
+  );
+  assert.equal(clusterUpsert[0].json.payload.modelVersion, 'gemini-custom');
+  assert.equal(clusterUpsert[0].json.payload.comparisonEligible, false);
 });
 
 test('budgets persistence HTTP requests for their complete Worker endpoint paths', () => {

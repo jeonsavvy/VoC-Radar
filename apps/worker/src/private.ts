@@ -10,25 +10,16 @@ import {
   badRequest,
   unauthorized,
   clampLimit,
-  parsePage,
-  parsePrivateReviewSortBy,
-  parseSortDirection,
-  parseRatingFilter,
-  normalizePriorityFilter,
-  normalizeSearchKeyword,
   normalizeCountry,
   normalizeAppStoreId,
   normalizeOptionalText,
   triggerN8nPipeline,
   isUuid,
-  decodeReviewFeedCursor,
-  isLegacyTimestampCursor,
-  buildReviewFeedFilters,
-  normalizeReviewFeedRows,
   UpstreamRequestError,
   boolFromEnv,
   fetchWithRetry,
 } from './platform';
+import { executeReviewFeed } from './review-feed';
 
 async function resolveVerifiedAppName(
   env: Env,
@@ -539,65 +530,9 @@ async function handlePrivateReviews(env: Env, request: Request) {
     return unauthorized(env, 'invalid access token');
   }
 
-  const { searchParams } = new URL(request.url);
-  const appId = normalizeAppStoreId(searchParams.get('appId'));
-  const country = normalizeCountry(searchParams.get('country'));
-  const limit = clampLimit(searchParams.get('limit'));
-  const page = parsePage(searchParams.get('page'));
-  const sortBy = parsePrivateReviewSortBy(searchParams.get('sortBy'));
-  const sortDirection = parseSortDirection(searchParams.get('sortDirection'));
-  const rating = parseRatingFilter(searchParams.get('rating'));
-  const priority = normalizePriorityFilter(searchParams.get('priority'));
-  const category = normalizeOptionalText(searchParams.get('category'), 120);
-  const issueLabel = normalizeOptionalText(searchParams.get('issueLabel'), 120);
-  const search = normalizeSearchKeyword(searchParams.get('search'));
-  const cursor = searchParams.get('cursor');
-
-  if (!appId) {
-    return badRequest(env, 'appId must be numeric');
-  }
-  if (cursor && isLegacyTimestampCursor(cursor)) {
-    return errorResponse(
-      env,
-      400,
-      'legacy_cursor_unsupported',
-      '이전 형식의 리뷰 커서는 안전하게 이어갈 수 없습니다. cursor를 제거하고 첫 페이지부터 다시 조회해 주세요.',
-    );
-  }
-  if (cursor && (sortBy !== 'reviewed_at' || !decodeReviewFeedCursor(cursor))) {
-    return badRequest(env, 'cursor is invalid for the selected sort');
-  }
-
-  const filters = buildReviewFeedFilters({
-    appId,
-    country,
-    limit,
-    page,
-    sortBy,
-    sortDirection,
-    rating,
-    priority,
-    category,
-    issueLabel,
-    search,
-    cursor,
-  });
-
   // private reviews는 Worker에서 access token만 검증하고, 실제 조회는 service_role로 수행한다.
   // 이렇게 하면 view를 authenticated에 직접 노출하지 않아도 된다.
-  const data = await supabaseRequest<Array<Record<string, unknown>>>(env, `/rest/v1/private_review_feed?${filters.toString()}`, {
-    method: 'GET',
-    idempotent: true,
-  });
-
-  const normalized = normalizeReviewFeedRows(data, limit, sortBy);
-  return jsonResponse(env, 200, {
-    data: normalized.data,
-    page,
-    limit,
-    hasNext: normalized.hasNext,
-    nextCursor: normalized.nextCursor,
-  });
+  return executeReviewFeed(env, request, 'private');
 }
 
 

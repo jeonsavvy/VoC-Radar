@@ -96,6 +96,7 @@ export interface IssueClusterItem {
 }
 
 export interface PublicReport {
+  window: { from: string; to: string };
   app: { appStoreId: string; country: string; appName: string | null; artworkUrl: string | null };
   summary: {
     totalReviews: number;

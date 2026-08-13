@@ -1,4 +1,4 @@
-import { FormEvent, KeyboardEvent, useEffect, useId, useRef, useState } from 'react';
+import { FormEvent, KeyboardEvent, useEffect, useId, useState } from 'react';
 import { ArrowRight, Search } from 'lucide-react';
 import { useNavigate } from 'react-router';
 import { AppArtwork } from '@/components/AppArtwork';
@@ -13,6 +13,12 @@ type Props = {
   autoFocus?: boolean;
   onNavigate?: () => void;
 };
+
+type SearchResource =
+  | { status: 'idle' }
+  | { status: 'loading'; query: string }
+  | { status: 'success'; query: string; data: DiscoveryItem[] }
+  | { status: 'error'; query: string; message: string };
 
 export function moveSearchResultIndex(current: number, count: number, direction: 'next' | 'previous') {
   if (count <= 0) return -1;
@@ -34,65 +40,55 @@ export function getOwnedSearchResult(
 export function GlobalSearch({ country = DEFAULT_COUNTRY, variant = 'compact', autoFocus = false, onNavigate }: Props) {
   const navigate = useNavigate();
   const listId = useId();
-  const requestSequence = useRef(0);
   const [query, setQuery] = useState('');
-  const [resultQuery, setResultQuery] = useState<string | null>(null);
-  const [results, setResults] = useState<DiscoveryItem[]>([]);
+  const [resource, setResource] = useState<SearchResource>({ status: 'idle' });
   const [activeIndex, setActiveIndex] = useState(-1);
-  const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const requestId = ++requestSequence.current;
     const trimmed = query.trim();
     if (trimmed.length < 2) {
-      setResults([]);
-      setResultQuery(null);
+      setResource({ status: 'idle' });
       setActiveIndex(-1);
-      setLoading(false);
       setOpen(false);
-      setError(null);
       return;
     }
 
+    const controller = new AbortController();
     const timer = window.setTimeout(() => {
-      if (requestId !== requestSequence.current) return;
-      setLoading(true);
-      discoverApps(trimmed, country)
+      setResource({ status: 'loading', query: trimmed });
+      discoverApps(trimmed, country, 8, controller.signal)
         .then((response) => {
-          if (requestId !== requestSequence.current) return;
-          setResults(response.data);
-          setResultQuery(trimmed);
+          if (controller.signal.aborted) return;
+          setResource(response.data.length > 0
+            ? { status: 'success', query: trimmed, data: response.data }
+            : { status: 'error', query: trimmed, message: '일치하는 앱을 찾지 못했습니다.' });
           setActiveIndex(-1);
           setOpen(true);
-          setError(response.data.length === 0 ? '일치하는 앱을 찾지 못했습니다.' : null);
         })
         .catch(() => {
-          if (requestId !== requestSequence.current) return;
-          setResults([]);
-          setResultQuery(trimmed);
+          if (controller.signal.aborted) return;
+          setResource({ status: 'error', query: trimmed, message: '앱 검색에 실패했습니다. 잠시 후 다시 시도하세요.' });
           setActiveIndex(-1);
           setOpen(true);
-          setError('앱 검색에 실패했습니다. 잠시 후 다시 시도하세요.');
-        })
-        .finally(() => {
-          if (requestId === requestSequence.current) setLoading(false);
         });
     }, 250);
 
     return () => {
       window.clearTimeout(timer);
-      if (requestId === requestSequence.current) requestSequence.current += 1;
+      controller.abort();
     };
   }, [country, query]);
 
+  const results = resource.status === 'success' && resource.query === query.trim() ? resource.data : [];
+  const resultQuery = resource.status === 'success' ? resource.query : null;
+  const loading = resource.status === 'loading';
+  const error = resource.status === 'error' && resource.query === query.trim() ? resource.message : null;
+
   const goToApp = (appId: string, appCountry = country) => {
-    requestSequence.current += 1;
     setOpen(false);
     setQuery('');
-    setResults([]);
-    setResultQuery(null);
+    setResource({ status: 'idle' });
     setActiveIndex(-1);
     navigate(reportPath(appId, appCountry));
     onNavigate?.();
@@ -114,7 +110,7 @@ export function GlobalSearch({ country = DEFAULT_COUNTRY, variant = 'compact', a
 
     setOpen(true);
     setActiveIndex(-1);
-    setError('앱 이름, App Store URL 또는 숫자 ID를 입력하세요.');
+    setResource({ status: 'error', query: query.trim(), message: '앱 이름, App Store URL 또는 숫자 ID를 입력하세요.' });
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -157,14 +153,10 @@ export function GlobalSearch({ country = DEFAULT_COUNTRY, variant = 'compact', a
           autoFocus={autoFocus}
           value={query}
           onChange={(event) => {
-            requestSequence.current += 1;
             setQuery(event.target.value);
-            setResults([]);
-            setResultQuery(null);
+            setResource({ status: 'idle' });
             setActiveIndex(-1);
-            setLoading(false);
             setOpen(false);
-            setError(null);
           }}
           onFocus={() => {
             if (query.trim() === resultQuery && (results.length > 0 || error)) setOpen(true);

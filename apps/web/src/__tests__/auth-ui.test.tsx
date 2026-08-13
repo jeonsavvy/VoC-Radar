@@ -130,9 +130,8 @@ async function main() {
     assert.match(fallback, /class="app-initial"/);
     assert.match(fallback, />당</);
     assert.match(recovered, /src="\/api\/public\/artwork\?appId=1018769995&amp;country=kr/);
-    assert.equal(sources.length, 3);
-    assert.match(sources[1]!, /attempt=0$/);
-    assert.match(sources[2]!, /attempt=1$/);
+    assert.equal(sources.length, 2);
+    assert.equal(new URL(sources[1]!, 'https://example.test').searchParams.has('attempt'), false);
   });
 
   await test('App registers public report and request-history routes', () => {
@@ -273,7 +272,6 @@ async function main() {
     assert.match(checkingShell, /class="login-link login-link--checking"/);
     assert.match(checkingShell, /aria-label="로그인 상태 확인 중"/);
     assert.doesNotMatch(checkingShell, /href="\/login/);
-    assert.match(reportSource, /if \(authChecking \|\| requestInFlight\.current\) return/);
     assert.match(requestsSource, /if \(authChecking\) return <div className="request-loading" role="status">/);
   });
 

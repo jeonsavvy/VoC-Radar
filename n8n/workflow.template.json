@@ -1,0 +1,1803 @@
+{
+  "name": "앱스토어 리뷰 모니터링 시스템 v2 (Supabase + Cloudflare BFF) (Supabase-only)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "voc-radar-queue-trigger",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -220,
+        100
+      ],
+      "id": "webhook-trigger-queue",
+      "name": "Webhook Trigger (Queue Event)",
+      "notes": "Worker에서 queue 등록 직후 이 webhook을 호출하면 즉시 claim+처리를 시작함",
+      "webhookId": "voc-radar-queue-event"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/fetch-reviews' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.fetchPayload }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1100,
+        0
+      ],
+      "id": "638e245b-1e11-4e26-92d5-36de6e727396",
+      "name": "HTTP Request",
+      "notes": "Worker BFF가 기본 최근 30일 리뷰를 최대 40페이지와 terminal probe 1회로 수집한다. 300초 안에 범위 완전성을 증명하지 못하면 부분 데이터를 반환하지 않고 작업을 실패 처리한다.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ '# Review extraction input\\n' + JSON.stringify($json.reviews || []) + '\\n\\nReturn ONLY a JSON array. Preserve every review exactly once and use its exact reviewId. Do not invent or omit ids.\\n\\nEach object: {\"reviewId\":\"exact id\",\"priority\":\"Critical|High|Normal\",\"category\":\"버그 및 성능|계정 및 결제|기능 및 사용성|콘텐츠 및 운영 정책|긍정 리뷰 및 기타\",\"summary\":\"factual Korean sentence under 160 chars\"}.\\n\\npriority is per-review operational impact only. Cluster severity is decided later. Do not output issue labels, actions, confidence, markdown, or prose.' }}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [
+        0,
+        260
+      ],
+      "id": "0ed4ad28-e5bc-46db-aa46-25b1b2cef11b",
+      "name": "Basic LLM Chain",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "maxTries": 3,
+      "executeOnce": false,
+      "notes": "Stage 1: 최대 50개 리뷰를 구조화한다. n8n 2.30.8 Gemini has no request timeout; one bounded call must finish within the 15-minute claim lease.",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/parse-json-response.js",
+        "mode": "runOnceForAllItems"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        260
+      ],
+      "id": "parse-json-response",
+      "name": "Parse JSON Response"
+    },
+    {
+      "parameters": {
+        "options": {},
+        "modelName": "={{ 'models/' + (($env.VOC_MODEL_VERSION || 'gemini-3-flash-preview').toString().trim().replace(/^models\\//, '') || 'gemini-3-flash-preview') }}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        410
+      ],
+      "id": "848e3076-2ed7-44d1-a766-76479b6aaed9",
+      "name": "Google Gemini Chat Model"
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/check-duplicate-filter.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        260
+      ],
+      "id": "check-duplicate-filter",
+      "name": "Filter Duplicates"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-parse-error",
+              "leftValue": "={{ (($json.ID || '').toString().startsWith('PARSE_ERROR_')) ? \"yes\" : \"no\" }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        260
+      ],
+      "id": "cdcd9089-0930-40f0-8be9-7876aa998a88",
+      "name": "Has Parse Error?"
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-upsert-payload-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        860
+      ],
+      "id": "prepare-upsert-payload-v2",
+      "name": "Prepare Upsert Payload",
+      "notes": "Supabase upsert용 payload 생성"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/upsert-reviews' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 100000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        220,
+        860
+      ],
+      "id": "upsert-reviews-to-bff-v2",
+      "name": "Upsert Reviews to BFF",
+      "notes": "Supabase upsert (BFF internal endpoint)",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-publish-payload-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        860
+      ],
+      "id": "prepare-publish-payload-v2",
+      "name": "Prepare Publish Payload",
+      "notes": "캐시 무효화 payload 생성"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/publish' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1100,
+        860
+      ],
+      "id": "notify-publish-bff-v2",
+      "name": "Notify Publish to BFF",
+      "notes": "리포트 반영 직후 캐시 버전 갱신",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-parse-error-payload-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        860
+      ],
+      "id": "prepare-parse-error-payload-v2",
+      "name": "Prepare Parse Error Payload",
+      "notes": "parse error dead-letter 적재 payload 생성"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/parse-error' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1540,
+        860
+      ],
+      "id": "send-parse-error-to-bff-v2",
+      "name": "Send Parse Error to BFF",
+      "notes": "Supabase parse_errors 저장",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-alert-events-payload-v2.js",
+        "mode": "runOnceForAllItems"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        260
+      ],
+      "id": "prepare-alert-events-payload-v2",
+      "name": "Prepare Alert Events Payload",
+      "notes": "우선순위를 재계산하지 않고 리뷰 사실을 Worker에 전달한다."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/alert-events' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1980,
+        260
+      ],
+      "id": "send-alert-events-to-bff-v2",
+      "name": "Send Alert Events to BFF",
+      "notes": "Worker가 canonical priority를 계산해 Critical alert_events만 upsert한다.",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-claim-job-payload-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "prepare-claim-job-payload-v2",
+      "name": "Prepare Claim Job Payload",
+      "notes": "큐에서 다음 처리 대상 job을 가져오기 위한 payload 준비"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/claim-job' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.claimKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        0
+      ],
+      "id": "claim-job-from-bff-v2",
+      "name": "Claim Job from BFF",
+      "notes": "queue에서 처리할 job을 claim",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-run-context-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "prepare-run-context-v2",
+      "name": "Prepare Run Context",
+      "notes": "runId/jobId/app context 일원화"
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-preflight-reviews-payload-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ],
+      "id": "prepare-preflight-reviews-payload-v2",
+      "name": "Prepare Preflight Reviews Payload",
+      "notes": "리뷰 ID 기준으로 prefilter payload 준비"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/filter-new-reviews' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 80000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1540,
+        0
+      ],
+      "id": "filter-new-reviews-via-bff-v2",
+      "name": "Filter New Reviews via BFF",
+      "notes": "이미 저장된 review_id 제거 (LLM 비용/중복알림 절감)",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/ensure-new-reviews-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        0
+      ],
+      "id": "ensure-new-reviews-v2",
+      "name": "Ensure New Reviews",
+      "notes": "신규 리뷰 0건이면 이후 노드 스킵"
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/validate-trigger-secret.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        100
+      ],
+      "id": "validate-trigger-secret",
+      "name": "Validate Trigger Secret",
+      "notes": "Webhook secret은 필수이며 누락 또는 불일치 시 claim 전에 실행을 중단한다."
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        },
+        "timezone": "Asia/Seoul"
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -220,
+        -120
+      ],
+      "id": "schedule-trigger-queue-polling",
+      "name": "Schedule Trigger (Queue Polling)",
+      "notes": "Webhook 전달이 누락된 queued job을 5분마다 회수한다. Production concurrency는 1로 제한한다."
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-cluster-context-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        560
+      ],
+      "id": "prepare-cluster-context-v2",
+      "name": "Prepare Cluster Context",
+      "notes": "경보 게이트 완료 후 Filter Duplicates 원본을 직접 재사용하는 read-only context payload"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/cluster-context' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        220,
+        560
+      ],
+      "id": "fetch-cluster-context-v2",
+      "name": "Fetch Cluster Context",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-cluster-input-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        560
+      ],
+      "id": "prepare-cluster-input-v2",
+      "name": "Prepare Cluster Input",
+      "notes": "클러스터링 입력을 최대 40개 리뷰로 나누고 기존 클러스터는 관련도 기준 최대 160개, 49152 UTF-8 bytes로 제한한다. 기존 클러스터가 100개 이하이고 byte budget 이내면 전부 유지한다."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ '# Existing issue clusters\\n' + JSON.stringify($json.existingClusters || []) + '\\n\\n# Review extractions\\n' + JSON.stringify(($json.reviewItems || []).map(r => ({reviewId:r.ID, category:r.category, summary:r.summary, rating:r.rating, content:r.content}))) + '\\n\\n# Task\\nGroup every review into exactly one primary issue. Match an existing issue when it describes the same underlying product problem; when matched, copy its issueId to existingClusterId and reuse its canonicalKey exactly. Otherwise create a stable lowercase ASCII kebab-case canonicalKey.\\n\\nReturn ONLY {\"clusters\":[{\"existingClusterId\":\"uuid or null\",\"canonicalKey\":\"stable-key\",\"title\":\"short Korean noun phrase\",\"category\":\"one allowed category\",\"severity\":\"high|medium|low\",\"summary\":\"evidence-bound Korean summary\",\"actionHint\":\"one concrete next step\",\"reviewIds\":[\"exact ids\"],\"representativeReviewIds\":[\"subset up to 3\"]}]}.\\n\\nSeverity: high = blocks a core journey, loss/billing/security risk, or repeated crashes; medium = material friction with workaround; low = localized inconvenience or request. Use no confidence percentages. Every representativeReviewId must be copied verbatim from that same cluster reviewIds array; omit representativeReviewIds rather than guessing. Inventing, omitting, or duplicating a review id is a hard failure.' }}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [
+        880,
+        560
+      ],
+      "id": "cluster-review-issues-v2",
+      "name": "Cluster Review Issues",
+      "executeOnce": false,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "maxTries": 3,
+      "continueOnFail": true,
+      "notes": "Stage 2: 최대 40개 리뷰를 클러스터링한다. n8n 2.30.8 Gemini has no request timeout; one bounded call must finish within the 15-minute claim lease.",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/validate-cluster-output-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        560
+      ],
+      "id": "validate-cluster-output-v2",
+      "name": "Validate Cluster Output"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-parse-error",
+              "leftValue": "={{ (($json.ID || '').toString().startsWith('PARSE_ERROR_')) ? \"yes\" : \"no\" }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3960,
+        560
+      ],
+      "id": "has-cluster-error-v2",
+      "name": "Has Cluster Error?"
+    },
+    {
+      "parameters": {
+        "jsCode": "@code/prepare-cluster-upsert-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        860
+      ],
+      "id": "prepare-cluster-upsert-v2",
+      "name": "Prepare Cluster Upsert"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/upsert-clusters' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.payload }}",
+        "options": {
+          "timeout": 150000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        660,
+        860
+      ],
+      "id": "upsert-clusters-to-bff-v2",
+      "name": "Upsert Clusters to BFF",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/merge-cluster-batches-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        560
+      ],
+      "id": "merge-cluster-batches-v2",
+      "name": "Merge Cluster Batches",
+      "notes": "배치별 결과를 canonical identity로 병합한 뒤 전체 리뷰 정확히 1회 배정을 재검증한다."
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.prompt }}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.8,
+      "position": [
+        2860,
+        560
+      ],
+      "id": "consolidate-cluster-candidates-v2",
+      "name": "Consolidate Cluster Candidates",
+      "executeOnce": false,
+      "retryOnFail": true,
+      "waitBetweenTries": 3000,
+      "maxTries": 3,
+      "continueOnFail": true,
+      "notes": "후보 최대 48개와 65536 UTF-8 bytes 이하 prompt를 통합한다. n8n 2.30.8 Gemini has no request timeout; one bounded call must finish within the 15-minute claim lease.",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/validate-consolidated-clusters-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        560
+      ],
+      "id": "validate-consolidated-clusters-v2",
+      "name": "Validate Consolidated Clusters",
+      "notes": "모든 bounded batch 결과를 결합하고 후보·리뷰가 정확히 한 번 배정됐는지 전역 검증한다."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/gate-extraction-batches-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        260
+      ],
+      "id": "gate-extraction-batches-v2",
+      "name": "Gate Extraction Batches",
+      "notes": "Stage 1 배치 중 하나라도 실패하면 성공 부분집합을 폐기하고 파싱 오류 1건만 전달한다."
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1980,
+        0
+      ],
+      "id": "loop-extraction-batches-v2",
+      "name": "Loop Extraction Batches",
+      "notes": "각 모델 배치를 단독 실행하고 완료 결과를 순서대로 결합한다."
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        660,
+        560
+      ],
+      "id": "loop-cluster-batches-v2",
+      "name": "Loop Cluster Batches",
+      "notes": "각 모델 배치를 단독 실행하고 완료 결과를 순서대로 결합한다."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/checkpoint-extraction-lease-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        260
+      ],
+      "id": "checkpoint-extraction-lease-v2",
+      "name": "Checkpoint Extraction Lease",
+      "notes": "외부 모델 응답을 보관하고 현재 fenced claim 갱신 payload를 만든다."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/checkpoint-cluster-lease-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        560
+      ],
+      "id": "checkpoint-cluster-lease-v2",
+      "name": "Checkpoint Cluster Lease",
+      "notes": "외부 모델 응답을 보관하고 현재 fenced claim 갱신 payload를 만든다."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/checkpoint-consolidation-lease-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        560
+      ],
+      "id": "checkpoint-consolidation-lease-v2",
+      "name": "Checkpoint Consolidation Lease",
+      "notes": "외부 모델 응답을 보관하고 현재 fenced claim 갱신 payload를 만든다."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/heartbeat' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.heartbeatPayload }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        440,
+        260
+      ],
+      "id": "renew-extraction-lease-v2",
+      "name": "Renew Extraction Lease",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "notes": "모델 배치가 끝날 때 claim token을 검증하고 다음 15분 lease를 갱신한다."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/heartbeat' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.heartbeatPayload }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        1320,
+        560
+      ],
+      "id": "renew-cluster-lease-v2",
+      "name": "Renew Cluster Lease",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "notes": "모델 배치가 끝날 때 claim token을 검증하고 다음 15분 lease를 갱신한다."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ (($env.VOC_BFF_BASE_URL || '').toString().replace(/\\/$/, '')) + '/api/internal/pipeline/heartbeat' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "content-type",
+              "value": "application/json"
+            },
+            {
+              "name": "x-voc-token",
+              "value": "={{ ($env.PIPELINE_WEBHOOK_SECRET || '').toString().trim() }}"
+            },
+            {
+              "name": "x-idempotency-key",
+              "value": "={{ $json.runId || $json.payload?.runId || $execution.id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.heartbeatPayload }}",
+        "options": {
+          "timeout": 30000,
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        3300,
+        560
+      ],
+      "id": "renew-consolidation-lease-v2",
+      "name": "Renew Consolidation Lease",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "notes": "모델 배치가 끝날 때 claim token을 검증하고 다음 15분 lease를 갱신한다."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/restore-extraction-result-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        260
+      ],
+      "id": "restore-extraction-result-v2",
+      "name": "Restore Extraction Result",
+      "notes": "갱신에 성공한 현재 claimant의 모델 응답만 다음 단계로 전달한다."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/restore-cluster-result-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        560
+      ],
+      "id": "restore-cluster-result-v2",
+      "name": "Restore Cluster Result",
+      "notes": "갱신에 성공한 현재 claimant의 모델 응답만 다음 단계로 전달한다."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/restore-consolidation-result-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        560
+      ],
+      "id": "restore-consolidation-result-v2",
+      "name": "Restore Consolidation Result",
+      "notes": "갱신에 성공한 현재 claimant의 모델 응답만 다음 단계로 전달한다."
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "@code/prepare-consolidation-batches-v2.js"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        560
+      ],
+      "id": "prepare-consolidation-batches-v2",
+      "name": "Prepare Consolidation Batches",
+      "notes": "후보를 최대 48개, 전체 UTF-8 prompt 65536 bytes 단위로 정렬·분할한다. 후보는 자르거나 버리지 않는다."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-parse-error",
+              "leftValue": "={{ (($json.ID || '').toString().startsWith('PARSE_ERROR_')) ? \"yes\" : \"no\" }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        560
+      ],
+      "id": "has-consolidation-input-error-v2",
+      "name": "Has Consolidation Input Error?"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2640,
+        560
+      ],
+      "id": "loop-consolidation-batches-v2",
+      "name": "Loop Consolidation Batches",
+      "notes": "각 모델 배치를 단독 실행하고 완료 결과를 순서대로 결합한다."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-active-claim",
+              "leftValue": "={{ $json.hasClaim === true ? 'yes' : 'no' }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ],
+      "id": "has-active-claim-v2",
+      "name": "Has Active Claim?",
+      "notes": "빈 queue는 명시적인 false terminal branch로 종료해 production concurrency slot을 반환한다."
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Prepare Preflight Reviews Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Cluster Review Issues",
+            "type": "ai_languageModel",
+            "index": 0
+          },
+          {
+            "node": "Consolidate Cluster Candidates",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Checkpoint Extraction Lease",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON Response": {
+      "main": [
+        [
+          {
+            "node": "Gate Extraction Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Parse Error?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Parse Error Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Filter Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Prepare Alert Events Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Upsert Payload": {
+      "main": [
+        [
+          {
+            "node": "Upsert Reviews to BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Reviews to BFF": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cluster Upsert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Publish Payload": {
+      "main": [
+        [
+          {
+            "node": "Notify Publish to BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Parse Error Payload": {
+      "main": [
+        [
+          {
+            "node": "Send Parse Error to BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Alert Events Payload": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Events to BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Claim Job Payload": {
+      "main": [
+        [
+          {
+            "node": "Claim Job from BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Job from BFF": {
+      "main": [
+        [
+          {
+            "node": "Prepare Run Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Run Context": {
+      "main": [
+        [
+          {
+            "node": "Has Active Claim?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Preflight Reviews Payload": {
+      "main": [
+        [
+          {
+            "node": "Filter New Reviews via BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New Reviews via BFF": {
+      "main": [
+        [
+          {
+            "node": "Ensure New Reviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure New Reviews": {
+      "main": [
+        [
+          {
+            "node": "Loop Extraction Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Trigger (Queue Event)": {
+      "main": [
+        [
+          {
+            "node": "Validate Trigger Secret",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Trigger Secret": {
+      "main": [
+        [
+          {
+            "node": "Prepare Claim Job Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger (Queue Polling)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Claim Job Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cluster Context": {
+      "main": [
+        [
+          {
+            "node": "Fetch Cluster Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Cluster Context": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cluster Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cluster Input": {
+      "main": [
+        [
+          {
+            "node": "Loop Cluster Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cluster Review Issues": {
+      "main": [
+        [
+          {
+            "node": "Checkpoint Cluster Lease",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Cluster Output": {
+      "main": [
+        [
+          {
+            "node": "Merge Cluster Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Cluster Error?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Parse Error Payload",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Upsert Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Cluster Upsert": {
+      "main": [
+        [
+          {
+            "node": "Upsert Clusters to BFF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Clusters to BFF": {
+      "main": [
+        [
+          {
+            "node": "Prepare Publish Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Cluster Batches": {
+      "main": [
+        [
+          {
+            "node": "Prepare Consolidation Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consolidate Cluster Candidates": {
+      "main": [
+        [
+          {
+            "node": "Checkpoint Consolidation Lease",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Consolidated Clusters": {
+      "main": [
+        [
+          {
+            "node": "Has Cluster Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gate Extraction Batches": {
+      "main": [
+        [
+          {
+            "node": "Has Parse Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert Events to BFF": {
+      "main": [
+        [
+          {
+            "node": "Prepare Cluster Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Extraction Batches": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checkpoint Extraction Lease": {
+      "main": [
+        [
+          {
+            "node": "Renew Extraction Lease",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renew Extraction Lease": {
+      "main": [
+        [
+          {
+            "node": "Restore Extraction Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Extraction Result": {
+      "main": [
+        [
+          {
+            "node": "Loop Extraction Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Cluster Batches": {
+      "main": [
+        [
+          {
+            "node": "Validate Cluster Output",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cluster Review Issues",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checkpoint Cluster Lease": {
+      "main": [
+        [
+          {
+            "node": "Renew Cluster Lease",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renew Cluster Lease": {
+      "main": [
+        [
+          {
+            "node": "Restore Cluster Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Cluster Result": {
+      "main": [
+        [
+          {
+            "node": "Loop Cluster Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Checkpoint Consolidation Lease": {
+      "main": [
+        [
+          {
+            "node": "Renew Consolidation Lease",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renew Consolidation Lease": {
+      "main": [
+        [
+          {
+            "node": "Restore Consolidation Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Restore Consolidation Result": {
+      "main": [
+        [
+          {
+            "node": "Loop Consolidation Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Consolidation Batches": {
+      "main": [
+        [
+          {
+            "node": "Has Consolidation Input Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Consolidation Input Error?": {
+      "main": [
+        [
+          {
+            "node": "Has Cluster Error?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Loop Consolidation Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Consolidation Batches": {
+      "main": [
+        [
+          {
+            "node": "Validate Consolidated Clusters",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consolidate Cluster Candidates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Active Claim?": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveExecutionProgress": false,
+    "saveManualExecutions": false
+  },
+  "tags": [],
+  "id": "voc-radar-pipeline-v2"
+}

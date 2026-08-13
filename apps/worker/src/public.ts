@@ -11,11 +11,6 @@ import {
   getEdgeCache,
   getCacheVersion,
   clampLimit,
-  parsePage,
-  parsePrivateReviewSortBy,
-  parseSortDirection,
-  parseRatingFilter,
-  normalizePriorityFilter,
   normalizeSearchKeyword,
   normalizeTimestampFilter,
   normalizeCountry,
@@ -26,13 +21,10 @@ import {
   normalizeActionHint,
   derivePriorityValue,
   isUuid,
-  decodeReviewFeedCursor,
-  isLegacyTimestampCursor,
-  buildReviewFeedFilters,
-  normalizeReviewFeedRows,
   JSON_HEADERS,
   boolFromEnv,
 } from './platform';
+import { executeReviewFeed } from './review-feed';
 
 async function handlePublicOverview(env: Env, request: Request) {
   const { searchParams } = new URL(request.url);
@@ -937,7 +929,7 @@ async function handlePublicReport(env: Env, request: Request) {
   if (!window.ok) return badRequest(env, window.message);
   const { from, to } = window;
 
-  const version = `${await getCacheVersion(env)}:${boolFromEnv(env.REPORT_V2_ENABLED, false) ? 'v2' : 'compat'}`;
+  const version = `${await getCacheVersion(env)}:${boolFromEnv(env.REPORT_V2_ENABLED, false) ? 'v2' : 'compat'}:window-v1`;
   if (window.isDefault) {
     // Rotate omitted-window cache entries with the same UTC-day bucket used by the response.
     reportUrl.searchParams.set('from', from || '');
@@ -992,6 +984,7 @@ async function handlePublicReport(env: Env, request: Request) {
   const totalReviews = Number(overview.total_reviews || 0);
   const lowRatingCount = Number(overview.low_rating_count || 0);
   const data = {
+    window: { from, to },
     app: {
       appStoreId: appId,
       country,
@@ -1410,37 +1403,7 @@ async function handlePublicAppMeta(env: Env, request: Request) {
 
 async function handlePublicReviews(env: Env, request: Request) {
   if (!boolFromEnv(env.DETAIL_VIEW_ENABLED, true)) return errorResponse(env, 403, 'detail_view_disabled', '리뷰 상세 조회 기능은 현재 사용할 수 없습니다.');
-  const { searchParams } = new URL(request.url);
-  const appId = normalizeAppStoreId(searchParams.get('appId'));
-  const country = normalizeCountry(searchParams.get('country'));
-  const limit = clampLimit(searchParams.get('limit'));
-  const page = parsePage(searchParams.get('page'));
-  const sortBy = parsePrivateReviewSortBy(searchParams.get('sortBy'));
-  const sortDirection = parseSortDirection(searchParams.get('sortDirection'));
-  const rating = parseRatingFilter(searchParams.get('rating'));
-  const priority = normalizePriorityFilter(searchParams.get('priority'));
-  const category = normalizeOptionalText(searchParams.get('category'), 120);
-  const issueLabel = normalizeOptionalText(searchParams.get('issueLabel'), 120);
-  const search = normalizeSearchKeyword(searchParams.get('search'));
-  const searchScope = searchParams.get('searchScope') === 'content' ? 'content' : 'all';
-  const rawFrom = searchParams.get('from');
-  const rawTo = searchParams.get('to');
-  const from = normalizeTimestampFilter(rawFrom);
-  const to = normalizeTimestampFilter(rawTo);
-  const cursor = searchParams.get('cursor');
-  if (!appId) return badRequest(env, 'appId must be numeric');
-  if (rawFrom !== null && !from) return badRequest(env, 'from must be a valid timestamp');
-  if (rawTo !== null && !to) return badRequest(env, 'to must be a valid timestamp');
-  if (from && to && Date.parse(from) > Date.parse(to)) return badRequest(env, 'from must not be after to');
-  if (cursor && isLegacyTimestampCursor(cursor)) return errorResponse(env, 400, 'legacy_cursor_unsupported', '이전 형식의 리뷰 커서는 안전하게 이어갈 수 없습니다. cursor를 제거하고 첫 페이지부터 다시 조회해 주세요.');
-  if (cursor && (sortBy !== 'reviewed_at' || !decodeReviewFeedCursor(cursor))) return badRequest(env, 'cursor is invalid for the selected sort');
-  const filters = buildReviewFeedFilters({
-    appId, country, limit, page, sortBy, sortDirection, rating, priority, category, issueLabel,
-    search, searchScope, from, to, cursor,
-  });
-  const rows = await supabaseRequest<Array<Record<string, unknown>>>(env, `/rest/v1/private_review_feed?${filters.toString()}`, { method: 'GET', idempotent: true });
-  const normalized = normalizeReviewFeedRows(rows, limit, sortBy);
-  return jsonResponse(env, 200, { data: normalized.data, page, limit, hasNext: normalized.hasNext, nextCursor: normalized.nextCursor });
+  return executeReviewFeed(env, request, 'public');
 }
 
 /** Returns null when the request is not a public API route. */

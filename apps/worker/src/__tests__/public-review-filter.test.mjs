@@ -178,3 +178,56 @@ test('public reviews reject cursor filter grammar before querying Supabase', asy
     globalThis.fetch = originalFetch;
   }
 });
+
+test('public and private review policies keep distinct auth and query capabilities', async () => {
+  const originalFetch = globalThis.fetch;
+  const upstreamUrls = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    upstreamUrls.push(url);
+    if (url.endsWith('/auth/v1/user')) {
+      return Response.json({ id: '11111111-1111-4111-8111-111111111111' });
+    }
+    return Response.json([]);
+  };
+
+  try {
+    const missingAuth = await workerModule.default.fetch(
+      new Request('https://worker.example/api/private/reviews?appId=123456789'),
+      env,
+    );
+    assert.equal(missingAuth.status, 401);
+    assert.deepEqual(upstreamUrls, []);
+
+    const publicResponse = await workerModule.default.fetch(
+      new Request('https://worker.example/api/public/reviews?appId=123456789'
+        + '&search=release_candidate&searchScope=content'
+        + '&from=2026-06-29T00%3A00%3A00.000Z&to=2026-07-29T00%3A00%3A00.000Z'),
+      env,
+    );
+    const privateResponse = await workerModule.default.fetch(
+      new Request('https://worker.example/api/private/reviews?appId=123456789'
+        + '&search=release_candidate&searchScope=content&from=invalid&to=invalid', {
+        headers: { authorization: 'Bearer user-token' },
+      }),
+      env,
+    );
+    assert.equal(publicResponse.status, 200, await publicResponse.clone().text());
+    assert.equal(privateResponse.status, 200, await privateResponse.clone().text());
+
+    const feedUrls = upstreamUrls
+      .filter((url) => url.includes('/rest/v1/private_review_feed?'))
+      .map((url) => new URL(url));
+    assert.equal(feedUrls.length, 2);
+    assert.equal(feedUrls[0].searchParams.get('content'), 'ilike.*release\\_candidate*');
+    assert.deepEqual(feedUrls[0].searchParams.getAll('reviewed_at'), [
+      'gte.2026-06-29T00:00:00.000Z',
+      'lte.2026-07-29T00:00:00.000Z',
+    ]);
+    assert.equal(feedUrls[1].searchParams.has('content'), false);
+    assert.match(feedUrls[1].searchParams.get('or'), /author\.ilike\.\*release\\_candidate\*/);
+    assert.deepEqual(feedUrls[1].searchParams.getAll('reviewed_at'), []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

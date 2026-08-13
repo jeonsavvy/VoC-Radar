@@ -1,79 +1,138 @@
 # VoC Radar 아키텍처
 
-## 시스템 역할
+## 책임 경계
 
-- **Unified Worker**: Vite Web 정적 자산과 public/private/internal API를 같은 origin에서 제공합니다. 얇은 entry가 세 route 모듈을 dispatch하고, platform 모듈이 인증·Supabase 호출·오류 envelope·캐시 경계를 공유합니다.
-- **Supabase**: Auth, 원문 리뷰, 실행 상태, issue identity/snapshot/membership을 저장합니다.
-- **n8n**: queue claim, App Store 수집, 두 단계 AI 처리, 내부 API 호출을 담당합니다.
-
-## 공개 read path
+| 구성요소 | 소유하는 계약 | 소유하지 않는 계약 |
+| --- | --- | --- |
+| Web | 공개 성공 DTO runtime decode, request cancellation, resource state, Worker가 반환한 report window 재사용 | report 기간 계산, Apple retry/cache, persisted priority |
+| Worker | public/private/internal HTTP, Apple I/O, 입력 정규화, persisted priority, payload 제한, raw-body internal 인증 | job의 durable 상태 전이, lease 복구, model call 순서 |
+| n8n | webhook·poll trigger, claim 명령, 모델 batch의 순차 실행, node retry, checkpoint·heartbeat orchestration | Apple page I/O, durable job 상태, atomic publish |
+| SQL | job 상태·stage, claim token, lease, attempt, staging, fencing, snapshot/membership 저장, atomic publish | HTTP 인증, Apple 호출, model invocation |
 
 ```mermaid
 flowchart LR
-  U["Public user"] --> W["Unified Worker Web URL report"]
-  W --> D["Same-origin discover/artwork/report/issues/reviews"]
-  D --> S["Supabase RPC/read models"]
-  D --> A["Apple Search API metadata"]
+  Web["Web"] -->|"public/private HTTP"| Worker["Unified Worker"]
+  Worker -->|"RPC"| SQL["Supabase SQL"]
+  Worker -->|"Lookup, reviews, artwork"| Apple["Apple"]
+  N8N["n8n trigger and ordered model calls"] -->|"internal HTTP commands"| Worker
 ```
 
-`/api/public/report`는 앱 메타, overview, category/trend, issue cluster를 하나의 canonical 응답으로 합치며 모든 집계와 issue membership에 같은 inclusive `from`/`to` 범위를 적용합니다. 범위를 생략하면 Web과 동일하게 다음 UTC 자정 1밀리초 전까지의 최근 30개 UTC 날짜를 사용합니다. 이슈 집계는 범위 안의 리뷰마다 가장 최근 `published + passed` run의 membership 하나만 채택합니다. 따라서 증분 run에 없는 이전 리뷰는 유지되고, 이후 재분석에서 다른 cluster로 이동한 리뷰는 이전 분류에서 빠집니다. 제목·심각도·요약은 해당 cluster의 가장 최근 유효 snapshot을 사용하며, 범위 집계에는 snapshot 전체의 변화율을 섞지 않습니다. 상세 응답의 `reviewCount`와 `evidenceCount`는 전체 근거 수이고, `reviews` 원문 배열은 대표 근거와 최신 근거 우선 최대 50개입니다.
+이 구분에서 n8n은 흐름을 실행하지만 데이터·I/O 계약의 최종 소유자는 아닙니다. Worker는 Apple 응답과 n8n payload를 canonical 형태로 바꾸고, SQL은 유효한 claim 안에서만 durable state를 바꾸고 게시합니다.
 
-`/api/public/artwork`는 검증된 App Store ID와 국가만 받아 Apple의 100px 아이콘을 같은 origin으로 중계합니다. JPEG·PNG·WebP·AVIF만 허용하고 응답 본문을 512KiB로 제한합니다. 성공한 아이콘은 브라우저에서 1일, edge에서 7일 캐시하며 실패 응답은 저장하지 않습니다. Web은 메타데이터에 아이콘 URL이 없거나 직접 이미지 로드가 실패할 때 이 경로를 최대 두 번 사용합니다.
+## 공개 read path
 
-`/api/public/apps`는 앱·국가별 최신 `published` run 중 review가 있는 행만 선택하고 `apps` 메타와 정확한 복합 키로 결합해 한 service-role RPC에서 최대 100건을 반환합니다. 앱별 DB fan-out 없이 최근순과 고유성을 SQL에서 확정합니다. `DETAIL_VIEW_ENABLED=false`이면 원문을 포함하는 issue detail, legacy dashboard, 공개·로그인 review feed는 cache나 DB 조회 전에 HTTP 403으로 닫히며 overview와 issue 목록은 유지됩니다.
+`GET /api/public/report`는 다음 envelope를 canonical 성공 DTO로 반환합니다.
+
+```text
+data
+  window: { from, to }
+  app
+  summary
+  analysis
+  issues
+  categories
+  trends
+```
+
+범위를 생략하면 Worker가 다음 UTC 자정 1밀리초 전까지의 최근 30개 UTC 날짜를 정하고 `data.window`에 확정값을 반환합니다. Web은 이 값을 runtime decode한 뒤 issue detail과 review 요청의 `from`·`to`에 그대로 전달합니다. `REPORT_V2_ENABLED=true`인 정상 경로에서는 report, issue, review가 이 기간을 공유하며 별도 클라이언트 기간 계산을 사용하지 않습니다. `false`는 DB 전환 전용 rollback 호환 경로라서 overview·category·trend와 review는 `data.window`를 사용하지만 legacy issue list/detail RPC는 기간 인자를 지원하지 않습니다. 이 모드의 이슈 수치는 기간 정합성을 보장하지 않는 임시 호환 결과입니다.
+
+V2 이슈 집계는 기간 안의 각 리뷰에 대해 가장 최근 `published + passed` run의 membership 하나를 사용합니다. 제목·severity·요약은 cluster의 최신 유효 snapshot을 사용하고, 상세 응답의 `reviewCount`·`evidenceCount`는 전체 근거 수를, `reviews`는 대표·최신 근거 우선 최대 50건을 나타냅니다.
+
+아트워크 복구는 세 단계뿐입니다.
+
+1. report/discovery metadata의 신뢰된 `artworkUrl`을 직접 로드합니다.
+2. 직접 로드가 실패하거나 URL이 없으면 canonical `/api/public/artwork?appId&country`를 한 번 호출합니다.
+3. proxy도 실패하면 Web의 로컬 fallback을 표시합니다.
+
+Worker proxy가 Apple metadata·image upstream retry, MIME/512KiB 제한, cache key와 TTL을 소유합니다. Web은 `attempt`나 cache revision query로 동일 proxy를 중복 호출하지 않습니다.
 
 ## 분석 write path
 
 ```mermaid
 flowchart LR
-  R["Authenticated request"] --> J["One active job per app/country"]
-  J --> Q["Idempotent claim + 15 minute lease"]
-  Q --> F["Fetch reviews"]
-  F --> E["Stage 1: per-review extraction"]
-  E --> C["Stage 2: existing match/new clustering"]
-  C --> V["Exact-ID and enum validation"]
-  V --> P["Atomic snapshots + memberships"]
-  P --> B["Atomic publish + job completion"]
+  Trigger["Webhook or 5-minute poll"] --> Claim["Worker claim command"]
+  Claim --> Fetch["Worker Apple fetch and normalization"]
+  Fetch --> Extract["n8n ordered extraction batches"]
+  Extract --> Cluster["n8n ordered clustering and consolidation"]
+  Cluster --> Boundary["Worker validation and payload boundary"]
+  Boundary --> Stage["SQL private staging and fencing"]
+  Stage --> Publish["SQL atomic publish"]
 ```
 
-- `pipeline_jobs.status`: `queued → running → completed | failed | canceled`
-- `pipeline_jobs.stage`: `queued → fetching → extracting → clustering → publishing`
-- n8n의 `$execution.id`가 `claim_key`이며 같은 key 재시도는 기존 job과 token을 반환합니다. claim lease는 15분이고 최대 시도는 3회입니다.
-- 만료된 `running` 작업만 `queued`로 회수합니다. 세 번째 시도가 만료되면 `failed`로 종결하며 terminal 상태와 claim identity는 바꾸지 않습니다.
-- claim 이후의 모든 내부 요청은 `jobId + claimToken + runId`를 전달합니다. 데이터 변경 RPC는 claim 검증과 쓰기를 같은 transaction에서 수행하므로 취소되거나 lease를 잃은 실행은 `409 job_claim_lost` 이후 상태나 데이터를 되살릴 수 없습니다. Heartbeat는 같은 stage 또는 이후 stage만 허용해 지연 응답이 상태를 되돌리지 못합니다.
-- Stage 1과 Stage 2의 모델 호출은 각각 최대 50개와 40개 리뷰 단위로 직렬 실행합니다. 각 모델 응답은 실행 checkpoint에 보관한 뒤 같은 `jobId + claimToken + runId`의 heartbeat가 성공해야 검증 단계로 전달하므로, 여러 배치의 누적 실행 시간이 15분을 넘어도 lease를 유지합니다. 단일 모델 호출이 lease를 넘기면 직후 heartbeat가 결과를 폐기하고 해당 시도는 재시도 대상으로 남습니다.
-- 최근 성공 publish 후 24시간 이내 요청은 `fresh` 결과와 다음 허용 시각을 반환합니다.
-- Web에서 생성하는 새 작업은 사용자별 최근 24시간 rolling quota를 적용합니다. 기본 한도는 10건이며 1~100 범위에서 설정합니다. `fresh`와 `existing` 응답은 새 작업을 만들지 않으므로 quota를 소비하지 않고, 이미 생성된 Web 작업은 이후 실패·취소돼도 해당 24시간 집계에 포함됩니다.
-- 동일 앱·국가의 active job은 partial unique index와 원자적 enqueue RPC로 하나만 허용합니다. 사용자 quota count와 insert는 사용자 advisory lock 안에서 실행하므로 서로 다른 앱을 동시에 요청해도 한도를 우회할 수 없습니다.
-- Apple Lookup 직전에는 인증 사용자 UUID를 key로 하는 Cloudflare rate limiter를 적용합니다. 60초에 10회인 이 경계는 존재하지 않는 숫자 ID 반복 요청의 외부 호출을 줄이며, 전역 정산용 quota가 아니라 Cloudflare PoP 단위의 단기 남용 방어입니다. limiter binding이 없거나 응답하지 않으면 Apple을 호출하지 않고 요청을 거부합니다.
-- App Store 수집은 기본 최근 30일, 최대 40페이지 뒤 terminal probe 1회로 범위 완전성을 확인합니다. 각 Apple 요청은 5초, Worker 전체 수집은 270초, n8n 호출은 300초로 제한합니다. 기간 안 리뷰가 더 남거나 입력 상한에 도달하면 `review_scope_incomplete`로 실패시키고 staging·공개 snapshot을 바꾸지 않습니다.
-- review 원문·extraction은 run별 비공개 staging에 묶이고, cluster identity·snapshot·membership 저장과 publish pointer·job 완료는 각 경계에서 transaction RPC로 원자적으로 처리합니다.
-- 파이프라인은 review scope를 최대 10,000개 ID의 단일 JSONB 값으로 조회해 PostgREST 행 제한과 긴 query URL을 피합니다. Review·cluster persistence도 10,000개 입력 상한을 Worker와 DB에서 함께 검사하며, 두 transaction RPC에만 60초 timeout을 사용합니다.
-- 신규 raw review는 cluster membership FK를 위해 먼저 생성될 수 있지만 committed `review_ai`와 결합되기 전에는 공개 read model에 나타나지 않습니다. Publish transaction이 staged raw와 AI를 함께 병합하며 실패·취소·lease 만료 시 staging을 제거합니다.
-- 새 title/category/model/last occurrence는 run snapshot에 staging되고, `pipeline_runs.validation_status='passed'`인 run만 publish됩니다. 실패하거나 미게시된 run은 기존 공개 metadata와 pointer를 바꾸지 않습니다.
-- 클러스터링은 기본 30개, 최대 40개 리뷰 단위로 1차 검증합니다. 각 배치는 최신 유효 cluster identity 최대 10,000개 중 카테고리, 한글·영문·숫자 어휘, review count, 최근 발생 시각을 기준으로 최대 160개·49,152 UTF-8 bytes만 선택합니다. Consolidation은 최대 48개 후보와 65,536 UTF-8 bytes prompt 단위로 직렬 실행하며, 후보와 전체 리뷰가 각각 정확히 1회 배정됐는지 publish 전에 전역 재검증합니다. 같은 canonical identity는 전역 병합되지만 서로 다른 key의 의미상 중복이 서로 다른 consolidation batch에 있으면 별도 이슈로 남을 수 있습니다.
-- 운영 재분석 작업은 `pipeline_jobs.source='reanalysis'`로만 표시합니다. 이 경우 이미 저장된 리뷰도 extraction 입력으로 되돌리되, 일반 사용자의 24시간 cooldown 계약은 변경하지 않습니다. 같은 리뷰를 새 분류 계약으로 다시 해석한 run은 시계열 비교 대상이 아니므로 `changePercent`를 `null`로 저장합니다.
-- 운영 n8n은 production concurrency를 1로 제한하고 webhook 누락 job을 5분마다 polling합니다. 따라서 긴 실행 중 새 실행이 무한 병렬화되지 않으며, webhook 장애 시 queue 회수는 다음 polling까지 최대 약 5분 지연될 수 있습니다.
-- 계정 삭제 준비 RPC는 사용자별 enqueue advisory lock 안에서 active job 취소와 모든 해당 job 메모 삭제를 원자적으로 수행합니다. 뒤이은 Auth 삭제가 `requested_by`를 null로 바꾸는 동안 생성된 Web job도 외래 키 trigger가 메모를 함께 지웁니다. Auth 삭제 결과가 확인되지 않으면 계정은 남아 있을 수 있으므로 Web은 로그인 상태 확인과 재시도를 안내합니다.
-- 공개 이슈 목록·상세는 기본 30일, 최대 90일의 지정 기간에서 여러 `published + passed` run을 합치되 리뷰별 최신 membership만 사용합니다. 상세 원문은 50개로 제한하고 전체 evidence 수와 이슈 목록의 제한 전 총계는 별도로 보존합니다. 다음 실행의 cluster context는 앱·국가에 속한 각 cluster의 전체 게시 이력에서 최신 유효 snapshot을 하나씩 사용합니다. 증분 run이 건드리지 않은 identity도 유지하고 전체 identity가 10,000개를 넘으면 일부를 숨기지 않고 작업을 명시적으로 실패시킵니다.
+1. n8n의 `$execution.id`를 `claim_key`로 Worker에 보냅니다. SQL은 같은 key의 재요청에 같은 job·claim token을 반환하며 다른 job을 가져가지 않습니다.
+2. SQL은 claim할 때 `status='running'`, `stage='fetching'`, 15분 lease, 증가된 `attempt_count`를 원자적으로 기록합니다.
+3. Worker가 Apple review page를 수집하고 review ID·앱·국가·필드를 정규화합니다. 기간 범위가 완전하지 않으면 `review_scope_incomplete`로 부분 결과를 차단합니다.
+4. n8n은 extraction, clustering, consolidation model batch를 각각 순차 실행합니다. 각 결과는 checkpoint 뒤 동일 claim의 heartbeat가 성공해야 다음 단계로 진행됩니다.
+5. Worker는 canonical cluster contract, claim, app scope, payload 상한을 검증하고 SQL RPC를 호출합니다.
+6. SQL은 review AI staging, cluster identity/snapshot/membership, publish pointer와 job completion을 fence가 있는 transaction으로 처리합니다. 취소되거나 lease를 잃은 실행은 게시할 수 없습니다.
 
-## 데이터 모델
+`pipeline_jobs.status`는 `queued → running → completed | failed | canceled`만 허용합니다. `pipeline_jobs.stage`는 `queued → fetching → extracting → clustering → publishing` 순서로만 전진합니다. 같은 stage heartbeat는 lease만 갱신할 수 있고 지연된 이전 stage는 상태를 되돌릴 수 없습니다.
 
-- `issue_clusters`: 앱·국가별 stable identity와 canonical key
-- `issue_cluster_snapshots`: run별 canonical severity, 집계, 비교값, validation result
-- `issue_cluster_reviews`: `(run_id, review_id)` primary key로 한 run에서 하나의 주 이슈만 허용
-- `pipeline_review_ai_staging`: publish 전 run별 raw review·AI extraction 임시 저장소(service-role only)
-- `pipeline_runs`: model version과 validation result 저장
+n8n의 `execution_entity`는 운영 관측 자료이지 분석 job의 durable truth가 아닙니다. production execution payload에는 리뷰 원문과 webhook 인증 header가 포함될 수 있으므로 성공·실패 data와 node progress를 저장하지 않고 pruning합니다. 현재 n8n 2.30.8에서는 이 경로가 `deletedAt`을 먼저 기록한 뒤 행을 삭제하므로, pruning 전의 행이 일시적으로 `status='running'`이어도 `deletedAt is not null`이면 완료되지 않은 pipeline job을 뜻하지 않습니다. 게시 성공은 SQL의 completed job과 `published + passed` run으로 판정하고, 장애 원인은 payload를 남기지 않는 Worker/n8n log와 job stage·attempt·lease metadata로 조사합니다.
 
-`change_percent`는 이전 snapshot의 review count가 있을 때만 계산하고, 비교 기준이 없으면 `null`입니다.
+## 두 단계 재시도와 복구
 
-첫 화면의 앱 목록은 review가 있는 앱·국가별 최신 run을 기준으로 최근 `published_at` 순의 공개 리포트입니다. 목록 RPC는 service role만 실행할 수 있고 최대 100건을 한 DB 요청으로 반환합니다.
+n8n call retry와 SQL execution recovery는 별도 계층입니다.
 
-## 보안과 배포 조건
+- n8n: transient call을 해당 node 안에서 `retryOnFail=true`, `maxTries=3`으로 재시도합니다. extraction·clustering·consolidation model node도 같은 node-level 한도를 사용합니다.
+- SQL: `attempt_count < 3`인 queued job만 claim합니다. 15분 lease가 만료된 `running` job은 이전 staging을 정리하고 다시 queue에 넣으며, 세 번째 실행 시도의 lease가 만료되면 `failed`로 종결합니다.
 
-- 내부 API는 n8n HTTP node가 환경변수에서 직접 읽은 `x-voc-token`을 검증합니다. workflow item에는 token이나 파생 secret을 넣지 않습니다.
-- private API는 Supabase access token을 검증합니다.
-- cluster 테이블과 이슈 read RPC는 anon/authenticated 직접 권한을 제거합니다. Worker의 service-role 호출만 security-definer RPC를 실행하고 공개 응답에는 필요한 필드만 포함합니다.
-- migration·workflow·재분석·공개 API smoke test가 모두 통과할 때만 `REPORT_V2_ENABLED=true`로 전환합니다. 전환 조건과 확인 명령은 `docs/deployment-runbook.md`를 따릅니다.
-- Web과 API는 같은 origin의 통합 Worker에서 제공합니다. 배포 후 root, SPA deep link, `/privacy`, `/api/health`를 확인합니다.
-- 긴급 롤백에서는 관련 feature flag를 `false`로 내리고 새 workflow를 비활성화한 뒤 마지막으로 검증한 Worker 버전을 재배포합니다. Additive DB 컬럼과 RPC는 보존합니다.
+같은 논리적 model batch가 한 execution attempt에서 세 번 호출되고, 그 execution이 checkpoint 전에 끝나 세 번의 DB attempt 모두 같은 지점까지 진행하는 조건에서는 최대 9회 호출이 가능합니다. 이는 두 기존 값 `3 × 3`을 조합한 조건부 최악의 경우 추론입니다. 실제 수는 어느 call에서 실패했는지, 응답이 checkpoint됐는지, heartbeat가 성공했는지에 따라 줄어듭니다.
+
+Worker의 개별 Apple review page fetch는 5초 timeout, manual redirect, retry 0회입니다. 상위 n8n `fetch-reviews` HTTP node나 SQL attempt가 다시 실행될 수 있다는 사실은 Apple page 자체의 retry 횟수를 바꾸지 않습니다.
+
+n8n terminal failure가 Worker의 completion/failure command에 도달하지 못하면 job은 마지막 heartbeat 기준 `running`으로 남습니다. 15분 lease가 막 만료될 때까지 기다리고 5분 polling 주기의 다음 tick도 놓치는 조건에서는 recovery가 약 20분 뒤 시작될 수 있습니다. 이 값은 두 스케줄 경계에서 계산한 운영 추론이며 SLA가 아닙니다.
+
+## Canonical 계약과 생성 방향
+
+### Cluster contract
+
+`contracts/cluster-contract.mjs`가 enum, 문자열 길이, 최대 10,000 review 입력, 대표 review ID 최대 3개, 정확히 한 번 배정의 유일한 authoritative source입니다. Worker와 Node entry는 adapter/re-export이고, packer는 같은 상수를 독립 런타임인 n8n adapter source에 주입합니다. `contracts/cluster-contract.fixtures.mjs`의 동일 fixture corpus가 모든 실행 경계를 비교합니다.
+
+### Workflow
+
+`n8n/workflow.template.json`은 graph, node ID, 연결, timeout과 portable metadata의 원본입니다. `n8n/code/*.js`는 Code-node body의 원본입니다. `scripts/build-workflow-v2.mjs`가 두 입력을 한 방향으로 pack해 `n8n/workflow.supabase-only.json`을 만듭니다. 생성 artifact를 직접 수정하거나 artifact를 다시 입력으로 읽어 patch하지 않습니다.
+
+```bash
+node scripts/build-workflow-v2.mjs
+node scripts/build-workflow-v2.mjs --check
+npm run verify:workflow
+```
+
+### Supabase schema
+
+적용된 migration은 변경하지 않는 upgrade 이력입니다. `scripts/generate-supabase-schema.mjs`는 PostgreSQL 17의 빈 격리 DB에 migration 전체를 파일명 순서로 재생하고 최종 `public` catalog를 dump해 `supabase/schema.sql`을 생성합니다. 따라서 `schema.sql`에는 과거 backfill 단계와 superseded 함수 body가 아니라 새 설치에 필요한 최종 객체만 있어야 합니다.
+
+`scripts/verify-postgres-runtime.mjs`는 한 임시 컨테이너의 서로 격리된 두 DB를 검사합니다.
+
+- `fresh_path`: 생성된 `supabase/schema.sql`만 적용
+- `upgrade_path`: 모든 migration을 순서대로 적용
+
+Verifier는 function, relation, constraint, index, RLS/policy, grant, view/trigger catalog를 비교하고 양쪽에 같은 semantic fixture를 실행합니다.
+
+## 인증 경계
+
+Public, private, internal 정책은 합치지 않습니다.
+
+- private route는 Supabase access token을 검증합니다.
+- public Web은 Supabase RPC를 직접 호출하지 않습니다. 이름이 `get_public_*`인 read model도 unified Worker가 service role로만 호출하며 `anon`·`authenticated`의 직접 `EXECUTE` 권한은 없습니다.
+- Worker는 알려진 internal POST route를 먼저 resolve한 뒤 raw body를 한 번 읽습니다. `x-voc-token` 또는 지원되는 HMAC을 `PIPELINE_WEBHOOK_SECRET`으로 한 번 검증하고, branded authenticated context만 handler에 전달합니다.
+- 알 수 없는 internal path는 404이고 알려진 path의 인증 실패는 401입니다. Handler가 raw request를 다시 읽거나 인증을 반복하지 않습니다.
+- webhook trigger는 별도의 `N8N_PIPELINE_TRIGGER_SECRET`을 Worker와 n8n에 모두 요구하지만 값을 요청에 싣지 않습니다. Worker가 timestamp와 exact JSON body의 HMAC-SHA256을 보내고 n8n 외부 runner가 5분 안의 signature만 `Validate Trigger Secret` 단계에서 claim 전에 허용합니다.
+
+두 secret은 tracked workflow·문서·execution item에 값을 남기지 않습니다.
+
+n8n Code node는 같은 버전의 별도 `n8nio/runners` container에서 실행합니다. n8n task broker와 runner는 host에 publish되지 않은 Compose network에서 `N8N_RUNNERS_AUTH_TOKEN`으로 서로 인증합니다. 현재 workflow는 `VOC_*` 설정과 webhook trigger secret을 `$env`로 읽으므로 `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`를 유지하며, n8n 편집 권한을 신뢰된 운영자로 제한합니다.
+
+## Compatibility 보존
+
+`/api/internal/pipeline/job-status`와 기존 public compatibility route는 정적 코드 검색 결과만으로 제거하지 않습니다. `REPORT_V2_ENABLED=false`가 사용하는 latest-run read RPC도 rollback 경로로 유지합니다. 다음 조건을 모두 증명한 별도 변경에서만 퇴역시킵니다.
+
+- production access·workflow evidence에서 caller가 없습니다.
+- 현재 Web과 n8n artifact가 대체 경로만 사용합니다.
+- rollback 보존 기간이 끝났습니다.
+- 제거 후 반대 feature-flag 모드와 public/private 권한 검증이 통과합니다.
+
+## 장애 시 보존되는 데이터
+
+모델·cluster validation·persistence·publish가 실패해도 `published + passed` pointer는 바뀌지 않습니다. 실패한 run의 staging은 lease recovery 또는 terminal 처리에서 정리되며, 이전 공개 report는 계속 제공됩니다. Additive DB 객체와 migration ledger는 일반 코드 rollback에서 삭제하지 않습니다.
