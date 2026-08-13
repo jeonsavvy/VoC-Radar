@@ -1,73 +1,45 @@
-# Account deletion
+# 계정 탈퇴 계약
 
-## Background
-- VoC-Radar uses Supabase Auth for email/password sessions.
-- Authenticated users can create `pipeline_jobs`; public App Store app/review/analysis rows are shared service data, not account-owned rows.
-- `pipeline_jobs.requested_by` references `auth.users(id)` with `on delete set null`.
+## 사용자 동작
 
-## Goal
-- Let a logged-in user withdraw their own account from the UI.
-- Cancel that user's queued/running collection jobs before deleting the Supabase auth user.
-- Keep public review and analysis data available.
+- 로그인한 사용자만 `DELETE /api/private/account`를 호출할 수 있습니다.
+- UI에서는 사용자가 `탈퇴`를 정확히 입력해야 삭제 버튼이 활성화됩니다.
+- 성공하면 로컬 세션을 지우고 익명 홈으로 이동합니다.
 
-## Non-goals
-- No manual production DB delete.
-- No deletion of public App Store review, app, run, or AI-analysis rows.
-- No change to auth provider settings, RLS, or DB schema.
+## 데이터 처리
 
-## Scope
-- `DELETE /api/private/account`
-- Shell account deletion UI for logged-in users.
+Worker는 bearer token으로 사용자를 확인한 뒤 다음 순서로 처리합니다.
 
-## Constraints
-- API must require the caller's bearer token.
-- Service role key stays server-side in the Worker.
-- The operation is destructive and one-way from the user's perspective.
+1. `prepare_account_deletion` RPC가 사용자의 `queued`·`running` job을 취소합니다.
+2. 같은 사용자가 남긴 `pipeline_jobs.note`를 삭제합니다.
+3. Supabase Admin API로 Auth 사용자를 삭제합니다.
 
-## Affected contracts
-- API: new authenticated `DELETE /api/private/account` returning `{ ok, data }`.
-- DB: updates `pipeline_jobs` for current user and deletes `auth.users` via Supabase Admin API.
-- Frontend state: on success signs out and returns to the home/dashboard route.
+공개 App Store 앱, 리뷰, 분석 run과 이슈 snapshot은 계정 소유 데이터가 아니므로 유지합니다. `pipeline_jobs.requested_by`는 Auth 사용자 삭제 시 `null`이 됩니다.
 
-## Core logic
-1. Verify bearer token through Supabase `/auth/v1/user`.
-2. Patch current user's `queued`/`running` jobs to `canceled`.
-3. Delete the auth user with the service role Admin API.
-4. Return deletion/cancel count.
+성공 응답은 다음 형태입니다.
 
-## Pseudocode
-```text
-user = getAuthUser(authorization)
-if !user: 401
-canceled = patch pipeline_jobs where requested_by=user.id and status in queued,running
-adminDelete /auth/v1/admin/users/{user.id}
-return { ok: true, data: { deleted: true, canceledJobs: canceled.length } }
+```json
+{
+  "ok": true,
+  "data": {
+    "deleted": true,
+    "canceledJobs": 0,
+    "redactedJobs": 0
+  }
+}
 ```
 
-## Breadboard / shaped flow
-- Header shows `계정 탈퇴` only when logged in.
-- Clicking opens an inline confirmation panel.
-- User types `탈퇴` to enable the destructive action.
-- Success signs out and reloads the anonymous home.
-- Failure keeps the session and shows inline error text.
+## 실패 복구
 
-## Edge cases
-- Missing/invalid token -> 401.
-- Supabase Admin failure -> 500 and account remains signed in.
-- Already no running jobs -> cancel count is 0 and deletion continues.
+| 오류 코드 | 보장되는 상태 | 사용자 조치 |
+| --- | --- | --- |
+| `account_delete_not_started` | 계정은 유지됩니다. job 취소와 메모 삭제의 완료 여부는 확인되지 않았습니다. | 잠시 후 다시 시도합니다. |
+| `account_delete_incomplete` | job 취소와 메모 삭제는 완료됐지만 Auth 사용자 삭제 결과는 확인되지 않았습니다. | 새로고침해 로그인 상태를 확인하고 계정이 남아 있으면 다시 시도합니다. |
 
-## Task breakdown
-- Add Worker helper and route.
-- Add Web API client helper.
-- Add confirmation UI.
-- Add tests for route/UI.
+계정 삭제 후 로컬 로그아웃만 실패한 경우 계정은 복구되지 않습니다. 새로고침해 세션 상태를 다시 확인합니다.
 
-## Verification plan
-- `npm run test --workspace @voc-radar/web`
-- `npm run lint --workspace @voc-radar/web`
-- `npm run build:web`
-- `npm run test --workspace @voc-radar/worker`
-- `npm run build:worker`
+## 보안 경계
 
-## Open questions / assumptions
-- Public app/review/analysis records are retained because they are not account-owned data.
+- service role key는 Worker 밖으로 노출하지 않습니다.
+- `prepare_account_deletion`은 `service_role`만 실행할 수 있습니다.
+- UI 상태만으로 삭제 성공을 판단하지 않고 API 결과를 확인합니다.
