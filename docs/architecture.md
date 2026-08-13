@@ -68,7 +68,7 @@ flowchart LR
 
 `pipeline_jobs.status`는 `queued → running → completed | failed | canceled`만 허용합니다. `pipeline_jobs.stage`는 `queued → fetching → extracting → clustering → publishing` 순서로만 전진합니다. 같은 stage heartbeat는 lease만 갱신할 수 있고 지연된 이전 stage는 상태를 되돌릴 수 없습니다.
 
-n8n의 `execution_entity`는 운영 관측 자료이지 분석 job의 durable truth가 아닙니다. production 성공 payload에는 리뷰 원문과 webhook header가 포함될 수 있으므로 성공 execution data와 node progress를 저장하지 않고 pruning합니다. 현재 n8n 2.30.8에서는 이 경로가 `deletedAt`을 먼저 기록한 뒤 행을 삭제하므로, pruning 전의 행이 일시적으로 `status='running'`이어도 `deletedAt is not null`이면 완료되지 않은 pipeline job을 뜻하지 않습니다. 게시 성공은 SQL의 completed job과 `published + passed` run으로 판정합니다.
+n8n의 `execution_entity`는 운영 관측 자료이지 분석 job의 durable truth가 아닙니다. production execution payload에는 리뷰 원문과 webhook 인증 header가 포함될 수 있으므로 성공·실패 data와 node progress를 저장하지 않고 pruning합니다. 현재 n8n 2.30.8에서는 이 경로가 `deletedAt`을 먼저 기록한 뒤 행을 삭제하므로, pruning 전의 행이 일시적으로 `status='running'`이어도 `deletedAt is not null`이면 완료되지 않은 pipeline job을 뜻하지 않습니다. 게시 성공은 SQL의 completed job과 `published + passed` run으로 판정하고, 장애 원인은 payload를 남기지 않는 Worker/n8n log와 job stage·attempt·lease metadata로 조사합니다.
 
 ## 두 단계 재시도와 복구
 

@@ -1794,7 +1794,7 @@
     "executionOrder": "v1",
     "availableInMCP": false,
     "saveDataSuccessExecution": "none",
-    "saveDataErrorExecution": "all",
+    "saveDataErrorExecution": "none",
     "saveExecutionProgress": false,
     "saveManualExecutions": false
   },

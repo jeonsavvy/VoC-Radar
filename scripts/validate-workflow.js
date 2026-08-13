@@ -81,7 +81,7 @@ for (const requiredComposeLine of [
   'N8N_RUNNERS_LAUNCHER_HEALTH_CHECK_PORT: "5680"',
   'wget -q -O - http://127.0.0.1:5680/healthz >/dev/null 2>&1',
   'EXECUTIONS_DATA_SAVE_ON_SUCCESS: "none"',
-  'EXECUTIONS_DATA_SAVE_ON_ERROR: "all"',
+  'EXECUTIONS_DATA_SAVE_ON_ERROR: "none"',
   'EXECUTIONS_DATA_SAVE_ON_PROGRESS: "false"',
   'EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS: "false"',
   'EXECUTIONS_DATA_PRUNE: "true"',
@@ -142,11 +142,11 @@ if (/itunes\.apple\.com|limit=50|다른 앱으로 변경/i.test(fetchReviewsNote
 
 if (
   workflow.settings?.saveDataSuccessExecution !== 'none' ||
-  workflow.settings?.saveDataErrorExecution !== 'all' ||
+  workflow.settings?.saveDataErrorExecution !== 'none' ||
   workflow.settings?.saveExecutionProgress !== false ||
   workflow.settings?.saveManualExecutions !== false
 ) {
-  fail('workflow execution settings must disable success data and retain only failed execution data');
+  fail('workflow execution settings must not retain production execution payloads');
 }
 
 const signNodes = nodes.filter((node) => String(node.name || '').startsWith('Sign '));
