@@ -73,6 +73,13 @@ if (builderCheck.status !== 0) {
 
 for (const requiredComposeLine of [
   'N8N_PIPELINE_TRIGGER_SECRET: ${N8N_PIPELINE_TRIGGER_SECRET:?N8N_PIPELINE_TRIGGER_SECRET is required}',
+  'N8N_RUNNERS_MODE: external',
+  'N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?N8N_RUNNERS_AUTH_TOKEN is required}',
+  'N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0',
+  'image: n8nio/runners:2.30.8',
+  'N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679',
+  'N8N_RUNNERS_LAUNCHER_HEALTH_CHECK_PORT: "5680"',
+  'wget -q -O - http://127.0.0.1:5680/healthz >/dev/null 2>&1',
   'EXECUTIONS_DATA_SAVE_ON_SUCCESS: "none"',
   'EXECUTIONS_DATA_SAVE_ON_ERROR: "all"',
   'EXECUTIONS_DATA_SAVE_ON_PROGRESS: "false"',
@@ -87,8 +94,15 @@ for (const requiredComposeLine of [
   }
 }
 
+if (compose.includes('N8N_RUNNERS_MODE: internal')) {
+  fail('production n8n must isolate Code nodes in the external task-runner service');
+}
+
 if (!/^N8N_PIPELINE_TRIGGER_SECRET=<[^>]+>$/m.test(envExample)) {
   fail('.env.example must declare N8N_PIPELINE_TRIGGER_SECRET');
+}
+if (!/^N8N_RUNNERS_AUTH_TOKEN=<[^>]+>$/m.test(envExample)) {
+  fail('.env.example must declare the external task-runner shared secret');
 }
 if (!/^N8N_CONCURRENCY_PRODUCTION_LIMIT=1$/m.test(envExample)) {
   fail('.env.example must bound production workflow concurrency to one execution');

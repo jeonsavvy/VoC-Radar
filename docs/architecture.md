@@ -119,6 +119,8 @@ Public, private, internal 정책은 합치지 않습니다.
 
 두 secret은 tracked workflow·문서·execution item에 값을 남기지 않습니다.
 
+n8n Code node는 같은 버전의 별도 `n8nio/runners` container에서 실행합니다. n8n task broker와 runner는 host에 publish되지 않은 Compose network에서 `N8N_RUNNERS_AUTH_TOKEN`으로 서로 인증합니다. 현재 workflow는 `VOC_*` 설정과 webhook trigger secret을 `$env`로 읽으므로 `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`를 유지하며, n8n 편집 권한을 신뢰된 운영자로 제한합니다.
+
 ## Compatibility 보존
 
 `/api/internal/pipeline/job-status`와 기존 public compatibility route는 정적 코드 검색 결과만으로 제거하지 않습니다. `REPORT_V2_ENABLED=false`가 사용하는 latest-run read RPC도 rollback 경로로 유지합니다. 다음 조건을 모두 증명한 별도 변경에서만 퇴역시킵니다.

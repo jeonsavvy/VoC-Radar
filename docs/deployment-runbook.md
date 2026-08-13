@@ -75,6 +75,7 @@ active job이 있으면 n8n을 중지하고 정상 종료 또는 승인된 취�
 
 - `PIPELINE_WEBHOOK_SECRET`: n8n → Worker internal API 인증. n8n HTTP node는 환경변수에서 직접 읽고 workflow item에 넣지 않습니다.
 - `N8N_PIPELINE_TRIGGER_SECRET`: Worker → n8n webhook trigger 인증. Worker와 n8n 양쪽에 필수이며 `Validate Trigger Secret`이 claim 전에 검사합니다.
+- `N8N_RUNNERS_AUTH_TOKEN`: n8n task broker → 외부 task-runner 인증. 두 컨테이너에만 같은 값을 넣고 pipeline 인증 secret과 재사용하지 않습니다.
 
 Worker internal 요청은 알려진 POST route를 찾은 뒤 raw body를 한 번 읽고 한 번 인증합니다. 알 수 없는 route는 404, 알려진 route의 인증 실패는 401이어야 합니다.
 
@@ -126,6 +127,7 @@ docker compose --env-file n8n/.env -f n8n/compose.yaml config --images
 docker compose --env-file n8n/.env -f n8n/compose.yaml up -d
 docker compose --env-file n8n/.env -f n8n/compose.yaml ps
 curl --fail http://127.0.0.1:5679/healthz
+docker compose --env-file n8n/.env -f n8n/compose.yaml exec -T task-runners wget -q -O - http://127.0.0.1:5680/healthz
 ```
 
 전체 `docker compose config`는 환경변수를 실제 값으로 펼쳐 terminal·CI log에 secret을 남길 수 있으므로 실행하지 않습니다. `config --images`, container mount metadata, health처럼 값이 드러나지 않는 표면만 운영 증거로 수집합니다.
@@ -137,6 +139,7 @@ Import·publish CLI의 option은 pinned image의 `n8n --help`로 확인합니다
 - `VOC_BFF_BASE_URL=https://<worker-host>`
 - `PIPELINE_WEBHOOK_SECRET=<internal-secret>`
 - `N8N_PIPELINE_TRIGGER_SECRET=<trigger-secret>`
+- `N8N_RUNNERS_AUTH_TOKEN=<random-runner-secret>`
 - `N8N_CONCURRENCY_PRODUCTION_LIMIT=1`
 - `VOC_FETCH_WINDOW_DAYS=30`
 - `VOC_FETCH_MAX_PAGES=40`
@@ -144,7 +147,9 @@ Import·publish CLI의 option은 pinned image의 `n8n --help`로 확인합니다
 - `VOC_CLUSTER_BATCH_LIMIT=30`
 - `VOC_MODEL_VERSION=<model-name>`
 
-두 secret은 서로 다른 방향의 인증 경계입니다. 값이 일치해야 하는 상대는 각각 Worker의 같은 이름 변수이며, 두 종류의 secret이 서로 같은 값을 가질 필요는 없습니다.
+두 pipeline secret은 서로 다른 방향의 인증 경계이며, 값이 일치해야 하는 상대는 각각 Worker의 같은 이름 변수입니다. `N8N_RUNNERS_AUTH_TOKEN`은 Worker가 아니라 task-runner와만 공유합니다. 세 값은 서로 재사용하지 않습니다.
+
+n8n과 `task-runners` image는 같은 `2.30.8` 버전으로 고정합니다. n8n broker와 runner health port는 Compose network 안에서만 열고 host에 publish하지 않습니다. `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`는 현재 canonical Code node가 `VOC_*` 설정과 trigger secret을 `$env`로 읽는 계약 때문에 유지합니다. n8n 편집 권한은 신뢰된 운영자로 제한하고, 이 값을 `true`로 바꾸려면 secret/config 전달 경계를 먼저 교체해야 합니다.
 
 ## 5. 파이프라인 복구 의미 확인
 
@@ -199,7 +204,25 @@ order by attempt_count desc, lease_expires_at asc nulls first, id;
 4. stale/high-attempt가 계속 늘면 새 webhook 유입과 workflow를 중지합니다. 행을 수동으로 `queued`나 `completed`로 바꾸지 말고 claim/recovery SQL이 처리하도록 둡니다.
 5. claim recovery 자체가 실패한다면 대상 project와 job ID를 다시 확인한 뒤 별도 승인된 복구 변경으로 처리합니다.
 
-## 7. 배포 후 smoke
+## 7. 의도적 보존과 비차단 운영 항목
+
+| 항목 | 현재 결정 | 다시 바꾸는 조건 |
+| --- | --- | --- |
+| `/api/internal/pipeline/job-status`, public compatibility route, latest-run RPC | 롤백 경로로 보존 | production caller 부재, 대체 경로 사용, 롤백 보존 기간 종료, 반대 feature-flag 검증을 모두 증명한 별도 변경 |
+| `pipeline_job_claims` | claim key 재사용을 영구 거부하는 fencing history로 보존 | 개인정보·용량·법적 보존 기간을 정한 뒤 idempotency를 깨지 않는 삭제 설계와 runtime proof가 있을 때만 TTL 도입 |
+| service-only table의 `RLS enabled, no policy` advisor | `anon`·`authenticated`에는 정책을 두지 않고 service role만 명시적으로 허용 | 새 public/private caller 계약이 생길 때만 최소 정책 추가 |
+| Supabase leaked-password protection | Free plan에서는 활성화할 수 없는 비차단 운영 항목 | 유료 plan 전환이 별도로 승인되면 Auth 설정에서 활성화하고 로그인·가입 smoke 재검증 |
+| n8n Code node의 `$env` 접근 | 외부 task-runner 격리와 신뢰된 편집자 제한 아래 보존 | pipeline secret/config를 Code 실행 context 밖으로 옮긴 뒤 `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` 검증 |
+| terminal execution 뒤 최대 약 20분의 lease 회수 지연 | 기존 recovery 계약으로 허용하고 stale/high-attempt query로 관측 | 사용자 영향 또는 실측 실패 경계가 확인되면 lease/poll 값을 별도 변경 |
+
+`pipeline_job_claims`의 행 수는 운영 지표이지 삭제 기준이 아닙니다. 다음 집계로 증가 추세만 확인하며 임의의 TTL이나 row cap을 만들지 않습니다.
+
+```sql
+select count(*) as claim_history_rows, min(claimed_at) as oldest_claimed_at, max(claimed_at) as newest_claimed_at
+from public.pipeline_job_claims;
+```
+
+## 8. 배포 후 smoke
 
 - [ ] `GET /api/health`가 200입니다.
 - [ ] Worker root, `/privacy`, SPA deep link가 HTML 200입니다.
@@ -209,6 +232,7 @@ order by attempt_count desc, lease_expires_at asc nulls first, id;
 - [ ] 알 수 없는 internal route는 404, 알려진 route의 잘못된 인증은 401입니다.
 - [ ] webhook의 잘못된 `N8N_PIPELINE_TRIGGER_SECRET`은 claim 전에 거부됩니다.
 - [ ] n8n은 webhook과 5분 poll에서 같은 canonical workflow만 실행합니다.
+- [ ] n8n과 외부 task-runner가 모두 healthy이고 runner log에 JavaScript runner 등록이 확인됩니다.
 - [ ] claim·heartbeat·publish 요청의 stale token은 `409 job_claim_lost`입니다.
 - [ ] `pipeline_runs.validation_status='passed'`인 run만 published입니다.
 - [ ] publish 실패 시 기존 공개 report가 유지됩니다.
@@ -217,7 +241,7 @@ order by attempt_count desc, lease_expires_at asc nulls first, id;
 
 읽기 전용 smoke만으로 충분하지 않아 queue job이 필요한 경우에는 승인된 계정과 전용 앱 범위를 사용하고, 생성한 job ID와 최종 상태만 운영 기록에 남깁니다. 테스트 review나 공개 snapshot을 만들지 않습니다.
 
-## 8. Rollback
+## 9. Rollback
 
 코드 rollback은 secret rotation 이후·새 코드 이전에 검증한 Worker version을 사용합니다. rotation 전의 오래된 Worker version은 현재 n8n secret과 맞지 않으므로 재배포하지 않습니다.
 
@@ -230,5 +254,7 @@ order by attempt_count desc, lease_expires_at asc nulls first, id;
 `REPORT_V2_ENABLED`는 rollback이라고 항상 `false`로 바꾸지 않습니다. 장애가 V2 read path에 있고 false compatibility path가 현재 DB·Worker와 함께 검증된 경우에만 승인된 flag 변경으로 내립니다. 이미 `true`가 정상 live 값이고 장애와 무관하면 그대로 유지합니다. `false`에서는 legacy issue list/detail RPC가 `data.window` 기간을 적용하지 못하므로 이슈 수치의 기간 정합성이 일시적으로 저하됩니다.
 
 `/api/internal/pipeline/job-status`, public compatibility route, latest-run RPC는 live caller 부재와 rollback 보존 기간 종료를 모두 증명하기 전까지 유지합니다. 일반 rollback 과정에서 권한을 넓히거나 authenticated DB write를 복원하지 않습니다.
+
+외부 task-runner 전환만 실패했다면 DB volume과 workflow를 수정하지 않은 채 직전 검증 commit의 Compose 파일로 n8n service를 다시 만듭니다. task-runner container는 stateless이므로 별도 data rollback이나 volume 삭제를 하지 않습니다.
 
 복구가 끝나면 commit SHA, rollback Worker version, canonical workflow 상태, 실행한 검증, 남은 `running`/high-attempt aggregate를 운영 기록에 남깁니다. 실제 secret, credential reference, instance ID와 version ID는 tracked 문서나 이슈에 복사하지 않습니다.
