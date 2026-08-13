@@ -741,14 +741,17 @@ export async function triggerN8nPipeline(
       reason: 'trigger_webhook_secret_not_configured',
     };
   }
-  headers['x-voc-trigger-secret'] = triggerSecret;
+  const body = JSON.stringify(payload);
+  const timestamp = Date.now().toString();
+  headers['x-voc-timestamp'] = timestamp;
+  headers['x-voc-signature'] = await signMessage(triggerSecret, `${timestamp}.${body}`);
 
   let response: Response;
   try {
     response = await fetchWithRetry(env, webhookUrl, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload),
+      body,
       timeoutMs: 10000,
       retries: 2,
       // webhook은 중복 호출 시 부작용이 생길 수 있어 재시도 대상에서 제외한다.

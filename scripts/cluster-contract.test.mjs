@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -49,17 +50,57 @@ const executeWorkflowCodeNode = (name, inputItems, nodeItems = {}, env = {}, run
     first: () => structuredClone(inputItems[0] || { json: {} }),
   };
 
-  return new Function('$input', '$', '$env', '$json', '$runIndex', code)(
+  return new Function('$input', '$', '$env', '$json', '$runIndex', 'require', code)(
     input,
     selectNode,
     env,
     structuredClone(inputItems[0]?.json || {}),
     runIndex,
+    (specifier) => {
+      assert.equal(specifier, 'crypto');
+      return { createHmac, timingSafeEqual };
+    },
   );
 };
 
 const mainTargets = (name, outputIndex = 0) =>
   (workflow.connections?.[name]?.main?.[outputIndex] || []).map((connection) => connection.node);
+
+test('accepts only a fresh exact-body HMAC at the webhook boundary', () => {
+  const secret = 'trigger-secret';
+  const timestamp = Date.now().toString();
+  const body = {
+    jobId: '33333333-3333-4333-8333-333333333333',
+    appStoreId: '123456789',
+    country: 'kr',
+    requestedAt: '2026-08-13T00:00:00.000Z',
+  };
+  const signature = createHmac('sha256', secret)
+    .update(`${timestamp}.${JSON.stringify(body)}`)
+    .digest('hex');
+  const valid = executeWorkflowCodeNode('Validate Trigger Secret', [{ json: {
+    headers: { 'x-voc-timestamp': timestamp, 'x-voc-signature': signature },
+    body,
+  } }], {}, { N8N_PIPELINE_TRIGGER_SECRET: secret });
+  assert.deepEqual(valid, [{ json: { triggerSource: 'webhook' } }]);
+
+  assert.throws(() => executeWorkflowCodeNode('Validate Trigger Secret', [{ json: {
+    headers: { 'x-voc-trigger-secret': secret },
+    body,
+  } }], {}, { N8N_PIPELINE_TRIGGER_SECRET: secret }), /trigger secret rejected/);
+  assert.throws(() => executeWorkflowCodeNode('Validate Trigger Secret', [{ json: {
+    headers: { 'x-voc-timestamp': timestamp, 'x-voc-signature': signature },
+    body: { ...body, country: 'us' },
+  } }], {}, { N8N_PIPELINE_TRIGGER_SECRET: secret }), /trigger secret rejected/);
+  const staleTimestamp = (Date.now() - 300_001).toString();
+  const staleSignature = createHmac('sha256', secret)
+    .update(`${staleTimestamp}.${JSON.stringify(body)}`)
+    .digest('hex');
+  assert.throws(() => executeWorkflowCodeNode('Validate Trigger Secret', [{ json: {
+    headers: { 'x-voc-timestamp': staleTimestamp, 'x-voc-signature': staleSignature },
+    body,
+  } }], {}, { N8N_PIPELINE_TRIGGER_SECRET: secret }), /trigger secret rejected/);
+});
 
 const executeN8nClusterContract = (fixture) => {
   const extractionById = new Map(

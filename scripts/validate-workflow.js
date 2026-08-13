@@ -79,6 +79,7 @@ for (const requiredComposeLine of [
   'image: n8nio/runners:2.30.8',
   'N8N_RUNNERS_TASK_BROKER_URI: http://n8n:5679',
   'N8N_RUNNERS_LAUNCHER_HEALTH_CHECK_PORT: "5680"',
+  'NODE_FUNCTION_ALLOW_BUILTIN: crypto',
   'wget -q -O - http://127.0.0.1:5680/healthz >/dev/null 2>&1',
   'EXECUTIONS_DATA_SAVE_ON_SUCCESS: "none"',
   'EXECUTIONS_DATA_SAVE_ON_ERROR: "none"',
@@ -253,12 +254,15 @@ const triggerValidationCode = String(
 if (
   !triggerValidationCode.includes('$env.N8N_PIPELINE_TRIGGER_SECRET') ||
   !/if\s*\(!expected\)\s*{\s*throw\b/.test(triggerValidationCode) ||
-  !/if\s*\(!provided\s*\|\|\s*provided\s*!==\s*expected\)\s*{\s*throw\b/.test(
-    triggerValidationCode,
-  ) ||
+  !triggerValidationCode.includes("require('crypto')") ||
+  !triggerValidationCode.includes("headers['x-voc-timestamp']") ||
+  !triggerValidationCode.includes("headers['x-voc-signature']") ||
+  !triggerValidationCode.includes('300_000') ||
+  !triggerValidationCode.includes('timingSafeEqual') ||
+  triggerValidationCode.includes('x-voc-trigger-secret') ||
   /secretCheck\s*:\s*['"]skipped['"]/.test(triggerValidationCode)
 ) {
-  fail('Validate Trigger Secret must fail closed for missing and mismatched secrets');
+  fail('Validate Trigger Secret must fail closed with a timestamped HMAC and no raw-secret header');
 }
 
 const webhookOutputs = workflow.connections?.['Webhook Trigger (Queue Event)']?.main?.[0] || [];

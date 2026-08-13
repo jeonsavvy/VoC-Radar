@@ -4,10 +4,32 @@ if (!expected) {
 }
 
 const headers = $json.headers || {};
-const provided = (headers['x-voc-trigger-secret'] || headers['X-Voc-Trigger-Secret'] || '')
+const timestampText = (headers['x-voc-timestamp'] || headers['X-Voc-Timestamp'] || '')
   .toString()
   .trim();
-if (!provided || provided !== expected) {
+const provided = (headers['x-voc-signature'] || headers['X-Voc-Signature'] || '')
+  .toString()
+  .trim()
+  .toLowerCase();
+const timestamp = Number(timestampText);
+if (
+  !Number.isSafeInteger(timestamp)
+  || Math.abs(Date.now() - timestamp) > 300_000
+  || !/^[0-9a-f]{64}$/.test(provided)
+) {
+  throw new Error('trigger secret rejected');
+}
+
+const { createHmac, timingSafeEqual } = require('crypto');
+const rawBody = JSON.stringify($json.body || {});
+const expectedSignature = createHmac('sha256', expected)
+  .update(`${timestampText}.${rawBody}`)
+  .digest();
+const providedSignature = Buffer.from(provided, 'hex');
+if (
+  providedSignature.length !== expectedSignature.length
+  || !timingSafeEqual(providedSignature, expectedSignature)
+) {
   throw new Error('trigger secret rejected');
 }
 

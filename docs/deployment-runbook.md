@@ -215,7 +215,7 @@ order by attempt_count desc, lease_expires_at asc nulls first, id;
 | `maintenance.bak_*`의 primary key 없음 advisor | serving path가 아닌 과거 복구용 snapshot에는 쓰기 성능을 위한 key를 임의 추가하지 않습니다. 보존 목적과 소유자가 확인되기 전에는 삭제도 하지 않습니다. | 복구 보존 기간·소유자·삭제 승인이 정해지면 snapshot 자체를 정리하고, 실제 조회 계약이 생기면 그때 key를 설계 |
 | `unused_index` advisor | 통계 reset과 저빈도 경로 때문에 아직 사용 횟수가 0인 관측값입니다. queue quota, public directory, lease recovery, claim lookup, staging cleanup처럼 드물지만 필요한 경로의 index를 단일 시점 수치로 제거하지 않습니다. | 대표 운영 기간의 `pg_stat_user_indexes`, 실제 query plan, 쓰기 비용을 함께 측정해 제거가 유리함을 증명한 별도 migration |
 | Supabase leaked-password protection | Free plan에서는 활성화할 수 없는 비차단 운영 항목 | 유료 plan 전환이 별도로 승인되면 Auth 설정에서 활성화하고 로그인·가입 smoke 재검증 |
-| n8n Code node의 `$env` 접근 | 외부 task-runner 격리와 신뢰된 편집자 제한 아래 보존 | pipeline secret/config를 Code 실행 context 밖으로 옮긴 뒤 `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` 검증 |
+| n8n Code node의 `$env` 접근 | 외부 task-runner 격리와 신뢰된 편집자 제한 아래 보존합니다. Trigger secret은 HMAC key로만 사용하고 HTTP header에 값을 전송하지 않습니다. runner built-in allowlist는 HMAC 검증에 필요한 `crypto` 하나뿐입니다. | pipeline secret/config를 Code 실행 context 밖으로 옮긴 뒤 `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` 검증 |
 | n8n production execution payload 미보존 | 리뷰 원문과 webhook 인증 header를 execution DB에 장기 보존하지 않도록 workflow와 instance 모두 `save success=none`, `save error=none`, progress/manual save off를 유지합니다. 장애는 safe log와 SQL job metadata로 조사합니다. n8n 2.30.8은 완료 행을 `deletedAt`이 있는 soft-delete 대상으로 먼저 만들므로 pruning 전까지 `status='running'`으로 잠깐 보일 수 있습니다. | 민감 payload를 저장하지 않으면서 terminal metadata만 남기는 upstream 동작이 독립적으로 검증되거나, 별도 승인된 보안 저장소·보존 정책이 생길 때만 변경 |
 | terminal execution 뒤 최대 약 20분의 lease 회수 지연 | 기존 recovery 계약으로 허용하고 stale/high-attempt query로 관측 | 사용자 영향 또는 실측 실패 경계가 확인되면 lease/poll 값을 별도 변경 |
 
@@ -236,7 +236,7 @@ n8n execution 상태는 `status`만 보고 장애로 판정하지 않습니다. 
 - [ ] Web의 issue detail·review 요청이 report의 `data.window`를 사용합니다.
 - [ ] artwork가 direct URL → Worker proxy 한 번 → local fallback 순서이며 proxy query 중복이 없습니다.
 - [ ] 알 수 없는 internal route는 404, 알려진 route의 잘못된 인증은 401입니다.
-- [ ] webhook의 잘못된 `N8N_PIPELINE_TRIGGER_SECRET`은 claim 전에 거부됩니다.
+- [ ] webhook은 raw trigger secret header를 받지 않고, stale·변조·잘못된 HMAC을 claim 전에 거부합니다.
 - [ ] n8n은 webhook과 5분 poll에서 같은 canonical workflow만 실행합니다.
 - [ ] n8n과 외부 task-runner가 모두 healthy이고 runner log에 JavaScript runner 등록이 확인됩니다.
 - [ ] 성공·실패 payload 미보존 실행은 terminal metadata이거나 `deletedAt`이 있는 pruning 대기 상태이며, 허용 시간을 지난 `deletedAt is null`의 `new`/`running` 행이 없습니다.

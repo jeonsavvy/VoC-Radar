@@ -118,7 +118,7 @@ Public, private, internal 정책은 합치지 않습니다.
 - public Web은 Supabase RPC를 직접 호출하지 않습니다. 이름이 `get_public_*`인 read model도 unified Worker가 service role로만 호출하며 `anon`·`authenticated`의 직접 `EXECUTE` 권한은 없습니다.
 - Worker는 알려진 internal POST route를 먼저 resolve한 뒤 raw body를 한 번 읽습니다. `x-voc-token` 또는 지원되는 HMAC을 `PIPELINE_WEBHOOK_SECRET`으로 한 번 검증하고, branded authenticated context만 handler에 전달합니다.
 - 알 수 없는 internal path는 404이고 알려진 path의 인증 실패는 401입니다. Handler가 raw request를 다시 읽거나 인증을 반복하지 않습니다.
-- webhook trigger는 별도의 `N8N_PIPELINE_TRIGGER_SECRET`을 Worker와 n8n에 모두 요구합니다. n8n은 `Validate Trigger Secret` 단계에서 claim 전에 거부합니다.
+- webhook trigger는 별도의 `N8N_PIPELINE_TRIGGER_SECRET`을 Worker와 n8n에 모두 요구하지만 값을 요청에 싣지 않습니다. Worker가 timestamp와 exact JSON body의 HMAC-SHA256을 보내고 n8n 외부 runner가 5분 안의 signature만 `Validate Trigger Secret` 단계에서 claim 전에 허용합니다.
 
 두 secret은 tracked workflow·문서·execution item에 값을 남기지 않습니다.
 

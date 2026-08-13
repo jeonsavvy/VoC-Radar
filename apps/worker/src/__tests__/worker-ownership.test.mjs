@@ -288,6 +288,45 @@ test('configured pipeline trigger fails closed when its required secret is absen
   }
 });
 
+test('configured pipeline trigger sends a timestamped exact-body HMAC without the shared secret', async () => {
+  const originalFetch = globalThis.fetch;
+  let captured;
+  globalThis.fetch = async (input, init = {}) => {
+    captured = { input: String(input), init };
+    return Response.json({ ok: true });
+  };
+  const payload = {
+    jobId: '33333333-3333-4333-8333-333333333333',
+    appStoreId: '123456789',
+    country: 'kr',
+    requestedAt: '2026-08-13T00:00:00.000Z',
+  };
+  try {
+    const result = await platformModule.triggerN8nPipeline(
+      {
+        ...env,
+        N8N_PIPELINE_TRIGGER_URL: 'https://n8n.example/webhook/queue',
+        N8N_PIPELINE_TRIGGER_SECRET: 'trigger-secret',
+      },
+      payload,
+    );
+    assert.deepEqual(result, { dispatched: true });
+    assert.equal(captured.input, 'https://n8n.example/webhook/queue');
+    assert.equal(captured.init.headers['x-voc-trigger-secret'], undefined);
+    const timestamp = captured.init.headers['x-voc-timestamp'];
+    assert.match(timestamp, /^\d+$/);
+    assert.ok(Math.abs(Date.now() - Number(timestamp)) < 5_000);
+    const body = JSON.stringify(payload);
+    assert.equal(captured.init.body, body);
+    assert.equal(
+      captured.init.headers['x-voc-signature'],
+      await platformModule.signMessage('trigger-secret', `${timestamp}.${body}`),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('Worker alone derives persisted priority and filters alert rows to Critical', async () => {
   const originalFetch = globalThis.fetch;
   const persistedReviewPriorities = [];
