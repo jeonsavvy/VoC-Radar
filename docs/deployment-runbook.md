@@ -213,6 +213,7 @@ order by attempt_count desc, lease_expires_at asc nulls first, id;
 | service-only table의 `RLS enabled, no policy` advisor | `anon`·`authenticated`에는 정책을 두지 않고 service role만 명시적으로 허용 | 새 public/private caller 계약이 생길 때만 최소 정책 추가 |
 | Supabase leaked-password protection | Free plan에서는 활성화할 수 없는 비차단 운영 항목 | 유료 plan 전환이 별도로 승인되면 Auth 설정에서 활성화하고 로그인·가입 smoke 재검증 |
 | n8n Code node의 `$env` 접근 | 외부 task-runner 격리와 신뢰된 편집자 제한 아래 보존 | pipeline secret/config를 Code 실행 context 밖으로 옮긴 뒤 `N8N_BLOCK_ENV_ACCESS_IN_NODE=true` 검증 |
+| n8n 성공 execution payload 미보존 | 리뷰 원문과 webhook 인증 header를 execution DB에 남기지 않도록 workflow와 instance 모두 `save success=none`, progress/manual save off를 유지합니다. n8n 2.30.8은 완료 행을 `deletedAt`이 있는 soft-delete 대상으로 먼저 만들므로 pruning 전까지 `status='running'`으로 잠깐 보일 수 있습니다. | 민감 payload를 저장하지 않으면서 terminal metadata만 남기는 upstream 동작이 독립적으로 검증되거나, 별도 승인된 보안 저장소·보존 정책이 생길 때만 변경 |
 | terminal execution 뒤 최대 약 20분의 lease 회수 지연 | 기존 recovery 계약으로 허용하고 stale/high-attempt query로 관측 | 사용자 영향 또는 실측 실패 경계가 확인되면 lease/poll 값을 별도 변경 |
 
 `pipeline_job_claims`의 행 수는 운영 지표이지 삭제 기준이 아닙니다. 다음 집계로 증가 추세만 확인하며 임의의 TTL이나 row cap을 만들지 않습니다.
@@ -221,6 +222,8 @@ order by attempt_count desc, lease_expires_at asc nulls first, id;
 select count(*) as claim_history_rows, min(claimed_at) as oldest_claimed_at, max(claimed_at) as newest_claimed_at
 from public.pipeline_job_claims;
 ```
+
+n8n execution 상태는 `status`만 보고 장애로 판정하지 않습니다. 성공 payload 미보존 실행은 `deletedAt is not null`이면 pruning 대기 중인 정상 전이입니다. workflow의 최대 실행 시간과 hard-delete buffer·pruning interval을 지난 뒤에도 `deletedAt is null`인 `new`/`running` 행만 비정상 후보로 조사합니다. 이 판별은 n8n execution metadata에만 사용하고, Supabase job의 성공 여부는 `pipeline_jobs.status='completed'`와 `pipeline_runs.status='published'`, `validation_status='passed'`를 기준으로 판단합니다.
 
 ## 8. 배포 후 smoke
 
@@ -233,6 +236,7 @@ from public.pipeline_job_claims;
 - [ ] webhook의 잘못된 `N8N_PIPELINE_TRIGGER_SECRET`은 claim 전에 거부됩니다.
 - [ ] n8n은 webhook과 5분 poll에서 같은 canonical workflow만 실행합니다.
 - [ ] n8n과 외부 task-runner가 모두 healthy이고 runner log에 JavaScript runner 등록이 확인됩니다.
+- [ ] 성공 payload 미보존 실행은 terminal metadata이거나 `deletedAt`이 있는 pruning 대기 상태이며, 허용 시간을 지난 `deletedAt is null`의 `new`/`running` 행이 없습니다.
 - [ ] claim·heartbeat·publish 요청의 stale token은 `409 job_claim_lost`입니다.
 - [ ] `pipeline_runs.validation_status='passed'`인 run만 published입니다.
 - [ ] publish 실패 시 기존 공개 report가 유지됩니다.
