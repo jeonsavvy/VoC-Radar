@@ -62,10 +62,14 @@ const serviceOnlyFunctions = [
   'get_pipeline_cluster_context_v2',
   'get_pipeline_review_scope',
   'get_public_apps',
+  'get_public_categories',
   'get_public_issue_clusters',
   'get_public_issue_clusters_windowed',
   'get_public_issue_detail',
   'get_public_issue_detail_windowed',
+  'get_public_issues',
+  'get_public_overview',
+  'get_public_trends',
   'persist_issue_clusters',
   'persist_pipeline_alerts',
   'persist_pipeline_reviews',
@@ -200,6 +204,7 @@ test('historical security migrations remain upgrade-only contracts', () => {
   const hardening = migration('20260721022747_harden_internal_rpc_privileges.sql');
   const enqueuePrepare = migration('202607290001_prepare_pipeline_job_enqueue.sql');
   const enqueueHarden = migration('202607290003_harden_pipeline_job_enqueue.sql');
+  const publicReadHardening = migration('202608130001_harden_public_read_rpc_privileges.sql');
 
   assert.match(hardening, /revoke execute on function public\.claim_pipeline_job\(text, text, text\)\s+from public, anon, authenticated;/i);
   assert.match(hardening, /grant execute on function public\.claim_pipeline_job\(text, text, text\)\s+to service_role;/i);
@@ -207,4 +212,14 @@ test('historical security migrations remain upgrade-only contracts', () => {
   assert.doesNotMatch(enqueuePrepare, /revoke\s+insert\s+on\s+table\s+public\.pipeline_jobs/i);
   assert.match(enqueueHarden, /revoke insert on table public\.pipeline_jobs from public, anon, authenticated;/i);
   assert.doesNotMatch(enqueueHarden, /grant insert on table public\.pipeline_jobs to service_role;/i);
+  for (const functionName of ['get_public_categories', 'get_public_issues', 'get_public_overview', 'get_public_trends']) {
+    assert.match(
+      publicReadHardening,
+      new RegExp(`revoke execute on function public\\.${functionName}\\([^;]+\\)\\s+from public, anon, authenticated;`, 'i'),
+    );
+    assert.match(
+      publicReadHardening,
+      new RegExp(`grant execute on function public\\.${functionName}\\([^;]+\\)\\s+to service_role;`, 'i'),
+    );
+  }
 });

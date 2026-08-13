@@ -2931,8 +2931,7 @@ GRANT ALL ON FUNCTION public.get_public_apps(p_limit integer) TO service_role;
 -- Name: FUNCTION get_public_categories(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone); Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON FUNCTION public.get_public_categories(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) TO anon;
-GRANT ALL ON FUNCTION public.get_public_categories(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) TO authenticated;
+REVOKE ALL ON FUNCTION public.get_public_categories(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) FROM PUBLIC, anon, authenticated, service_role;
 GRANT ALL ON FUNCTION public.get_public_categories(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) TO service_role;
 
 
@@ -2972,8 +2971,7 @@ GRANT ALL ON FUNCTION public.get_public_issue_detail_windowed(p_issue_id uuid, p
 -- Name: FUNCTION get_public_issues(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone, p_limit integer); Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON FUNCTION public.get_public_issues(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone, p_limit integer) TO anon;
-GRANT ALL ON FUNCTION public.get_public_issues(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone, p_limit integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.get_public_issues(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone, p_limit integer) FROM PUBLIC, anon, authenticated, service_role;
 GRANT ALL ON FUNCTION public.get_public_issues(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone, p_limit integer) TO service_role;
 
 
@@ -2981,8 +2979,7 @@ GRANT ALL ON FUNCTION public.get_public_issues(p_app_store_id text, p_country te
 -- Name: FUNCTION get_public_overview(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone); Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON FUNCTION public.get_public_overview(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) TO anon;
-GRANT ALL ON FUNCTION public.get_public_overview(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) TO authenticated;
+REVOKE ALL ON FUNCTION public.get_public_overview(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) FROM PUBLIC, anon, authenticated, service_role;
 GRANT ALL ON FUNCTION public.get_public_overview(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) TO service_role;
 
 
@@ -2990,8 +2987,7 @@ GRANT ALL ON FUNCTION public.get_public_overview(p_app_store_id text, p_country 
 -- Name: FUNCTION get_public_trends(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone); Type: ACL; Schema: public; Owner: -
 --
 
-GRANT ALL ON FUNCTION public.get_public_trends(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) TO anon;
-GRANT ALL ON FUNCTION public.get_public_trends(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) TO authenticated;
+REVOKE ALL ON FUNCTION public.get_public_trends(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) FROM PUBLIC, anon, authenticated, service_role;
 GRANT ALL ON FUNCTION public.get_public_trends(p_app_store_id text, p_country text, p_from timestamp with time zone, p_to timestamp with time zone) TO service_role;
 
 
