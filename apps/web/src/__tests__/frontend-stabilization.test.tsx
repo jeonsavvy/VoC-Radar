@@ -570,11 +570,14 @@ async function main() {
 
   await test('user-facing failures do not render provider errors or analysis provenance', () => {
     const loginSource = readFileSync('src/routes/LoginPage.tsx', 'utf8');
+    const authSource = readFileSync('src/lib/auth.ts', 'utf8');
     const reportSource = readFileSync('src/routes/AppReportPage.tsx', 'utf8');
     const exploreSource = readFileSync('src/routes/ExplorePage.tsx', 'utf8');
 
     assert.doesNotMatch(loginSource, /err\.message|error\.message/);
-    assert.match(loginSource, /현재 로그인되지 않은 상태입니다/);
+    assert.match(loginSource, /getAuthErrorMessage\(error, action\)/);
+    assert.match(authSource, /로그인에 실패했습니다\. 잠시 후 다시 시도하세요\./);
+    assert.doesNotMatch(authSource, /return error\.message/);
     assert.doesNotMatch(reportSource, /detail\.issue\.modelVersion|Run \{/);
     assert.match(reportSource, /공개 데이터는 변경되지 않았습니다/);
     assert.match(exploreSource, /다시 시도/);

@@ -1,172 +1,253 @@
-import { FormEvent, useMemo, useState } from 'react';
-import { MailCheck } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router';
-import { PageHeader } from '@/components/page-header';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { signInWithPassword, signUpWithPassword } from '@/lib/auth';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  getAuthErrorMessage,
+  requestPasswordReset,
+  resendSignupConfirmation,
+  signInWithPassword,
+  signUpWithPassword,
+  validateSignupPasswords,
+  type AuthAction,
+} from '@/lib/auth';
 import { sanitizeAuthReturnTo } from '@/lib/authRedirect';
-import { hasSupabaseConfig } from '@/lib/supabase';
 
-// LoginPage는 신규·갱신 분석 요청에 필요한 계정 인증 화면이다.
-// 이메일 인증이 끝난 사용자만 분석 요청 기능에 접근할 수 있다.
-type Props = {
-  onSignedIn: () => Promise<void>;
+type Props = { onSignedIn: () => Promise<void> };
+type AuthMode = 'login' | 'signup';
+type AuthView = AuthMode | 'forgot';
+type Notice = {
+  kind: 'account-created' | 'confirmation-pending' | 'confirmation-sent' | 'reset-sent' | 'password-updated';
+  email?: string;
 };
 
-export function validateSignupPasswords(password: string, confirmPassword: string) {
-  return password === confirmPassword ? null : '비밀번호가 일치하지 않습니다.';
+const AUTH_ACTION = {
+  login: 'login',
+  signup: 'signup',
+  resend: 'resend',
+  resetRequest: 'reset-request',
+} satisfies Record<string, AuthAction>;
+
+function getReturnContext(returnTo: string) {
+  if (returnTo === '/requests') return '로그인 후 분석 요청 내역으로 이동합니다.';
+  if (returnTo.startsWith('/apps/')) return '로그인 후 보던 리포트로 돌아갑니다.';
+  return '로그인 후 이전 화면으로 돌아갑니다.';
+}
+
+function buildLoginSearch(returnTo: string) {
+  const params = new URLSearchParams();
+  if (returnTo !== '/requests') params.set('returnTo', returnTo);
+  return params;
 }
 
 export function LoginPage({ onSignedIn }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const mode = useMemo(() => (searchParams.get('mode') === 'signup' ? 'signup' : 'login'), [searchParams]);
+  const mode = useMemo<AuthMode>(
+    () => (searchParams.get('mode') === 'signup' ? 'signup' : 'login'),
+    [searchParams],
+  );
   const returnTo = useMemo(() => sanitizeAuthReturnTo(searchParams.get('returnTo')), [searchParams]);
-
+  const [view, setView] = useState<AuthView>(mode);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(
+    () => (searchParams.get('passwordUpdated') === '1' ? { kind: 'password-updated' } : null),
+  );
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<AuthAction | null>(null);
+  const confirmInputRef = useRef<HTMLInputElement>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const loading = pendingAction !== null;
 
-  // 로그인과 회원가입은 같은 폼을 공유하고, mode에 따라 동작만 바꾼다.
+  useEffect(() => {
+    if (!loading && view !== 'forgot') setView(mode);
+  }, [loading, mode, view]);
+
+  useEffect(() => {
+    if (submitError) errorRef.current?.focus();
+  }, [submitError]);
+
+  const setMode = (nextMode: AuthMode) => {
+    if (loading) return;
+    setView(nextMode);
+    setNotice(null);
+    setSubmitError(null);
+    setConfirmError(null);
+    setConfirmPassword('');
+    const next = buildLoginSearch(returnTo);
+    if (nextMode === 'signup') next.set('mode', 'signup');
+    setSearchParams(next);
+  };
+
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setMessage(null);
-    setError(null);
+    const submittedView = view;
+    setNotice(null);
+    setSubmitError(null);
+    setConfirmError(null);
 
-    if (mode === 'signup') {
+    if (submittedView === 'signup') {
       const passwordError = validateSignupPasswords(password, confirmPassword);
       if (passwordError) {
-        setError(passwordError);
+        setConfirmError(passwordError);
+        requestAnimationFrame(() => confirmInputRef.current?.focus());
         return;
       }
     }
 
-    setLoading(true);
+    const action = submittedView === 'login'
+      ? AUTH_ACTION.login
+      : submittedView === 'signup'
+        ? AUTH_ACTION.signup
+        : AUTH_ACTION.resetRequest;
+    setPendingAction(action);
 
     try {
-      if (!hasSupabaseConfig) {
-        throw new Error('로그인을 사용할 수 없습니다.');
-      }
-
-      if (mode === 'signup') {
-        await signUpWithPassword(email, password, returnTo);
+      if (submittedView === 'signup') {
+        const result = await signUpWithPassword(email, password, returnTo);
+        setPassword('');
         setConfirmPassword('');
-        setMessage('회원가입이 완료되었습니다. 이메일 인증 후 로그인하세요.');
-        setSearchParams(returnTo === '/requests' ? {} : { returnTo });
-        return;
+        if (result.requiresEmailVerification) {
+          setNotice({ kind: 'confirmation-pending', email });
+        } else {
+          setView('login');
+          setSearchParams(buildLoginSearch(returnTo));
+          setNotice({ kind: 'account-created' });
+        }
+      } else if (submittedView === 'forgot') {
+        await requestPasswordReset(email, returnTo);
+        setNotice({ kind: 'reset-sent', email });
+      } else {
+        await signInWithPassword(email, password);
+        await onSignedIn();
+        navigate(returnTo);
       }
-
-      await signInWithPassword(email, password);
-      await onSignedIn();
-      navigate(returnTo);
-    } catch {
-      setError(mode === 'signup'
-        ? '회원가입 결과를 확인하지 못했습니다. 인증 이메일이 도착했는지 먼저 확인하고, 오지 않았다면 잠시 후 다시 시도하세요.'
-        : '로그인하지 못했습니다. 현재 로그인되지 않은 상태입니다. 이메일 인증 여부와 입력 정보를 확인한 뒤 다시 시도하세요.');
+    } catch (error) {
+      setSubmitError(getAuthErrorMessage(error, action));
     } finally {
-      setLoading(false);
+      setPendingAction(null);
     }
   };
 
+  const resendConfirmation = async () => {
+    const pendingEmail = notice?.email || email;
+    setSubmitError(null);
+    setPendingAction(AUTH_ACTION.resend);
+    try {
+      await resendSignupConfirmation(pendingEmail, returnTo);
+      setNotice({ kind: 'confirmation-sent', email: pendingEmail });
+    } catch (error) {
+      setSubmitError(getAuthErrorMessage(error, AUTH_ACTION.resend));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const heading = view === 'signup' ? '계정 만들기' : view === 'forgot' ? '비밀번호 재설정' : '로그인';
+  const description = view === 'signup'
+    ? '계정을 만든 뒤 이메일 인증을 마치면 분석을 요청할 수 있습니다.'
+    : view === 'forgot'
+      ? '재설정 링크를 받을 이메일을 입력하세요.'
+      : '분석을 요청하거나 요청 내역을 확인하려면 로그인하세요.';
+  const submitLabel = view === 'signup' ? '계정 만들기' : view === 'forgot' ? '재설정 링크 받기' : '로그인';
+  const loadingLabel = view === 'signup' ? '계정 만드는 중' : view === 'forgot' ? '링크 보내는 중' : '로그인 중';
+  const showForm = notice?.kind !== 'confirmation-pending' && notice?.kind !== 'confirmation-sent'
+    && notice?.kind !== 'reset-sent';
+
   return (
-    <div className="space-y-6">
-      <PageHeader title="로그인" />
-
-      <Card>
-        <CardHeader>
-          <div>
-            <CardTitle className="text-xl">계정</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="rounded-xl border border-border bg-panel px-4 py-4">
-            <p className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <MailCheck className="size-4 text-primary" />
-              이메일 인증 필요
-            </p>
-            <p className="mt-2 text-sm text-muted-foreground">회원가입 후 이메일 인증을 마쳐야 분석을 요청할 수 있습니다.</p>
-          </div>
-
-          <Tabs
-            value={mode}
-            onValueChange={(value) => {
-              setMessage(null);
-              setError(null);
-              setConfirmPassword('');
-              const next = new URLSearchParams(searchParams);
-              if (value === 'signup') next.set('mode', 'signup');
-              else next.delete('mode');
-              setSearchParams(next);
-            }}
-          >
-            <TabsList>
-              <TabsTrigger value="login">로그인</TabsTrigger>
-              <TabsTrigger value="signup">회원가입</TabsTrigger>
+    <div className="auth-page">
+      <section className="auth-panel" aria-labelledby="auth-title">
+        {view !== 'forgot' ? (
+          <Tabs value={view === 'signup' ? 'signup' : 'login'} onValueChange={(value) => setMode(value as AuthMode)}>
+            <TabsList className="auth-tabs" aria-label="계정 인증 방식">
+              <TabsTrigger value="login" disabled={loading}>로그인</TabsTrigger>
+              <TabsTrigger value="signup" disabled={loading}>회원가입</TabsTrigger>
             </TabsList>
-            <TabsContent value={mode} className="pt-5">
-              <form className="grid gap-4" onSubmit={onSubmit}>
-                <div className="space-y-2">
-                  <Label htmlFor="login-email">이메일</Label>
-                  <Input
-                    id="login-email"
-                    type="email"
-                    autoComplete="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="login-password">비밀번호</Label>
-                  <Input
-                    id="login-password"
-                    type="password"
-                    autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    required
-                  />
-                </div>
-                {mode === 'signup' ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="signup-password-confirm">비밀번호 재확인</Label>
-                    <Input
-                      id="signup-password-confirm"
-                      type="password"
-                      autoComplete="new-password"
-                      value={confirmPassword}
-                      onChange={(event) => setConfirmPassword(event.target.value)}
-                      required={mode === 'signup'}
-                    />
-                  </div>
-                ) : null}
-
-                <Button type="submit" size="lg" className="w-full" disabled={loading}>
-                  {loading ? (mode === 'signup' ? '회원가입 처리 중...' : '로그인 중...') : mode === 'signup' ? '회원가입' : '로그인'}
-                </Button>
-              </form>
-            </TabsContent>
           </Tabs>
+        ) : null}
 
-          {message ? (
-            <div aria-live="polite" className="rounded-xl border border-primary/20 bg-primary/8 px-4 py-3 text-sm text-foreground">
-              {message}
+        <header className="auth-heading">
+          <h1 id="auth-title">{heading}</h1>
+          <p>{description}</p>
+          {view === 'login' ? <p className="auth-return-context">{getReturnContext(returnTo)}</p> : null}
+        </header>
+
+        {notice ? (
+          <div className="auth-notice" role="status">
+            {notice.kind === 'confirmation-pending' ? (
+              <><strong>인증 메일을 확인하세요.</strong><p>{notice.email}로 보냈습니다. 인증을 마친 뒤 로그인할 수 있습니다.</p></>
+            ) : notice.kind === 'confirmation-sent' ? (
+              <><strong>인증 메일을 다시 보냈습니다.</strong><p>메일이 보이지 않으면 스팸함을 확인하세요.</p></>
+            ) : notice.kind === 'reset-sent' ? (
+              <><strong>재설정 링크를 보냈습니다.</strong><p>{notice.email}의 받은편지함과 스팸함을 확인하세요.</p></>
+            ) : notice.kind === 'password-updated' ? (
+              <><strong>비밀번호를 변경했습니다.</strong><p>새 비밀번호로 로그인하세요.</p></>
+            ) : (
+              <><strong>계정을 만들었습니다.</strong><p>이제 로그인할 수 있습니다.</p></>
+            )}
+          </div>
+        ) : null}
+
+        {showForm ? (
+          <form className="auth-form" onSubmit={onSubmit}>
+            <div className="auth-field">
+              <Label htmlFor="auth-email">이메일</Label>
+              <Input id="auth-email" type="email" autoComplete="email" value={email}
+                onChange={(event) => setEmail(event.target.value)} disabled={loading} required />
             </div>
+            {view !== 'forgot' ? (
+              <div className="auth-field">
+                <Label htmlFor="auth-password">비밀번호</Label>
+                <Input id="auth-password" type="password"
+                  autoComplete={view === 'signup' ? 'new-password' : 'current-password'} value={password}
+                  onChange={(event) => setPassword(event.target.value)} disabled={loading} required />
+              </div>
+            ) : null}
+            {view === 'signup' ? (
+              <div className="auth-field">
+                <Label htmlFor="signup-password-confirm">비밀번호 확인</Label>
+                <Input ref={confirmInputRef} id="signup-password-confirm" type="password" autoComplete="new-password"
+                  value={confirmPassword} onChange={(event) => { setConfirmPassword(event.target.value); if (confirmError) setConfirmError(null); }}
+                  aria-invalid={confirmError ? true : undefined}
+                  aria-describedby={confirmError ? 'signup-password-confirm-error' : undefined}
+                  disabled={loading} required />
+                {confirmError ? <p id="signup-password-confirm-error" className="auth-field-error">{confirmError}</p> : null}
+              </div>
+            ) : null}
+            <Button type="submit" size="lg" className="w-full" disabled={loading}>
+              {loading ? loadingLabel : submitLabel}
+            </Button>
+          </form>
+        ) : null}
+
+        {submitError ? <div ref={errorRef} tabIndex={-1} role="alert" className="auth-error">{submitError}</div> : null}
+
+        <div className="auth-secondary-actions">
+          {(notice?.kind === 'confirmation-pending' || notice?.kind === 'confirmation-sent') ? (
+            <Button type="button" variant="outline" onClick={resendConfirmation} disabled={loading}>
+              {pendingAction === AUTH_ACTION.resend ? '다시 보내는 중' : '인증 메일 다시 보내기'}
+            </Button>
           ) : null}
-          {error ? (
-            <div aria-live="polite" className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              {error}
-            </div>
+          {notice?.kind === 'reset-sent' ? (
+            <button type="button" onClick={() => { setNotice(null); setView('forgot'); }} disabled={loading}>다른 이메일로 보내기</button>
           ) : null}
-        </CardContent>
-      </Card>
+          {view === 'login' ? (
+            <button type="button" onClick={() => { setView('forgot'); setNotice(null); setSubmitError(null); }} disabled={loading}>비밀번호를 잊으셨나요?</button>
+          ) : null}
+          {view === 'forgot' || notice?.kind === 'reset-sent' ? (
+            <button type="button" onClick={() => { setView('login'); setNotice(null); setSubmitError(null); }} disabled={loading}>로그인으로 돌아가기</button>
+          ) : null}
+        </div>
+
+        {view === 'signup' ? (
+          <p className="auth-privacy">계정을 만들기 전에 <Link to="/privacy">개인정보처리방침</Link>을 확인하세요.</p>
+        ) : null}
+      </section>
     </div>
   );
 }

@@ -42,6 +42,34 @@ for (const testFile of testFiles) {
   const outfile = path.join(outDir, relativePath).replace(/\.(ts|tsx)$/, '.cjs');
   await mkdir(path.dirname(outfile), { recursive: true });
 
+  const authTestPlugin = {
+    name: 'auth-test-client',
+    setup(buildContext) {
+      buildContext.onResolve({ filter: /^\.\/supabase$/ }, (args) => {
+        if (
+          relativePath.endsWith('auth-contract.test.ts') &&
+          args.importer.endsWith(path.join('lib', 'auth.ts'))
+        ) {
+          return { path: 'auth-test-client', namespace: 'auth-test-client' };
+        }
+      });
+
+      buildContext.onLoad({ filter: /.*/, namespace: 'auth-test-client' }, () => ({
+        contents: `
+          export const hasSupabaseConfig = true;
+          export const supabase = {
+            auth: new Proxy({}, {
+              get(_target, property) {
+                return (...args) => globalThis.__VOC_AUTH_TEST_CLIENT__[property](...args);
+              },
+            }),
+          };
+        `,
+        loader: 'js',
+      }));
+    },
+  };
+
   await build({
     entryPoints: [testFile],
     bundle: true,
@@ -53,6 +81,7 @@ for (const testFile of testFiles) {
     alias: {
       '@': srcRoot,
     },
+    plugins: [authTestPlugin],
     external: ['jsdom'],
     define: {
       'import.meta.env': JSON.stringify({

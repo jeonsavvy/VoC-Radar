@@ -9,15 +9,16 @@ import { AuthSessionBoundary } from '@/App';
 import { AppArtwork, getArtworkSources } from '@/components/AppArtwork';
 import { Shell } from '@/components/Shell';
 import { parseAppIdentity, reportPath } from '@/lib/appIdentity';
+import { validateSignupPasswords } from '@/lib/auth';
 import { DEFAULT_COUNTRY, normalizeDefaultCountry } from '@/lib/config';
 import {
   buildEmailSignUpCredentials,
   hasSupabaseAuthCallback,
   sanitizeAuthReturnTo,
 } from '@/lib/authRedirect';
-import * as LoginPageModule from '@/routes/LoginPage';
 import { LoginPage } from '@/routes/LoginPage';
 import { PrivacyPage } from '@/routes/PrivacyPage';
+import { ResetPasswordPage } from '@/routes/ResetPasswordPage';
 
 async function test(name: string, fn: () => void | Promise<void>) {
   try {
@@ -167,19 +168,73 @@ async function main() {
       </MemoryRouter>,
     );
 
-    assert.match(html, /비밀번호 재확인/);
+    assert.match(html, /비밀번호 확인/);
+    assert.match(html, /<h1[^>]*>계정 만들기<\/h1>/);
+    assert.match(html, /개인정보처리방침/);
+    assert.doesNotMatch(html, /<h1[^>]*>로그인<\/h1>/);
   });
 
-  await test('LoginPage exports signup password confirmation validation', () => {
-    const validateSignupPasswords = (LoginPageModule as Record<string, unknown>).validateSignupPasswords;
-    assert.equal(typeof validateSignupPasswords, 'function');
+  await test('LoginPage keeps mode-specific hierarchy and recovery semantics', () => {
+    const loginHtml = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/login?returnTo=/apps/kr/123/overview']}>
+        <LoginPage onSignedIn={async () => {}} />
+      </MemoryRouter>,
+    );
+    const source = readFileSync('src/routes/LoginPage.tsx', 'utf8');
 
+    assert.match(loginHtml, /<h1[^>]*>로그인<\/h1>/);
+    assert.match(loginHtml, /보던 리포트로 돌아갑니다/);
+    assert.match(loginHtml, /비밀번호를 잊으셨나요/);
+    assert.match(source, /const submittedView = view/);
+    assert.match(source, /<TabsTrigger value="login" disabled=\{loading\}>/);
+    assert.match(source, /aria-invalid=\{confirmError \? true : undefined\}/);
+    assert.match(source, /aria-describedby=\{confirmError \? 'signup-password-confirm-error' : undefined\}/);
+    assert.match(source, /role="alert"/);
+    assert.match(source, /requestPasswordReset\(email, returnTo\)/);
+    assert.match(source, /resendSignupConfirmation\(pendingEmail, returnTo\)/);
+    assert.doesNotMatch(source, /Supabase|환경변수|provider/i);
+  });
+
+  await test('ResetPasswordPage blocks password updates while the callback session is checking', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/reset-password?returnTo=/requests']}>
+        <ResetPasswordPage authChecking={true} loggedIn={false} onSignedOut={async () => {}} />
+      </MemoryRouter>,
+    );
+    const appSource = readFileSync('src/App.tsx', 'utf8');
+    const resetSource = readFileSync('src/routes/ResetPasswordPage.tsx', 'utf8');
+
+    assert.match(html, /<h1[^>]*>새 비밀번호 설정<\/h1>/);
+    assert.match(html, /재설정 링크를 확인하고 있습니다/);
+    assert.equal((html.match(/disabled=""/g) || []).length, 3);
+    assert.match(appSource, /path="reset-password"/);
+    assert.match(appSource, /<ResetPasswordPage authChecking=\{authChecking\} loggedIn=\{loggedIn\} onSignedOut=\{refreshSession\}/);
+    assert.match(appSource, /loggedIn && !authChecking/);
+    assert.match(appSource, /<SignedInLoginRedirect \/>/);
+    assert.match(resetSource, /await updatePassword\(password\)/);
+    assert.match(resetSource, /await onSignedOut\(\)/);
+    assert.match(resetSource, /navigate\(`\/login\?\$\{next\.toString\(\)\}`, \{ replace: true \}\)/);
+  });
+
+  await test('ResetPasswordPage rejects a missing or expired recovery session', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter initialEntries={['/reset-password?returnTo=/requests']}>
+        <ResetPasswordPage authChecking={false} loggedIn={false} onSignedOut={async () => {}} />
+      </MemoryRouter>,
+    );
+
+    assert.match(html, /재설정 링크가 만료되었거나 유효하지 않습니다/);
+    assert.doesNotMatch(html, /<form/);
+    assert.match(html, /로그인으로 돌아가기/);
+  });
+
+  await test('auth validation checks signup password confirmation', () => {
     assert.equal(
-      (validateSignupPasswords as (password: string, confirmPassword: string) => string | null)('secret123', 'secret321'),
+      validateSignupPasswords('secret123', 'secret321'),
       '비밀번호가 일치하지 않습니다.',
     );
     assert.equal(
-      (validateSignupPasswords as (password: string, confirmPassword: string) => string | null)('secret123', 'secret123'),
+      validateSignupPasswords('secret123', 'secret123'),
       null,
     );
   });
@@ -411,6 +466,7 @@ async function main() {
       'src/routes/AppReportPage.tsx',
       'src/routes/RequestsPage.tsx',
       'src/routes/LoginPage.tsx',
+      'src/routes/ResetPasswordPage.tsx',
       'src/routes/PrivacyPage.tsx',
       'src/lib/api.ts',
       'src/lib/auth.ts',

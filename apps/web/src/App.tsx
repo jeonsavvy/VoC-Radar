@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from 'rea
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router';
 import { Shell } from '@/components/Shell';
 import { ExplorePage } from '@/routes/ExplorePage';
-import { hasSupabaseAuthCallback } from '@/lib/authRedirect';
+import { hasSupabaseAuthCallback, sanitizeAuthReturnTo } from '@/lib/authRedirect';
 
 const AppReportPage = lazy(() =>
   import('@/routes/AppReportPage').then((module) => ({ default: module.AppReportPage })),
@@ -10,6 +10,15 @@ const AppReportPage = lazy(() =>
 const LoginPage = lazy(() => import('@/routes/LoginPage').then((module) => ({ default: module.LoginPage })));
 const PrivacyPage = lazy(() => import('@/routes/PrivacyPage').then((module) => ({ default: module.PrivacyPage })));
 const RequestsPage = lazy(() => import('@/routes/RequestsPage').then((module) => ({ default: module.RequestsPage })));
+const ResetPasswordPage = lazy(() =>
+  import('@/routes/ResetPasswordPage').then((module) => ({ default: module.ResetPasswordPage })),
+);
+
+function SignedInLoginRedirect() {
+  const location = useLocation();
+  const returnTo = sanitizeAuthReturnTo(new URLSearchParams(location.search).get('returnTo'));
+  return <Navigate to={returnTo} replace />;
+}
 
 function ScrollToTopOnRouteChange() {
   const { pathname } = useLocation();
@@ -132,7 +141,13 @@ export function AppRoutes({ loadAuthModule }: AppRoutesProps) {
           />
           <Route
             path="login"
-            element={<Suspense fallback={<RouteFallback />}><LoginPage onSignedIn={refreshSession} /></Suspense>}
+            element={loggedIn && !authChecking
+              ? <SignedInLoginRedirect />
+              : <Suspense fallback={<RouteFallback />}><LoginPage onSignedIn={refreshSession} /></Suspense>}
+          />
+          <Route
+            path="reset-password"
+            element={<Suspense fallback={<RouteFallback />}><ResetPasswordPage authChecking={authChecking} loggedIn={loggedIn} onSignedOut={refreshSession} /></Suspense>}
           />
         </Route>
         <Route path="privacy" element={<Suspense fallback={<RouteFallback />}><PrivacyPage /></Suspense>} />

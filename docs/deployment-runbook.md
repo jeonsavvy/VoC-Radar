@@ -57,6 +57,13 @@ npm run verify:database:runtime
 - 기존 프로젝트에는 운영 ledger와 비교한 미적용 migration만 순서대로 적용합니다. `schema.sql`로 기존 DB를 덮어쓰지 않습니다.
 - 배포 commit에 새 migration이 없으면 production SQL을 변경하지 않습니다. ledger·catalog·권한의 읽기 전용 확인을 DB 배포 결과로 기록합니다.
 
+### 이메일 인증 운영 계약
+
+- Supabase Auth의 Email provider를 켜고 신규 가입을 허용합니다. Confirm Email 설정은 켜거나 끌 수 있으며, Web은 두 경우를 모두 처리해야 합니다.
+- Site URL은 `https://voc-radar.satinode.com`, 허용 Redirect URL은 최소 `https://voc-radar.satinode.com/**`를 포함합니다.
+- 운영 인증 메일은 custom SMTP를 사용합니다. Supabase 기본 메일 발송만으로 실제 사용자 가입이 가능하다고 판정하지 않습니다.
+- 배포 후 승인된 전용 테스트 이메일로 회원가입 → 인증 메일 → callback → 로그인 → 비밀번호 재설정을 확인하고, 생성한 테스트 계정은 승인된 운영 절차로 정리합니다.
+
 적용 전에는 active job aggregate만 확인합니다. 사용자 review 원문·AI summary·note·error 원문은 읽지 않습니다.
 
 ```sql
@@ -94,6 +101,23 @@ npm run deploy --workspace @voc-radar/worker
 ```
 
 두 값이 없거나 `true|false`가 아니면 wrapper는 Wrangler를 실행하기 전에 실패합니다. `REPORT_V2_ENABLED`가 이미 검증되어 `true`이면 `true`를 전달합니다. DB·workflow 전환 gate에서 승인한 경우에만 확인값 대신 승인된 목표 값을 전달합니다.
+
+### Cloudflare Workers Builds
+
+Workers Builds의 production build 변수에는 다음 네 키가 필요합니다.
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `REPORT_V2_ENABLED`
+- `DETAIL_VIEW_ENABLED`
+
+앞의 두 값은 Vite가 Web bundle을 만들 때 필요하고, 뒤의 두 값은 deploy wrapper가 Worker feature flag를 검증할 때 필요합니다. Worker runtime 변수만 설정해서는 build 단계의 요구사항을 충족하지 않습니다.
+
+- Build command: `npm run verify:deploy-env && npm run build:web`
+- Deploy command: `npm run deploy --workspace @voc-radar/worker`
+- Root directory: `/`
+
+재시도할 때는 production branch와 대상 commit을 고정합니다. build command와 deploy command가 모두 성공했는지 확인하고, 해당 build의 version이 active deployment가 되었는지까지 확인합니다.
 
 필수 runtime secret·변수는 다음과 같습니다.
 
@@ -232,6 +256,8 @@ n8n execution 상태는 `status`만 보고 장애로 판정하지 않습니다. 
 
 - [ ] `GET /api/health`가 200입니다.
 - [ ] Worker root, `/privacy`, SPA deep link가 HTML 200입니다.
+- [ ] production Web bundle에 Supabase URL과 anon key가 주입되어 있고, 동일 키로 `/auth/v1/settings`가 200입니다.
+- [ ] Email provider가 켜져 있고 신규 가입이 허용되어 있으며, 승인된 전용 테스트 이메일로 가입·인증·로그인·비밀번호 재설정 흐름이 완료됩니다.
 - [ ] `GET /api/public/report`가 `{ data: { window } }`를 반환하고 `window.from <= window.to`입니다.
 - [ ] Web의 issue detail·review 요청이 report의 `data.window`를 사용합니다.
 - [ ] artwork가 direct URL → Worker proxy 한 번 → local fallback 순서이며 proxy query 중복이 없습니다.

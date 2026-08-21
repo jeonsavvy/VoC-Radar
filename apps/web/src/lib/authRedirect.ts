@@ -38,6 +38,15 @@ export function buildEmailSignUpCredentials(
   };
 }
 
+export function buildPasswordResetRedirect(
+  origin: string,
+  returnTo = '/requests',
+) {
+  const redirect = new URL('/reset-password', origin);
+  redirect.searchParams.set('returnTo', sanitizeAuthReturnTo(returnTo));
+  return redirect.toString();
+}
+
 export function hasSupabaseAuthCallback(location: AuthCallbackLocation) {
   const hashParams = new URLSearchParams(location.hash.replace(/^#/, ''));
   const searchParams = new URLSearchParams(location.search);
