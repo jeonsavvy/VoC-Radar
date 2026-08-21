@@ -2,24 +2,17 @@ import { hasSupabaseConfig, supabase } from './supabase';
 import {
   buildEmailSignUpCredentials,
   buildPasswordResetRedirect,
-  sanitizeAuthReturnTo,
 } from './authRedirect';
 
 export type AuthAction =
   | 'login'
   | 'signup'
-  | 'resend'
   | 'reset-request'
   | 'password-update';
-
-export type SignUpResult = {
-  requiresEmailVerification: boolean;
-};
 
 const UNKNOWN_AUTH_MESSAGES: Record<AuthAction, string> = {
   login: '로그인에 실패했습니다. 잠시 후 다시 시도하세요.',
   signup: '회원가입에 실패했습니다. 잠시 후 다시 시도하세요.',
-  resend: '인증 이메일을 보내지 못했습니다. 잠시 후 다시 시도하세요.',
   'reset-request': '비밀번호 재설정 이메일을 보내지 못했습니다. 잠시 후 다시 시도하세요.',
   'password-update': '비밀번호를 변경하지 못했습니다. 잠시 후 다시 시도하세요.',
 };
@@ -33,6 +26,7 @@ const AUTH_ERROR_MESSAGES: Record<string, string> = {
     '이 이메일 주소로는 인증 메일을 보낼 수 없습니다. 다른 이메일 주소를 사용하거나 관리자에게 문의하세요.',
   email_provider_disabled: '이메일 계정 기능을 현재 사용할 수 없습니다. 관리자에게 문의하세요.',
   signup_disabled: '이메일 계정 기능을 현재 사용할 수 없습니다. 관리자에게 문의하세요.',
+  signup_session_missing: '가입을 완료하지 못했습니다. 이미 가입했다면 로그인해 주세요.',
   over_email_send_rate_limit: '인증 이메일 요청이 너무 많습니다. 잠시 후 다시 시도하세요.',
   over_request_rate_limit: '요청이 너무 많습니다. 잠시 후 다시 시도하세요.',
   configuration_unavailable: '인증 서비스를 현재 사용할 수 없습니다. 잠시 후 다시 시도하세요.',
@@ -117,12 +111,12 @@ export async function signInWithPassword(email: string, password: string) {
   }
 }
 
-// 회원가입은 계정을 생성하고, 이메일 확인이 끝나야 실제 로그인 단계로 넘어가게 한다.
+// 이메일 확인을 사용하지 않는 운영 계약에서는 회원가입 응답에 활성 세션이 있어야 한다.
 export async function signUpWithPassword(
   email: string,
   password: string,
   returnTo = '/requests',
-): Promise<SignUpResult> {
+) {
   const auth = requireAuthClient();
 
   const { data, error } = await auth.signUp(
@@ -133,19 +127,9 @@ export async function signUpWithPassword(
     throw error;
   }
 
-  if (data.session) {
-    const { error: signOutError } = await auth.signOut({ scope: 'local' });
-    if (signOutError) {
-      throw signOutError;
-    }
-    return {
-      requiresEmailVerification: false,
-    };
+  if (!data.session) {
+    throw createAuthError('signup_session_missing');
   }
-
-  return {
-    requiresEmailVerification: true,
-  };
 }
 
 export async function signOut() {
@@ -197,21 +181,6 @@ export async function getSessionSummary() {
     loggedIn: Boolean(session?.access_token),
     userEmail: session?.user?.email ?? null,
   };
-}
-
-export async function resendSignupConfirmation(email: string, returnTo = '/requests') {
-  const auth = requireAuthClient();
-  const { error } = await auth.resend({
-    type: 'signup',
-    email,
-    options: {
-      emailRedirectTo: new URL(sanitizeAuthReturnTo(returnTo), window.location.origin).toString(),
-    },
-  });
-
-  if (error) {
-    throw error;
-  }
 }
 
 export async function requestPasswordReset(email: string, returnTo = '/requests') {

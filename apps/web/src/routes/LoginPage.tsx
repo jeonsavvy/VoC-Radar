@@ -7,7 +7,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   getAuthErrorMessage,
   requestPasswordReset,
-  resendSignupConfirmation,
   signInWithPassword,
   signUpWithPassword,
   validateSignupPasswords,
@@ -19,14 +18,13 @@ type Props = { onSignedIn: () => Promise<void> };
 type AuthMode = 'login' | 'signup';
 type AuthView = AuthMode | 'forgot';
 type Notice = {
-  kind: 'account-created' | 'confirmation-pending' | 'confirmation-sent' | 'reset-sent' | 'password-updated';
+  kind: 'reset-sent' | 'password-updated';
   email?: string;
 };
 
 const AUTH_ACTION = {
   login: 'login',
   signup: 'signup',
-  resend: 'resend',
   resetRequest: 'reset-request',
 } satisfies Record<string, AuthAction>;
 
@@ -109,16 +107,11 @@ export function LoginPage({ onSignedIn }: Props) {
 
     try {
       if (submittedView === 'signup') {
-        const result = await signUpWithPassword(email, password, returnTo);
+        await signUpWithPassword(email, password, returnTo);
         setPassword('');
         setConfirmPassword('');
-        if (result.requiresEmailVerification) {
-          setNotice({ kind: 'confirmation-pending', email });
-        } else {
-          setView('login');
-          setSearchParams(buildLoginSearch(returnTo));
-          setNotice({ kind: 'account-created' });
-        }
+        await onSignedIn();
+        navigate(returnTo);
       } else if (submittedView === 'forgot') {
         await requestPasswordReset(email, returnTo);
         setNotice({ kind: 'reset-sent', email });
@@ -134,30 +127,15 @@ export function LoginPage({ onSignedIn }: Props) {
     }
   };
 
-  const resendConfirmation = async () => {
-    const pendingEmail = notice?.email || email;
-    setSubmitError(null);
-    setPendingAction(AUTH_ACTION.resend);
-    try {
-      await resendSignupConfirmation(pendingEmail, returnTo);
-      setNotice({ kind: 'confirmation-sent', email: pendingEmail });
-    } catch (error) {
-      setSubmitError(getAuthErrorMessage(error, AUTH_ACTION.resend));
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
   const heading = view === 'signup' ? '계정 만들기' : view === 'forgot' ? '비밀번호 재설정' : '로그인';
   const description = view === 'signup'
-    ? '계정을 만든 뒤 이메일 인증을 마치면 분석을 요청할 수 있습니다.'
+    ? '가입하면 바로 로그인됩니다. 이후 분석을 요청할 수 있습니다.'
     : view === 'forgot'
       ? '재설정 링크를 받을 이메일을 입력하세요.'
       : '분석을 요청하거나 요청 내역을 확인하려면 로그인하세요.';
   const submitLabel = view === 'signup' ? '계정 만들기' : view === 'forgot' ? '재설정 링크 받기' : '로그인';
   const loadingLabel = view === 'signup' ? '계정 만드는 중' : view === 'forgot' ? '링크 보내는 중' : '로그인 중';
-  const showForm = notice?.kind !== 'confirmation-pending' && notice?.kind !== 'confirmation-sent'
-    && notice?.kind !== 'reset-sent';
+  const showForm = notice?.kind !== 'reset-sent';
 
   return (
     <div className="auth-page">
@@ -179,16 +157,10 @@ export function LoginPage({ onSignedIn }: Props) {
 
         {notice ? (
           <div className="auth-notice" role="status">
-            {notice.kind === 'confirmation-pending' ? (
-              <><strong>인증 메일을 확인하세요.</strong><p>{notice.email}로 보냈습니다. 인증을 마친 뒤 로그인할 수 있습니다.</p></>
-            ) : notice.kind === 'confirmation-sent' ? (
-              <><strong>인증 메일을 다시 보냈습니다.</strong><p>메일이 보이지 않으면 스팸함을 확인하세요.</p></>
-            ) : notice.kind === 'reset-sent' ? (
+            {notice.kind === 'reset-sent' ? (
               <><strong>재설정 링크를 보냈습니다.</strong><p>{notice.email}의 받은편지함과 스팸함을 확인하세요.</p></>
-            ) : notice.kind === 'password-updated' ? (
-              <><strong>비밀번호를 변경했습니다.</strong><p>새 비밀번호로 로그인하세요.</p></>
             ) : (
-              <><strong>계정을 만들었습니다.</strong><p>이제 로그인할 수 있습니다.</p></>
+              <><strong>비밀번호를 변경했습니다.</strong><p>새 비밀번호로 로그인하세요.</p></>
             )}
           </div>
         ) : null}
@@ -228,11 +200,6 @@ export function LoginPage({ onSignedIn }: Props) {
         {submitError ? <div ref={errorRef} tabIndex={-1} role="alert" className="auth-error">{submitError}</div> : null}
 
         <div className="auth-secondary-actions">
-          {(notice?.kind === 'confirmation-pending' || notice?.kind === 'confirmation-sent') ? (
-            <Button type="button" variant="outline" onClick={resendConfirmation} disabled={loading}>
-              {pendingAction === AUTH_ACTION.resend ? '다시 보내는 중' : '인증 메일 다시 보내기'}
-            </Button>
-          ) : null}
           {notice?.kind === 'reset-sent' ? (
             <button type="button" onClick={() => { setNotice(null); setView('forgot'); }} disabled={loading}>다른 이메일로 보내기</button>
           ) : null}

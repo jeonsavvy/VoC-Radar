@@ -20,6 +20,10 @@ import { LoginPage } from '@/routes/LoginPage';
 import { PrivacyPage } from '@/routes/PrivacyPage';
 import { ResetPasswordPage } from '@/routes/ResetPasswordPage';
 
+declare global {
+  var __VOC_AUTH_TEST_CLIENT__: Record<string, (...args: any[]) => any>;
+}
+
 async function test(name: string, fn: () => void | Promise<void>) {
   try {
     await fn();
@@ -171,7 +175,107 @@ async function main() {
     assert.match(html, /비밀번호 확인/);
     assert.match(html, /<h1[^>]*>계정 만들기<\/h1>/);
     assert.match(html, /개인정보처리방침/);
+    assert.match(html, /가입하면 바로 로그인됩니다/);
+    assert.doesNotMatch(html, /이메일 인증/);
     assert.doesNotMatch(html, /<h1[^>]*>로그인<\/h1>/);
+  });
+
+  await test('signup with an active session refreshes auth and navigates immediately', async () => {
+    const keys = ['window', 'document', 'navigator', 'location', 'HTMLElement', 'Node', 'Event'] as const;
+    const originalDescriptors = new Map(
+      keys.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]),
+    );
+    const originalActEnvironment = Object.getOwnPropertyDescriptor(
+      globalThis,
+      'IS_REACT_ACT_ENVIRONMENT',
+    );
+    const dom = new JSDOM('<!doctype html><html><body></body></html>', {
+      url: 'https://voc-radar.example/login?mode=signup&returnTo=/requests',
+    });
+    const { window: browserWindow } = dom;
+    const globals = {
+      window: browserWindow,
+      document: browserWindow.document,
+      navigator: browserWindow.navigator,
+      location: browserWindow.location,
+      HTMLElement: browserWindow.HTMLElement,
+      Node: browserWindow.Node,
+      Event: browserWindow.Event,
+    };
+    for (const [key, value] of Object.entries(globals)) {
+      Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+    }
+    Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', {
+      configurable: true,
+      writable: true,
+      value: true,
+    });
+
+    let signedInCalls = 0;
+    let signOutCalls = 0;
+    globalThis.__VOC_AUTH_TEST_CLIENT__ = {
+      signUp: async () => ({ data: { session: { access_token: 'fixture' } }, error: null }),
+      signOut: async () => {
+        signOutCalls += 1;
+        return { error: null };
+      },
+    };
+    const container = browserWindow.document.createElement('div');
+    browserWindow.document.body.append(container);
+    const root = createRoot(container as unknown as HTMLElement);
+
+    const fill = (selector: string, value: string) => {
+      const input = container.querySelector(selector) as HTMLInputElement;
+      const setter = Object.getOwnPropertyDescriptor(
+        browserWindow.HTMLInputElement.prototype,
+        'value',
+      )?.set;
+      setter?.call(input, value);
+      input.dispatchEvent(new browserWindow.Event('input', { bubbles: true }));
+    };
+
+    try {
+      await act(async () => {
+        root.render(
+          <MemoryRouter initialEntries={['/login?mode=signup&returnTo=/requests']}>
+            <Routes>
+              <Route path="/login" element={<LoginPage onSignedIn={async () => { signedInCalls += 1; }} />} />
+              <Route path="/requests" element={<div>requests-ready</div>} />
+            </Routes>
+          </MemoryRouter>,
+        );
+      });
+      await act(async () => {
+        fill('#auth-email', 'new@example.com');
+        fill('#auth-password', 'secret123');
+        fill('#signup-password-confirm', 'secret123');
+      });
+      await act(async () => {
+        container.querySelector('form')?.dispatchEvent(
+          new browserWindow.Event('submit', { bubbles: true, cancelable: true }),
+        );
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      assert.equal(signOutCalls, 0);
+      assert.equal(signedInCalls, 1);
+      assert.match(container.textContent || '', /requests-ready/);
+      assert.doesNotMatch(container.textContent || '', /인증 메일/);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      browserWindow.close();
+      for (const key of keys) {
+        const descriptor = originalDescriptors.get(key);
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else delete (globalThis as Record<string, unknown>)[key];
+      }
+      if (originalActEnvironment) {
+        Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', originalActEnvironment);
+      } else {
+        delete (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT;
+      }
+    }
   });
 
   await test('LoginPage keeps mode-specific hierarchy and recovery semantics', () => {
@@ -191,7 +295,7 @@ async function main() {
     assert.match(source, /aria-describedby=\{confirmError \? 'signup-password-confirm-error' : undefined\}/);
     assert.match(source, /role="alert"/);
     assert.match(source, /requestPasswordReset\(email, returnTo\)/);
-    assert.match(source, /resendSignupConfirmation\(pendingEmail, returnTo\)/);
+    assert.doesNotMatch(source, /인증 메일 다시 보내기|resendSignupConfirmation/);
     assert.doesNotMatch(source, /Supabase|환경변수|provider/i);
   });
 

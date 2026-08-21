@@ -32,7 +32,7 @@ export function buildEmailSignUpCredentials(
     email,
     password,
     options: {
-      // Keep email confirmation on the deployment that initiated signup, even if the provider fallback is stale.
+      // Keep any provider callback on the deployment that initiated signup.
       emailRedirectTo: new URL(sanitizeAuthReturnTo(returnTo), origin).toString(),
     },
   };

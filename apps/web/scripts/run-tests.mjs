@@ -47,7 +47,10 @@ for (const testFile of testFiles) {
     setup(buildContext) {
       buildContext.onResolve({ filter: /^\.\/supabase$/ }, (args) => {
         if (
-          relativePath.endsWith('auth-contract.test.ts') &&
+          (
+            relativePath.endsWith('auth-contract.test.ts') ||
+            relativePath.endsWith('auth-ui.test.tsx')
+          ) &&
           args.importer.endsWith(path.join('lib', 'auth.ts'))
         ) {
           return { path: 'auth-test-client', namespace: 'auth-test-client' };

@@ -3,8 +3,8 @@
 ## Goal
 
 - Restore production builds without weakening the fail-closed Worker deployment contract.
-- Make email signup truthful for both Supabase confirmation modes.
-- Give login, signup, confirmation resend, and password recovery clear states and safe recovery copy.
+- Make email signup create an immediately usable session without an email-confirmation step.
+- Give login, signup, and password recovery clear states and safe recovery copy.
 - Keep the authentication page aligned with the repository design contract on desktop and mobile.
 
 ## Non-goals
@@ -20,15 +20,15 @@
 - The live Worker reports both flags as enabled. The deployment wrapper intentionally requires both values and passes them to Wrangler explicitly.
 - The currently deployed Web bundle was compiled without the two public Supabase variables, so login and signup stop before contacting Supabase.
 - Supabase returns no signup session when email confirmation is required and returns a session when confirmation is disabled.
-- The current signup implementation treats the second valid result as an error after the account has already been created.
+- The selected product contract uses email as the account ID while disabling confirmation so signup returns an active session.
 
 ## Product surface contract
 
 - User: someone who wants to request analysis or review their requests.
-- Primary job: sign in, or create and verify an account, without losing the destination that prompted authentication.
+- Primary job: sign in or create an immediately usable account without losing the destination that prompted authentication.
 - Costly failure: the UI claims an email was sent or signup failed when neither statement is true.
 - Page role: a focused account gateway, not a dashboard or marketing page.
-- Required states: login, signup, pending email confirmation, immediately usable account, validation error, provider error, service unavailable, resend sent, password reset requested, password update, and loading.
+- Required states: login, signup, validation error, provider error, service unavailable, password reset requested, password update, and loading.
 - Recovery: errors identify the next safe action without exposing raw Supabase messages.
 - Layout: one compact auth surface with mode-specific heading, restrained borders, no decorative effects, and a mobile-safe reading order.
 
@@ -43,17 +43,18 @@
 
 ### Auth library
 
-- `signUpWithPassword()` returns `{ requiresEmailVerification: boolean }` for both valid Supabase outcomes.
-- If signup returns a session, sign out locally and return success with `requiresEmailVerification: false`; do not report a false failure.
+- `signUpWithPassword()` succeeds only when Supabase returns an active session and keeps that session active.
+- If signup returns no session, fail with the stable `signup_session_missing` code instead of claiming that an email was sent.
 - Classify Auth failures by stable `code`, not message text. Unknown failures use a safe generic message.
-- Add bounded helpers for confirmation resend, password-reset email, and password update using the current origin and sanitized return path.
+- Keep bounded helpers for password-reset email and password update using the current origin and sanitized return path.
 
 ### Auth UI
 
 - Snapshot the submitted mode and disable mode/input changes while a request is active.
 - Use mode-specific heading, explanation, CTA, success message, and return-destination context.
 - Associate validation errors with their fields using `aria-invalid` and `aria-describedby`; announce submission failures with an alert and focus the first actionable error.
-- Offer confirmation resend after a pending signup and password recovery from login.
+- On successful signup, refresh authentication state and continue directly to the sanitized return destination.
+- Keep password recovery available from login.
 - Keep the privacy link visible near account creation.
 
 ## Key state flow
@@ -62,8 +63,8 @@
 signup submit
   -> local mismatch: focus confirmation field and stop
   -> Supabase error: map error code to safe recovery copy
-  -> session is null: show pending-confirmation state and resend action
-  -> session exists: sign out, show account-created state, switch to login
+  -> session is null: show a safe completion failure and offer login as recovery
+  -> session exists: keep the session, refresh auth state, continue to the return destination
 
 password recovery
   -> request reset email with /reset-password redirect
@@ -74,9 +75,9 @@ password recovery
 
 ## Production checks and remaining assumptions
 
-- Verified on 2026-08-21: the deployed Supabase project enables the email provider, allows signup, and requires email confirmation.
-- Unverified: production email delivery uses a configured custom SMTP service. Supabase default SMTP is not considered a production guarantee.
-- Unverified: the production Site URL and redirect allowlist include `https://voc-radar.satinode.com/**` for confirmation and password recovery.
+- Verified on 2026-08-21: the deployed Supabase project enables the email provider, allows signup, and disables email confirmation.
+- Verified on 2026-08-21: the production Site URL is `https://voc-radar.satinode.com` and the redirect allowlist includes `https://voc-radar.satinode.com/**`.
+- Unverified: production password-recovery delivery uses a configured custom SMTP service. Supabase default SMTP is not considered a production guarantee.
 
 ## Rollout and rollback
 
@@ -87,11 +88,11 @@ password recovery
 
 ## Proving checks
 
-- Focused Web auth regression tests, including both signup session modes and safe error-code mapping.
+- Focused Web auth regression tests, including active-session success, missing-session failure, and safe error-code mapping.
 - `npm run test --workspace @voc-radar/web`
 - `npm run verify:release-config`
 - `npm run verify`
 - Desktop and mobile renders of login, signup, validation, and recovery states.
 - Production build log shows both build and deploy commands succeeded.
 - Production bundle contains an initialized Supabase client, `/api/health` returns `200`, and a non-mutating Auth request reaches the configured project.
-- A real signup/email/callback check uses an explicitly designated test address and removes the test account afterward.
+- A real signup/login check uses an explicitly designated test address and removes the test account afterward.

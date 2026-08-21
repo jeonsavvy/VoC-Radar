@@ -59,10 +59,10 @@ npm run verify:database:runtime
 
 ### 이메일 인증 운영 계약
 
-- Supabase Auth의 Email provider를 켜고 신규 가입을 허용합니다. Confirm Email 설정은 켜거나 끌 수 있으며, Web은 두 경우를 모두 처리해야 합니다.
+- Supabase Auth의 Email provider와 신규 가입을 켜고 Confirm Email은 끕니다. 가입 성공 응답에는 즉시 사용할 수 있는 세션이 있어야 합니다.
 - Site URL은 `https://voc-radar.satinode.com`, 허용 Redirect URL은 최소 `https://voc-radar.satinode.com/**`를 포함합니다.
-- 운영 인증 메일은 custom SMTP를 사용합니다. Supabase 기본 메일 발송만으로 실제 사용자 가입이 가능하다고 판정하지 않습니다.
-- 배포 후 승인된 전용 테스트 이메일로 회원가입 → 인증 메일 → callback → 로그인 → 비밀번호 재설정을 확인하고, 생성한 테스트 계정은 승인된 운영 절차로 정리합니다.
+- 가입에는 메일 발송을 사용하지 않습니다. 비밀번호 재설정 메일을 일반 사용자에게 제공하려면 custom SMTP를 별도로 구성하고 검증합니다.
+- 배포 후 승인된 전용 테스트 이메일로 회원가입 → 즉시 세션 → 로그아웃 → 로그인을 확인합니다. 메일 복구를 운영하는 경우에만 비밀번호 재설정까지 확인하고, 생성한 테스트 계정은 승인된 운영 절차로 정리합니다.
 
 적용 전에는 active job aggregate만 확인합니다. 사용자 review 원문·AI summary·note·error 원문은 읽지 않습니다.
 

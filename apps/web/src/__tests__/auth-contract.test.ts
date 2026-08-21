@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import {
   getAuthErrorMessage,
   requestPasswordReset,
-  resendSignupConfirmation,
   signUpWithPassword,
   updatePassword,
   type AuthAction,
@@ -36,7 +35,7 @@ function installWindow(origin = 'https://voc-radar.example') {
 async function main() {
   installWindow();
 
-  await test('signup without a session truthfully requires email verification', async () => {
+  await test('signup without a session fails instead of claiming an email-confirmation step', async () => {
     let signOutCalls = 0;
     globalThis.__VOC_AUTH_TEST_CLIENT__ = {
       signUp: async () => ({ data: { session: null }, error: null }),
@@ -46,13 +45,16 @@ async function main() {
       },
     };
 
-    assert.deepEqual(await signUpWithPassword('new@example.com', 'secret123'), {
-      requiresEmailVerification: true,
-    });
+    await assert.rejects(
+      () => signUpWithPassword('new@example.com', 'secret123'),
+      (error: unknown) => Boolean(
+        error && typeof error === 'object' && 'code' in error && error.code === 'signup_session_missing',
+      ),
+    );
     assert.equal(signOutCalls, 0);
   });
 
-  await test('signup with a session signs out and returns immediately usable success', async () => {
+  await test('signup with a session keeps the immediately usable session active', async () => {
     const signOutCalls: unknown[] = [];
     globalThis.__VOC_AUTH_TEST_CLIENT__ = {
       signUp: async () => ({ data: { session: { access_token: 'fixture' } }, error: null }),
@@ -62,10 +64,8 @@ async function main() {
       },
     };
 
-    assert.deepEqual(await signUpWithPassword('new@example.com', 'secret123'), {
-      requiresEmailVerification: false,
-    });
-    assert.deepEqual(signOutCalls, [{ scope: 'local' }]);
+    assert.equal(await signUpWithPassword('new@example.com', 'secret123'), undefined);
+    assert.deepEqual(signOutCalls, []);
   });
 
   await test('auth errors are classified only by stable code and never expose raw messages', () => {
@@ -89,11 +89,7 @@ async function main() {
         'signup',
         '이메일 계정 기능을 현재 사용할 수 없습니다. 관리자에게 문의하세요.',
       ],
-      [
-        'over_email_send_rate_limit',
-        'resend',
-        '인증 이메일 요청이 너무 많습니다. 잠시 후 다시 시도하세요.',
-      ],
+      ['signup_session_missing', 'signup', '가입을 완료하지 못했습니다. 이미 가입했다면 로그인해 주세요.'],
       ['over_request_rate_limit', 'reset-request', '요청이 너무 많습니다. 잠시 후 다시 시도하세요.'],
       [
         'configuration_unavailable',
@@ -134,13 +130,9 @@ async function main() {
     );
   });
 
-  await test('recovery helpers pass safe redirects and update then clear the recovery session', async () => {
+  await test('password recovery passes a safe redirect and clears the recovery session after update', async () => {
     const calls: Array<[string, unknown]> = [];
     globalThis.__VOC_AUTH_TEST_CLIENT__ = {
-      resend: async (payload) => {
-        calls.push(['resend', payload]);
-        return { error: null };
-      },
       resetPasswordForEmail: async (email, options) => {
         calls.push(['reset', { email, options }]);
         return { error: null };
@@ -155,19 +147,10 @@ async function main() {
       },
     };
 
-    await resendSignupConfirmation('new@example.com', '//attacker.example');
     await requestPasswordReset('new@example.com', '/requests?from=auth');
     await updatePassword('new-secret-123');
 
     assert.deepEqual(calls, [
-      [
-        'resend',
-        {
-          type: 'signup',
-          email: 'new@example.com',
-          options: { emailRedirectTo: 'https://voc-radar.example/requests' },
-        },
-      ],
       [
         'reset',
         {
