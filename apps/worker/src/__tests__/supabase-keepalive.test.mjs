@@ -82,10 +82,10 @@ test.after(async () => {
   }
 });
 
-test('worker configuration retains workers.dev and routes assets through the Worker', () => {
+test('worker configuration disables workers.dev and routes assets through the Worker', () => {
   const config = readFileSync(resolve(testDir, '../../wrangler.toml'), 'utf8');
 
-  assert.match(config, /^workers_dev = true$/m);
+  assert.match(config, /^workers_dev = false$/m);
   assert.match(config, /pattern = "voc-radar\.satinode\.com", custom_domain = true/);
   assert.match(config, /binding = "ASSETS"/);
   assert.match(config, /not_found_handling = "none"/);

@@ -1,11 +1,10 @@
 name = "voc-radar"
 main = "src/index.ts"
 compatibility_date = "2026-02-25"
-workers_dev = true
+workers_dev = false
 preview_urls = false
 
-# 공식 Custom Domain은 이 통합 Worker에 직접 연결한다. workers.dev도 계속 활성화해
-# 기존 공유 링크가 같은 Worker와 SPA 자산을 제공하도록 유지한다.
+# 공식 Custom Domain만 이 통합 Worker에 직접 연결한다.
 routes = [
   { pattern = "voc-radar.satinode.com", custom_domain = true },
 ]
@@ -19,7 +18,7 @@ REPORT_V2_ENABLED = "false"
 USER_JOB_DAILY_LIMIT = "10"
 API_TIMEOUT_MS = "10000"
 API_RETRY_COUNT = "2"
-CORS_ORIGIN = "https://voc-radar.jeonsavvy.workers.dev"
+CORS_ORIGIN = "https://voc-radar.satinode.com"
 
 # 이 namespace ID는 Cloudflare account 전체에서 공유되므로 다른 Worker가 재사용하면 안 된다.
 [[ratelimits]]
