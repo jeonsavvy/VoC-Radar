@@ -40,9 +40,10 @@ required = [
   "SUPABASE_URL",
 ]
 
-# Pages에서 제공하던 Vite SPA를 API와 같은 Worker에서 정적으로 제공한다.
-# /api/*만 Worker 코드를 우선 실행하고 나머지 경로는 자산 또는 SPA shell로 처리한다.
+# Worker가 실제 자산, 지원하는 SPA 경로, 알 수 없는 경로를 구분한 뒤 정적 자산을 제공한다.
+# 이 경계를 건너뛰면 존재하지 않는 경로도 SPA shell과 HTTP 200을 반환한다.
 [assets]
 directory = "../web/dist"
-not_found_handling = "single-page-application"
-run_worker_first = ["/api/*"]
+binding = "ASSETS"
+not_found_handling = "none"
+run_worker_first = true

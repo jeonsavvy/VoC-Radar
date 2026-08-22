@@ -1,0 +1,673 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "VoC Radar Public API",
+    "version": "0.2.0",
+    "description": "Read-only access to published App Store review intelligence. Private account operations and internal pipeline commands are intentionally excluded."
+  },
+  "servers": [
+    {
+      "url": "https://voc-radar.satinode.com",
+      "description": "Production"
+    }
+  ],
+  "tags": [
+    { "name": "System", "description": "Service readiness" },
+    { "name": "Discovery", "description": "Published app discovery and metadata" },
+    { "name": "Reports", "description": "Published report, issue, trend, and review data" }
+  ],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "getHealth",
+        "summary": "Read service health",
+        "description": "Returns service readiness and the public feature flags that affect report responses.",
+        "tags": ["System"],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is ready.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Health" } }
+            }
+          },
+          "500": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/public/apps": {
+      "get": {
+        "operationId": "listPublishedApps",
+        "summary": "List published apps",
+        "description": "Lists distinct apps with published VoC Radar data, newest first.",
+        "tags": ["Discovery"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of apps to return.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published apps.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AppListEnvelope" } }
+            }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/apps/search": {
+      "get": {
+        "operationId": "searchPublishedApps",
+        "summary": "Search published apps",
+        "description": "Searches published apps by app name or numeric App Store ID. An empty query returns an empty list.",
+        "tags": ["Discovery"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "App name or numeric App Store ID, up to 60 characters.",
+            "schema": { "type": "string", "maxLength": 60 }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of matches to return.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 20, "default": 8 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Matching published apps.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AppListEnvelope" } }
+            }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/discover": {
+      "get": {
+        "operationId": "discoverApps",
+        "summary": "Discover apps and reports",
+        "description": "Returns recent published apps when q is omitted and combines published data with App Store lookup results when q is provided.",
+        "tags": ["Discovery"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Optional app name, App Store URL, or numeric ID, up to 180 characters.",
+            "schema": { "type": "string", "maxLength": 180 }
+          },
+          { "$ref": "#/components/parameters/Country" },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of discovery results.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 12, "default": 8 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Discovery results.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DataArrayEnvelope" } }
+            }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/app-meta": {
+      "get": {
+        "operationId": "getAppMetadata",
+        "summary": "Read app metadata",
+        "description": "Returns the normalized app name and the source used to resolve it.",
+        "tags": ["Discovery"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Normalized app metadata.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/AppMetadataEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/artwork": {
+      "get": {
+        "operationId": "getAppArtwork",
+        "summary": "Fetch app artwork",
+        "description": "Proxies validated App Store artwork for one numeric app ID.",
+        "tags": ["Discovery"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" }
+        ],
+        "responses": {
+          "200": {
+            "description": "App artwork in a supported image format.",
+            "content": {
+              "image/avif": { "schema": { "type": "string", "format": "binary" } },
+              "image/jpeg": { "schema": { "type": "string", "format": "binary" } },
+              "image/png": { "schema": { "type": "string", "format": "binary" } },
+              "image/webp": { "schema": { "type": "string", "format": "binary" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/report": {
+      "get": {
+        "operationId": "getPublishedReport",
+        "summary": "Read a published report",
+        "description": "Returns the canonical published report and its resolved review window. from and to must be supplied together and may cover at most 90 days.",
+        "tags": ["Reports"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/To" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published report.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ReportEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/overview": {
+      "get": {
+        "operationId": "getPublicOverview",
+        "summary": "Read report overview metrics",
+        "description": "Returns aggregate review metrics for one app and optional timestamp window.",
+        "tags": ["Reports"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/To" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Overview metrics.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DataObjectEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/trends": {
+      "get": {
+        "operationId": "getPublicTrends",
+        "summary": "Read review trends",
+        "description": "Returns dated review-volume and rating trend rows for one app and optional timestamp window.",
+        "tags": ["Reports"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/To" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Trend rows.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DataArrayEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/categories": {
+      "get": {
+        "operationId": "getPublicCategories",
+        "summary": "Read review categories",
+        "description": "Returns category totals and share values for one app and optional timestamp window.",
+        "tags": ["Reports"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/To" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Category rows.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DataArrayEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/dashboard": {
+      "get": {
+        "operationId": "getPublicDashboard",
+        "summary": "Read the compatibility dashboard",
+        "description": "Returns overview, category, trend, issue, evidence, run, and app metadata in the legacy dashboard envelope.",
+        "tags": ["Reports"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/To" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compatibility dashboard.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DataObjectEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/issues": {
+      "get": {
+        "operationId": "listPublicIssues",
+        "summary": "List published issues",
+        "description": "Lists published issue clusters for one app. from and to must be supplied together and may cover at most 90 days.",
+        "tags": ["Reports"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/To" },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of issues.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 10 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published issues.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DataArrayEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/issues/{issueId}": {
+      "get": {
+        "operationId": "getPublicIssue",
+        "summary": "Read one issue and its evidence",
+        "description": "Returns one published issue with evidence reviews for the resolved timestamp window.",
+        "tags": ["Reports"],
+        "security": [],
+        "parameters": [
+          {
+            "name": "issueId",
+            "in": "path",
+            "required": true,
+            "description": "Published issue UUID.",
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/To" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Issue detail and evidence.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DataObjectEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/reviews": {
+      "get": {
+        "operationId": "listPublicReviews",
+        "summary": "List public evidence reviews",
+        "description": "Returns normalized public evidence reviews with filters, stable pagination, and an optional cursor for reviewed-at order.",
+        "tags": ["Reports"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/To" },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum reviews per page.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 25 }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "One-based page number.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 1 }
+          },
+          {
+            "name": "sortBy",
+            "in": "query",
+            "description": "Review field used for ordering.",
+            "schema": {
+              "type": "string",
+              "enum": ["reviewed_at", "author", "rating", "priority", "category", "issue_label", "summary"],
+              "default": "reviewed_at"
+            }
+          },
+          {
+            "name": "sortDirection",
+            "in": "query",
+            "description": "Sort direction.",
+            "schema": { "type": "string", "enum": ["asc", "desc"], "default": "desc" }
+          },
+          {
+            "name": "rating",
+            "in": "query",
+            "description": "Exact App Store star rating.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 5 }
+          },
+          {
+            "name": "priority",
+            "in": "query",
+            "description": "Normalized issue priority.",
+            "schema": { "type": "string", "enum": ["Critical", "High", "Normal"] }
+          },
+          { "name": "category", "in": "query", "description": "Exact normalized category.", "schema": { "type": "string", "maxLength": 120 } },
+          { "name": "issueLabel", "in": "query", "description": "Exact issue label.", "schema": { "type": "string", "maxLength": 120 } },
+          { "name": "search", "in": "query", "description": "Search term for review fields.", "schema": { "type": "string", "maxLength": 80 } },
+          { "name": "searchScope", "in": "query", "description": "Use content to search only review text; other values search all supported fields.", "schema": { "type": "string", "enum": ["all", "content"], "default": "all" } },
+          { "name": "cursor", "in": "query", "description": "Opaque nextCursor returned by the previous reviewed-at page.", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Filtered public reviews.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ReviewFeedEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    },
+    "/api/public/runs": {
+      "get": {
+        "operationId": "listPublishedRuns",
+        "summary": "List published analysis runs",
+        "description": "Lists recent published analysis runs for one app and country.",
+        "tags": ["Reports"],
+        "security": [],
+        "parameters": [
+          { "$ref": "#/components/parameters/AppId" },
+          { "$ref": "#/components/parameters/Country" },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of runs.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 20, "default": 5 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Published runs.",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/DataArrayEnvelope" } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/InvalidRequest" },
+          "500": { "$ref": "#/components/responses/ServerError" },
+          "502": { "$ref": "#/components/responses/UpstreamUnavailable" }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "AppId": {
+        "name": "appId",
+        "in": "query",
+        "required": true,
+        "description": "Numeric App Store ID containing 5 to 20 digits.",
+        "schema": { "type": "string", "pattern": "^\\d{5,20}$" }
+      },
+      "Country": {
+        "name": "country",
+        "in": "query",
+        "description": "Two-letter App Store country code.",
+        "schema": { "type": "string", "pattern": "^[a-z]{2}$", "default": "kr" }
+      },
+      "From": {
+        "name": "from",
+        "in": "query",
+        "description": "Inclusive ISO 8601 review-window start. Supply with to.",
+        "schema": { "type": "string", "format": "date-time" }
+      },
+      "To": {
+        "name": "to",
+        "in": "query",
+        "description": "Inclusive ISO 8601 review-window end. Supply with from.",
+        "schema": { "type": "string", "format": "date-time" }
+      }
+    },
+    "responses": {
+      "InvalidRequest": {
+        "description": "The query or path parameters are invalid.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "Forbidden": {
+        "description": "The public detail feature is disabled.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "NotFound": {
+        "description": "The requested public resource does not exist.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "ServiceUnavailable": {
+        "description": "Required service configuration is unavailable.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "UpstreamUnavailable": {
+        "description": "An upstream public-data source did not complete the request.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      },
+      "ServerError": {
+        "description": "The request failed without exposing private upstream details.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ok", "error", "message", "requestId", "retryable"],
+        "properties": {
+          "ok": { "type": "boolean", "const": false },
+          "error": { "type": "string", "description": "Stable machine-readable error code." },
+          "message": { "type": "string", "description": "Safe recovery message." },
+          "retryable": { "type": "boolean" },
+          "requestId": { "type": "string", "format": "uuid" }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ok", "detailViewEnabled", "reportV2Enabled", "timestamp"],
+        "properties": {
+          "ok": { "type": "boolean", "const": true },
+          "detailViewEnabled": { "type": "boolean" },
+          "reportV2Enabled": { "type": "boolean" },
+          "timestamp": { "type": "string", "format": "date-time" }
+        }
+      },
+      "FlexibleObject": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "DataObjectEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": { "$ref": "#/components/schemas/FlexibleObject" }
+        }
+      },
+      "DataArrayEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/FlexibleObject" }
+          }
+        }
+      },
+      "AppSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["app_store_id", "country", "app_name", "updated_at"],
+        "properties": {
+          "app_store_id": { "type": "string", "pattern": "^\\d{5,20}$" },
+          "country": { "type": "string", "pattern": "^[a-z]{2}$" },
+          "app_name": { "type": ["string", "null"] },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AppListEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/AppSummary" } }
+        }
+      },
+      "AppMetadataEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["app_store_id", "country", "app_name", "source"],
+            "properties": {
+              "app_store_id": { "type": "string", "pattern": "^\\d{5,20}$" },
+              "country": { "type": "string", "pattern": "^[a-z]{2}$" },
+              "app_name": { "type": ["string", "null"] },
+              "source": { "type": "string", "enum": ["supabase", "itunes", "unknown"] }
+            }
+          }
+        }
+      },
+      "ReportEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["window", "app", "summary", "analysis", "issues", "categories", "trends"],
+            "properties": {
+              "window": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["from", "to"],
+                "properties": {
+                  "from": { "type": "string", "format": "date-time" },
+                  "to": { "type": "string", "format": "date-time" }
+                }
+              },
+              "app": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["appStoreId", "country", "appName", "artworkUrl"],
+                "properties": {
+                  "appStoreId": { "type": "string", "pattern": "^\\d{5,20}$" },
+                  "country": { "type": "string", "pattern": "^[a-z]{2}$" },
+                  "appName": { "type": ["string", "null"] },
+                  "artworkUrl": { "type": ["string", "null"], "format": "uri" }
+                }
+              },
+              "summary": { "$ref": "#/components/schemas/FlexibleObject" },
+              "analysis": { "$ref": "#/components/schemas/FlexibleObject" },
+              "issues": { "type": "array", "items": { "$ref": "#/components/schemas/FlexibleObject" } },
+              "categories": { "type": "array", "items": { "$ref": "#/components/schemas/FlexibleObject" } },
+              "trends": { "type": "array", "items": { "$ref": "#/components/schemas/FlexibleObject" } }
+            }
+          }
+        }
+      },
+      "ReviewFeedEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["data", "page", "limit", "hasNext", "nextCursor"],
+        "properties": {
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/FlexibleObject" } },
+          "page": { "type": "integer", "minimum": 1 },
+          "limit": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "hasNext": { "type": "boolean" },
+          "nextCursor": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

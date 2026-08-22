@@ -1,2 +1,4 @@
 User-agent: *
 Allow: /
+
+Sitemap: https://voc-radar.satinode.com/sitemap.xml

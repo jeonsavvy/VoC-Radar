@@ -82,14 +82,106 @@ test.after(async () => {
   }
 });
 
-test('worker configuration retains workers.dev alongside the official custom domain and SPA fallback', () => {
+test('worker configuration retains workers.dev and routes assets through the Worker', () => {
   const config = readFileSync(resolve(testDir, '../../wrangler.toml'), 'utf8');
 
   assert.match(config, /^workers_dev = true$/m);
   assert.match(config, /pattern = "voc-radar\.satinode\.com", custom_domain = true/);
-  assert.match(config, /not_found_handling = "single-page-application"/);
-  assert.match(config, /run_worker_first = \["\/api\/\*"\]/);
+  assert.match(config, /binding = "ASSETS"/);
+  assert.match(config, /not_found_handling = "none"/);
+  assert.match(config, /run_worker_first = true/);
   assert.match(config, /required = \[[\s\S]*?"N8N_PIPELINE_TRIGGER_SECRET"/);
+});
+
+function createAssetBinding() {
+  const calls = [];
+  const bodies = new Map([
+    ['/', ['<!doctype html><h1>VoC Radar</h1>', 'text/html']],
+    ['/index.html', ['<!doctype html><h1>VoC Radar</h1>', 'text/html']],
+    ['/llms.txt', ['# VoC Radar\n\nPublic agent guide.', 'text/plain']],
+    ['/assets/app.js', ['console.log("asset")', 'text/javascript']],
+  ]);
+
+  return {
+    calls,
+    binding: {
+      async fetch(input) {
+        const request = input instanceof Request ? input : new Request(input);
+        const pathname = new URL(request.url).pathname;
+        calls.push({ method: request.method, pathname });
+        const match = bodies.get(pathname);
+        if (!match) return new Response('asset not found', { status: 404 });
+        return new Response(request.method === 'HEAD' ? null : match[0], {
+          headers: { 'content-type': match[1] },
+        });
+      },
+    },
+  };
+}
+
+test('known SPA paths and exact assets remain available when the Worker runs first', async () => {
+  const assets = createAssetBinding();
+  const env = { ASSETS: assets.binding };
+
+  const deepLink = await workerModule.default.fetch(
+    new Request('https://worker.example/apps/kr/123456789/overview'),
+    env,
+  );
+  assert.equal(deepLink.status, 200);
+  assert.match(await deepLink.text(), /VoC Radar/);
+  assert.deepEqual(assets.calls.slice(0, 2).map((call) => call.pathname), [
+    '/apps/kr/123456789/overview',
+    '/',
+  ]);
+
+  const asset = await workerModule.default.fetch(
+    new Request('https://worker.example/assets/app.js'),
+    env,
+  );
+  assert.equal(asset.status, 200);
+  assert.match(await asset.text(), /console\.log/);
+});
+
+test('homepage negotiates Markdown and unknown paths return a recoverable 404', async () => {
+  const assets = createAssetBinding();
+  const env = { ASSETS: assets.binding };
+  const html = await workerModule.default.fetch(new Request('https://worker.example/'), env);
+  assert.equal(html.status, 200);
+  assert.match(html.headers.get('vary') || '', /Accept/);
+  assert.match(html.headers.get('vary') || '', /Accept-Encoding/);
+
+  const markdown = await workerModule.default.fetch(
+    new Request('https://worker.example/', { headers: { accept: 'text/markdown' } }),
+    env,
+  );
+
+  assert.equal(markdown.status, 200);
+  assert.match(markdown.headers.get('content-type') || '', /^text\/markdown/);
+  assert.match(markdown.headers.get('vary') || '', /Accept/);
+  assert.match(markdown.headers.get('vary') || '', /Accept-Encoding/);
+  assert.match(await markdown.text(), /# VoC Radar/);
+
+  const missing = await workerModule.default.fetch(
+    new Request('https://worker.example/definitely-not-a-route'),
+    env,
+  );
+  assert.equal(missing.status, 404);
+  assert.match(missing.headers.get('content-type') || '', /^text\/markdown/);
+  assert.match(await missing.text(), /\/sitemap\.xml[\s\S]*\/llms\.txt[\s\S]*\/openapi\.json/);
+
+  const missingHead = await workerModule.default.fetch(
+    new Request('https://worker.example/definitely-not-a-route', { method: 'HEAD' }),
+    env,
+  );
+  assert.equal(missingHead.status, 404);
+  assert.equal(await missingHead.text(), '');
+
+  const rejectedWrite = await workerModule.default.fetch(
+    new Request('https://worker.example/privacy', { method: 'POST' }),
+    env,
+  );
+  assert.equal(rejectedWrite.status, 405);
+  assert.equal(rejectedWrite.headers.get('allow'), 'GET, HEAD');
 });
 
 test('route fallthrough preserves unknown API 404 behavior', async () => {

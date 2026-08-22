@@ -590,6 +590,9 @@ async function main() {
     assert.ok(contrastRatio('#697386', '#f9fafb') >= 4.5);
     assert.ok(contrastRatio('#697386', '#ffffff') >= 4.5);
     assert.ok(contrastRatio('#606b7a', '#f0f2f5') >= 4.5);
+    assert.ok(contrastRatio('#344156', '#f7f8fa') >= 4.5);
+    assert.ok(contrastRatio('#526074', '#f7f8fa') >= 4.5);
+    assert.ok(contrastRatio('#214990', '#ffffff') >= 4.5);
     assert.match(styles, /\.review-search:focus-within \{ outline: 2px solid #2457d6/);
     assert.match(styles, /@media \(max-width: 779px\)[\s\S]*\.issue-row \{ position: relative; display: grid; grid-template-columns: 1fr auto/);
   });

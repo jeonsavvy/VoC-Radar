@@ -1,6 +1,7 @@
 // Worker가 처리하는 요청/응답 payload의 기준 타입 모음이다.
 // Web, n8n, Supabase 사이에서 오가는 필드 이름을 여기서 고정한다.
 export interface Env {
+  ASSETS: Fetcher;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   SUPABASE_ANON_KEY: string;

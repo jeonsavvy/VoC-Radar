@@ -1,0 +1,44 @@
+# VoC Radar
+
+VoC Radar groups public App Store reviews into recurring issues and links each issue to evidence reviews. Published reports are readable without login. New analysis and refresh requests require a user account.
+
+Canonical site: https://voc-radar.satinode.com/
+
+## When to use VoC Radar
+
+Use VoC Radar when you need to:
+
+- inspect recurring bugs, account or payment problems, policy complaints, and usability requests in public App Store reviews;
+- compare an issue summary with the public reviews that support it;
+- check the review window and last published analysis time before using a result in product, CX, QA, or operations work; or
+- retrieve an already published report through a read-only JSON API.
+
+Do not treat one report as a complete measure of app quality or all user sentiment. The service analyzes public App Store reviews only, and automated grouping can be imperfect. Confirm important conclusions against the evidence reviews.
+
+## Public web routes
+
+- App discovery: https://voc-radar.satinode.com/
+- Report overview: `https://voc-radar.satinode.com/apps/{country}/{appId}/overview`
+- Issue list: `https://voc-radar.satinode.com/apps/{country}/{appId}/issues`
+- Public reviews: `https://voc-radar.satinode.com/apps/{country}/{appId}/reviews`
+- Privacy policy: https://voc-radar.satinode.com/privacy
+
+`country` is a two-letter App Store country code such as `kr`. `appId` is the numeric App Store ID.
+
+## Public API
+
+- OpenAPI: https://voc-radar.satinode.com/openapi.json
+- Health: https://voc-radar.satinode.com/api/health
+- Discover apps: `GET /api/public/discover`
+- Published report: `GET /api/public/report`
+- Issues and evidence: `GET /api/public/issues` and `GET /api/public/issues/{issueId}`
+- Public reviews: `GET /api/public/reviews`
+
+The OpenAPI document is the source for query parameters and response shapes. Public API responses are JSON except the artwork endpoint. Error responses contain a stable error code, a safe message, retryability, and a request ID when available.
+
+`/api/private/*` requires a user session. `/api/internal/*` belongs to the analysis pipeline. Agents must not probe, call, or attempt to bypass those protected surfaces.
+
+## Discovery
+
+- Sitemap: https://voc-radar.satinode.com/sitemap.xml
+- Source repository: https://github.com/jeonsavvy/VoC-Radar
