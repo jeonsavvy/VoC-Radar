@@ -727,6 +727,85 @@ test('review fetch falls back to the Apple storefront review-row endpoint', asyn
   }
 });
 
+test('review-row fallback uses end-exclusive windows and collects every page', async () => {
+  const originalFetch = globalThis.fetch;
+  const fallbackRanges = [];
+  const reviews = Array.from({ length: 12 }, (_, index) => ({
+    userReviewId: `review-${index + 1}`,
+    body: `review body ${index + 1}`,
+    date: new Date(Date.now() - index * 60_000).toISOString(),
+    name: `reviewer-${index + 1}`,
+    rating: 5,
+  }));
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+
+    if (url.endsWith('/rest/v1/rpc/renew_pipeline_job_claim')) {
+      return Response.json([{ job_id: JOB_ID, status: 'running', run_id: RUN_ID }]);
+    }
+
+    if (url.includes('/rss/customerreviews/')) {
+      return new Response('', { status: 403 });
+    }
+
+    const requestUrl = new URL(url);
+    const startIndex = Number(requestUrl.searchParams.get('startIndex'));
+    const endIndex = Number(requestUrl.searchParams.get('endIndex'));
+    fallbackRanges.push([startIndex, endIndex]);
+
+    return Response.json({
+      userReviewList: reviews.slice(startIndex, endIndex),
+    });
+  };
+
+  try {
+    const request = new Request('https://worker.example/api/internal/pipeline/fetch-reviews', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-voc-token': 'pipeline-secret',
+      },
+      body: JSON.stringify({
+        jobId: JOB_ID,
+        claimToken: CLAIM_TOKEN,
+        runId: RUN_ID,
+        appStoreId: '1018769995',
+        country: 'kr',
+        windowDays: 30,
+        maxPages: 3,
+      }),
+    });
+
+    const response = await workerModule.default.fetch(request, {
+      SUPABASE_URL: 'https://example.supabase.co',
+      SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      SUPABASE_ANON_KEY: 'anon-key',
+      PIPELINE_WEBHOOK_SECRET: 'pipeline-secret',
+      API_TIMEOUT_MS: '50',
+      API_RETRY_COUNT: '0',
+    });
+    const responseText = await response.clone().text();
+    const responsePayload = JSON.parse(responseText);
+
+    assert.equal(response.status, 200, responseText);
+    assert.deepEqual(fallbackRanges, [
+      [0, 10],
+      [10, 20],
+    ]);
+    assert.equal(responsePayload.data.totalFetched, reviews.length);
+    assert.deepEqual(
+      responsePayload.data.reviews.map((review) => review.reviewId),
+      reviews.map((review) => review.userReviewId),
+    );
+    assert.equal(responsePayload.data.complete, true);
+    assert.equal(responsePayload.data.truncated, false);
+    assert.equal(responsePayload.data.terminationReason, 'short_page');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test('review fetch never returns partial success after a later Apple page failure', async () => {
   const scenarios = [
     () => new Response('', { status: 503 }),

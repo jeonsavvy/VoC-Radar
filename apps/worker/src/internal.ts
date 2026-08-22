@@ -380,7 +380,7 @@ async function handleInternalFetchReviews(env: Env, context: AuthenticatedIntern
         if (!heartbeat) return jobClaimLost(env);
       }
       const startIndex = page * ITUNES_USER_REVIEW_PAGE_SIZE;
-      const endIndex = startIndex + ITUNES_USER_REVIEW_PAGE_SIZE - 1;
+      const endIndex = startIndex + ITUNES_USER_REVIEW_PAGE_SIZE;
       const url =
         'https://itunes.apple.com/WebObjects/MZStore.woa/wa/userReviewsRow' +
         `?cc=${country}&id=${appStoreId}&displayable-kind=11&startIndex=${startIndex}&endIndex=${endIndex}&sort=4`;
