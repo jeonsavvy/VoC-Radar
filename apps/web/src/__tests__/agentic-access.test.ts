@@ -22,7 +22,6 @@ test('raw homepage explains VoC Radar without JavaScript', () => {
   assert.match(html, /<h1(?:\s[^>]*)?>VoC Radar<\/h1>/);
   assert.ok(text.length >= 500, `expected at least 500 visible characters, received ${text.length}`);
   assert.match(text, /App Store 공개 리뷰/);
-  assert.match(html, /href="\/llms\.txt"/);
   assert.match(html, /href="\/openapi\.json"/);
 });
 

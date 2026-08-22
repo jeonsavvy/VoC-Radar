@@ -107,8 +107,7 @@ button { border: 0; }
 
 .page-frame { flex: 1; width: min(1240px, calc(100% - 48px)); margin: 0 auto; padding: 40px 0 64px; }
 .product-footer { width: min(1240px, calc(100% - 48px)); margin: auto; padding: 24px 0 32px; border-top: 1px solid #e0e4ea; display: flex; align-items: center; justify-content: space-between; color: #606b7a; font-size: 12px; }
-.product-footer__links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 16px; }
-.product-footer__links a { min-height: 44px; display: inline-flex; align-items: center; }
+.product-footer a { min-height: 44px; display: inline-flex; align-items: center; }
 
 .auth-page { width: 100%; min-height: min(620px, calc(100vh - 200px)); display: grid; place-items: start center; padding: 28px 0; }
 .auth-panel { width: min(100%, 440px); padding: 28px; border: 1px solid #dce1e8; border-radius: 10px; background: #fff; box-shadow: var(--shadow-xs); }

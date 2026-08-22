@@ -266,11 +266,7 @@ export function Shell({ loggedIn, authChecking, userEmail, onSignOut }: Props) {
       <main className="page-frame"><Outlet /></main>
       <footer className="product-footer">
         <span>© VoC Radar</span>
-        <nav className="product-footer__links" aria-label="제품 정보">
-          <Link to="/privacy">개인정보처리방침</Link>
-          <a href="/openapi.json">공개 API</a>
-          <a href="/llms.txt">에이전트 안내</a>
-        </nav>
+        <Link to="/privacy">개인정보처리방침</Link>
       </footer>
     </div>
   );
